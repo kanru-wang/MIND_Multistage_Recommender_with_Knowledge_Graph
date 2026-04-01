@@ -16,6 +16,7 @@ from mindrec.data.datasets import PairDataset, collate_batch
 from mindrec.data.featurize import IdMaps
 from mindrec.models.calibration import fit_temperature_scaler
 from mindrec.models.dlrm import DLRMStudent
+from mindrec.models.teacher import TeacherTwoTower
 from mindrec.utils import set_seed, save_json, to_device
 
 
@@ -51,9 +52,20 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     runs_root = ensure_dir(Path("runs") / cfg["run_name"])
     art_root = ensure_dir(runs_root / "ranker")
 
-    teacher_user = np.load(runs_root / "teacher" / "user_teacher_emb.npy")
+    item_base = np.load(runs_root / "teacher" / "item_base_emb.npy")
     teacher_item = np.load(runs_root / "teacher" / "item_teacher_emb.npy")
+    item_base_tensor = torch.tensor(item_base, dtype=torch.float32, device=device)
+    teacher_item_tensor = torch.tensor(teacher_item, dtype=torch.float32, device=device)
     teacher_dim = int(teacher_item.shape[1])
+    teacher_ckpt = torch.load(runs_root / "teacher" / "model.pt", map_location=device)
+    teacher_model = TeacherTwoTower(
+        item_dim=int(teacher_ckpt["item_dim"]),
+        hidden_dim=int(teacher_ckpt["hidden_dim"]),
+        heads=int(teacher_ckpt["heads"]),
+        dropout=float(teacher_ckpt.get("dropout", 0.1)),
+    ).to(device)
+    teacher_model.load_state_dict(teacher_ckpt["state_dict"])
+    teacher_model.eval()
 
     news = pd.read_parquet(proc_root / "news.parquet")
     n_users = max(maps.user2idx.values()) + 1
@@ -68,15 +80,14 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         n_cats=n_cats,
         n_subcats=n_subcats,
         dense_dim=len(dense_cols),
+        item_base_dim=int(item_base.shape[1]),
         emb_dim=int(dlrm_cfg["emb_dim"]),
         bottom_mlp=[int(x) for x in dlrm_cfg["bottom_mlp"]],
         top_mlp=[int(x) for x in dlrm_cfg["top_mlp"]],
         dropout=float(dlrm_cfg.get("dropout", 0.0)),
-        teacher_dim=teacher_dim,
         fusion_heads=4,
     ).to(device)
 
-    # Student repr dimension: eu(emb_dim)+ei(emb_dim)+zf(emb_dim)=3*emb_dim
     emb_dim = int(dlrm_cfg["emb_dim"])
     student_repr_dim = 3 * emb_dim
     teacher_repr_dim = 2 * teacher_dim
@@ -121,10 +132,21 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         losses = []
         for batch in tqdm(train_loader, desc=f"Train ep {ep}"):
             batch = to_device(batch, device)
-            ui = batch["user_idx"].cpu().numpy()
-            ni = batch["news_idx"].cpu().numpy()
-            tu = torch.tensor(teacher_user[ui], dtype=torch.float32, device=device)
-            ti = torch.tensor(teacher_item[ni], dtype=torch.float32, device=device)
+            item_base_batch = item_base_tensor[batch["news_idx"]]
+            hist_base_batch = item_base_tensor[batch["hist_news_idx"]]
+            has_hist = batch["hist_mask"].any(dim=1)
+            with torch.no_grad():
+                tu = torch.zeros(
+                    (batch["user_idx"].size(0), teacher_dim),
+                    dtype=torch.float32,
+                    device=device,
+                )
+                if bool(has_hist.any().item()):
+                    hist_teacher_batch = teacher_item_tensor[batch["hist_news_idx"][has_hist]]
+                    tu[has_hist] = teacher_model.encode_user_from_item_vectors(
+                        hist_teacher_batch, batch["hist_mask"][has_hist]
+                    )
+                ti = teacher_item_tensor[batch["news_idx"]]
 
             logits, rep = model(
                 user_idx=batch["user_idx"],
@@ -132,8 +154,9 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                 cat_idx=batch["cat_idx"],
                 subcat_idx=batch["subcat_idx"],
                 dense=batch["dense"],
-                teacher_user_emb=tu,
-                teacher_item_emb=ti,
+                item_base=item_base_batch,
+                history_item_base=hist_base_batch,
+                history_mask=batch["hist_mask"],
                 return_repr=True,
             )
             y = batch["label"]
@@ -156,6 +179,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                     (batch["is_cold_user"] == 1) | (batch["is_new_item"] == 1)
                 ).float()
                 w = (cold_mask * w_cold) + ((1.0 - cold_mask) * w_warm)
+                w = w * has_hist.float()
                 w = w.detach()
 
                 distill_loss = (w * (lam_logit * loss_logit + lam_repr * loss_repr)).mean()
@@ -177,18 +201,15 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         with torch.no_grad():
             for batch in tqdm(dev_loader, desc=f"Dev ep {ep}"):
                 batch = to_device(batch, device)
-                ui = batch["user_idx"].cpu().numpy()
-                ni = batch["news_idx"].cpu().numpy()
-                tu = torch.tensor(teacher_user[ui], dtype=torch.float32, device=device)
-                ti = torch.tensor(teacher_item[ni], dtype=torch.float32, device=device)
                 logits, _ = model(
                     user_idx=batch["user_idx"],
                     news_idx=batch["news_idx"],
                     cat_idx=batch["cat_idx"],
                     subcat_idx=batch["subcat_idx"],
                     dense=batch["dense"],
-                    teacher_user_emb=tu,
-                    teacher_item_emb=ti,
+                    item_base=item_base_tensor[batch["news_idx"]],
+                    history_item_base=item_base_tensor[batch["hist_news_idx"]],
+                    history_mask=batch["hist_mask"],
                     return_repr=False,
                 )
                 ys.extend(batch["label"].detach().cpu().numpy().tolist())
@@ -253,18 +274,15 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         with torch.no_grad():
             for batch in tqdm(dev_loader, desc="Fit temperature"):
                 batch = to_device(batch, device)
-                ui = batch["user_idx"].cpu().numpy()
-                ni = batch["news_idx"].cpu().numpy()
-                tu = torch.tensor(teacher_user[ui], dtype=torch.float32, device=device)
-                ti = torch.tensor(teacher_item[ni], dtype=torch.float32, device=device)
                 logits, _ = model(
                     user_idx=batch["user_idx"],
                     news_idx=batch["news_idx"],
                     cat_idx=batch["cat_idx"],
                     subcat_idx=batch["subcat_idx"],
                     dense=batch["dense"],
-                    teacher_user_emb=tu,
-                    teacher_item_emb=ti,
+                    item_base=item_base_tensor[batch["news_idx"]],
+                    history_item_base=item_base_tensor[batch["hist_news_idx"]],
+                    history_mask=batch["hist_mask"],
                     return_repr=False,
                 )
                 logits_all.append(logits.detach().cpu().numpy())

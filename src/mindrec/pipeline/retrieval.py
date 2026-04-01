@@ -83,6 +83,7 @@ def run_eval_retrieval(cfg: dict[str, Any]) -> None:
             item_dim=int(ckpt["item_dim"]),
             hidden_dim=int(ckpt["hidden_dim"]),
             heads=int(ckpt["heads"]),
+            dropout=float(ckpt.get("dropout", 0.1)),
         )
         model.load_state_dict(ckpt["state_dict"])
         model.eval()

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -45,6 +43,17 @@ class AttentionFusion(nn.Module):
         return self.out(out.squeeze(1))
 
 
+def masked_mean(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    weights = mask.unsqueeze(-1).to(dtype=x.dtype)
+    denom = weights.sum(dim=1).clamp_min(1.0)
+    return (x * weights).sum(dim=1) / denom
+
+
+def mask_pooled_vector(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    has_history = mask.any(dim=1, keepdim=True).to(dtype=x.dtype)
+    return x * has_history
+
+
 class DLRMStudent(nn.Module):
     def __init__(
         self,
@@ -53,11 +62,11 @@ class DLRMStudent(nn.Module):
         n_cats: int,
         n_subcats: int,
         dense_dim: int,
+        item_base_dim: int,
         emb_dim: int = 64,
         bottom_mlp: list[int] | None = None,
         top_mlp: list[int] | None = None,
         dropout: float = 0.0,
-        teacher_dim: int | None = None,
         fusion_heads: int = 4,
     ) -> None:
         super().__init__()
@@ -75,21 +84,32 @@ class DLRMStudent(nn.Module):
         d_bottom = bottom_mlp[-1]
         self.xd_proj = nn.Linear(d_bottom, emb_dim)
 
-        self.use_teacher = teacher_dim is not None
-        self.teacher_dim = teacher_dim
+        self.item_base_proj = nn.Linear(item_base_dim, emb_dim)
+        self.item_base_mlp = nn.Sequential(
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(emb_dim, emb_dim),
+        )
+        self.hist_refine = nn.Sequential(
+            nn.Linear(emb_dim, emb_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(emb_dim, emb_dim),
+        )
+        self.user_sem_proj = nn.Linear(emb_dim, emb_dim)
+        self.item_sem_proj = nn.Linear(emb_dim, emb_dim)
+        self.semantic_fusion = AttentionFusion(dim=emb_dim, heads=fusion_heads)
 
-        if self.use_teacher:
-            self.teacher_u_proj = nn.Linear(teacher_dim, emb_dim)
-            self.teacher_i_proj = nn.Linear(teacher_dim, emb_dim)
-            self.fusion = AttentionFusion(dim=emb_dim, heads=fusion_heads)
-
-        # DLRM interaction dims:
-        # features: dense_bottom + 4 embeddings (+ optional fusion vector)
-        self.n_feat = 1 + 4 + (1 if self.use_teacher else 0)
+        self.n_feat = 1 + 4 + 3
         n_inter = self.n_feat * (self.n_feat - 1) // 2
-        top_in = d_bottom + 4 * emb_dim + (emb_dim if self.use_teacher else 0) + n_inter
+        top_in = d_bottom + 7 * emb_dim + n_inter
 
         self.top = make_mlp(top_in, top_mlp, dropout=dropout, last_activation=False)
+
+    def _encode_item_base(self, item_base: torch.Tensor) -> torch.Tensor:
+        base = self.item_base_proj(item_base)
+        refined = self.item_base_mlp(base)
+        return F.normalize(base + refined, dim=-1)
 
     def forward(
         self,
@@ -98,37 +118,29 @@ class DLRMStudent(nn.Module):
         cat_idx: torch.Tensor,
         subcat_idx: torch.Tensor,
         dense: torch.Tensor,
-        teacher_user_emb: Optional[torch.Tensor] = None,
-        teacher_item_emb: Optional[torch.Tensor] = None,
+        item_base: torch.Tensor,
+        history_item_base: torch.Tensor,
+        history_mask: torch.Tensor,
         return_repr: bool = False,
-    ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
-        # Embeddings
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         eu = self.user_emb(user_idx)
         ei = self.news_emb(news_idx)
         ec = self.cat_emb(cat_idx)
         es = self.subcat_emb(subcat_idx)
 
         xd = self.bottom(dense)
-
-        extras = []
-        if self.use_teacher:
-            if teacher_user_emb is None or teacher_item_emb is None:
-                raise ValueError("Teacher embeddings required when teacher_dim is set.")
-            tu = self.teacher_u_proj(teacher_user_emb)
-            ti = self.teacher_i_proj(teacher_item_emb)
-            kv = torch.stack([tu, ti], dim=1)  # [B,2,D]
-            q = eu + xd  # query from user emb + dense summary
-            zf = self.fusion(q=q, kv=kv)
-            extras.append(zf)
-
-        # Build feature list for interactions (project dense into emb_dim by repeating)
-        # We interact: [xd_proj, eu, ei, ec, es, (zf)]
-        # xd has d_bottom, not emb_dim; use a linear projection to emb_dim via a simple padding/truncation trick
-        # but keep the raw xd for top-mlp too.
-        # To keep it simple, create xd_emb with a learned linear mapping:
         xd_emb = self.xd_proj(xd)
 
-        feats = [xd_emb, eu, ei, ec, es] + extras
+        item_sem = self.item_sem_proj(self._encode_item_base(item_base))
+        hist_sem = self._encode_item_base(history_item_base)
+        hist_sem = hist_sem + self.hist_refine(hist_sem)
+        user_hist = masked_mean(hist_sem, history_mask)
+        user_sem = self.user_sem_proj(user_hist)
+        user_sem = mask_pooled_vector(user_sem, history_mask)
+        user_sem = F.normalize(user_sem, dim=-1)
+        sem_fused = self.semantic_fusion(q=eu + xd_emb, kv=torch.stack([user_sem, item_sem], dim=1))
+
+        feats = [xd_emb, eu, ei, ec, es, user_sem, item_sem, sem_fused]
         inter = []
         for i in range(len(feats)):
             for j in range(i + 1, len(feats)):
@@ -139,11 +151,12 @@ class DLRMStudent(nn.Module):
             else torch.zeros((xd.size(0), 0), device=xd.device)
         )
 
-        concat = torch.cat([xd, eu, ei, ec, es] + extras + [inter_vec], dim=1)
+        concat = torch.cat(
+            [xd, eu, ei, ec, es, user_sem, item_sem, sem_fused, inter_vec], dim=1
+        )
         logit = self.top(concat).squeeze(1)
 
         rep = None
         if return_repr:
-            # Representation used for distillation alignment
-            rep = torch.cat([eu, ei] + extras, dim=1)
+            rep = torch.cat([user_sem, item_sem, sem_fused], dim=1)
         return logit, rep

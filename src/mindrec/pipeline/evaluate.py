@@ -33,9 +33,8 @@ def _load_model(
     n_cats = int(news["cat_idx"].max()) + 1
     n_subcats = int(news["subcat_idx"].max()) + 1
 
+    item_base = np.load(runs_root / "teacher" / "item_base_emb.npy")
     teacher_item = np.load(runs_root / "teacher" / "item_teacher_emb.npy")
-    teacher_dim = int(teacher_item.shape[1])
-    teacher_user = np.load(runs_root / "teacher" / "user_teacher_emb.npy")
 
     dlrm_cfg = cfg["ranker"]["dlrm"]
     model = DLRMStudent(
@@ -44,18 +43,32 @@ def _load_model(
         n_cats=n_cats,
         n_subcats=n_subcats,
         dense_dim=2,
+        item_base_dim=int(item_base.shape[1]),
         emb_dim=int(dlrm_cfg["emb_dim"]),
         bottom_mlp=[int(x) for x in dlrm_cfg["bottom_mlp"]],
         top_mlp=[int(x) for x in dlrm_cfg["top_mlp"]],
         dropout=float(dlrm_cfg.get("dropout", 0.0)),
-        teacher_dim=teacher_dim,
         fusion_heads=4,
     ).to(device)
 
     ckpt = torch.load(runs_root / "ranker" / "best.pt", map_location=device)
     model.load_state_dict(ckpt["model"])
     model.eval()
-    return model, teacher_user, teacher_item
+    return model, item_base, teacher_item
+
+
+def _expand_history_base(
+    item_base: np.ndarray, hist_idx: list[int], batch_size: int, device: torch.device
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if hist_idx:
+        hist_np = item_base[np.asarray(hist_idx, dtype=np.int64)]
+        hist = torch.tensor(hist_np, dtype=torch.float32, device=device).unsqueeze(0)
+        hist = hist.repeat(batch_size, 1, 1)
+        mask = torch.ones((batch_size, len(hist_idx)), dtype=torch.bool, device=device)
+        return hist, mask
+    hist = torch.zeros((batch_size, 1, item_base.shape[1]), dtype=torch.float32, device=device)
+    mask = torch.zeros((batch_size, 1), dtype=torch.bool, device=device)
+    return hist, mask
 
 
 def run_evaluate(cfg: dict[str, Any]) -> None:
@@ -69,7 +82,7 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
         device_str = "cpu"
     device = torch.device(device_str)
 
-    model, teacher_user, teacher_item = _load_model(cfg, proc_root, runs_root, device)
+    model, item_base, _ = _load_model(cfg, proc_root, runs_root, device)
     calib_path = runs_root / "ranker" / "calibration.json"
     scaler = TemperatureScaler.load(calib_path) if calib_path.exists() else None
 
@@ -99,6 +112,7 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
             if labels.sum() <= 0:
                 continue
             user_idx = int(r["user_idx"])
+            hist_news_idx = [int(x) for x in list(r["hist_news_idx"])]
             cand_news_idx = np.array(r["cand_news_idx"], dtype=np.int64)
             cand_cat_idx = np.array(r["cand_cat_idx"], dtype=np.int64)
             cand_subcat_idx = np.array(r["cand_subcat_idx"], dtype=np.int64)
@@ -110,22 +124,13 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
                 [np.full_like(cand_clicks_log1p, hlen), cand_clicks_log1p], axis=1
             )
 
-            # Teacher embeddings
-            tu = torch.tensor(
-                teacher_user[user_idx : user_idx + 1],
-                dtype=torch.float32,
-                device=device,
-            ).repeat(len(cand_news_idx), 1)
-            ti = torch.tensor(
-                teacher_item[cand_news_idx], dtype=torch.float32, device=device
-            )
-
             logits = []
             bs = 2048
             for i in range(0, len(cand_news_idx), bs):
                 sl = slice(i, i + bs)
+                batch_size = len(cand_news_idx[sl])
                 b_user = torch.tensor(
-                    [user_idx] * len(cand_news_idx[sl]), dtype=torch.long, device=device
+                    [user_idx] * batch_size, dtype=torch.long, device=device
                 )
                 b_news = torch.tensor(
                     cand_news_idx[sl], dtype=torch.long, device=device
@@ -135,16 +140,24 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
                     cand_subcat_idx[sl], dtype=torch.long, device=device
                 )
                 b_dense = torch.tensor(dense[sl], dtype=torch.float32, device=device)
-                b_tu = tu[sl]
-                b_ti = ti[sl]
+                b_item_base = torch.tensor(
+                    item_base[cand_news_idx[sl]], dtype=torch.float32, device=device
+                )
+                b_hist_base, b_hist_mask = _expand_history_base(
+                    item_base=item_base,
+                    hist_idx=hist_news_idx,
+                    batch_size=batch_size,
+                    device=device,
+                )
                 logit, _ = model(
                     user_idx=b_user,
                     news_idx=b_news,
                     cat_idx=b_cat,
                     subcat_idx=b_sub,
                     dense=b_dense,
-                    teacher_user_emb=b_tu,
-                    teacher_item_emb=b_ti,
+                    item_base=b_item_base,
+                    history_item_base=b_hist_base,
+                    history_mask=b_hist_mask,
                 )
                 logits.append(logit.detach().cpu().numpy())
             scores = np.concatenate(logits, axis=0)

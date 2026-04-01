@@ -24,7 +24,7 @@ from mindrec.metrics.ranking import (
     ndcg_from_order,
     recall_from_order,
 )
-from mindrec.pipeline.evaluate import _load_model
+from mindrec.pipeline.evaluate import _expand_history_base, _load_model
 from mindrec.rerank.greedy import build_news_meta, cosine_sim_matrix, greedy_rerank
 from mindrec.utils import position_bias_weights, save_json
 
@@ -67,7 +67,7 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
         device_str = "cpu"
     device = torch.device(device_str)
 
-    model, teacher_user, teacher_item = _load_model(cfg, proc_root, runs_root, device)
+    model, item_base, teacher_item = _load_model(cfg, proc_root, runs_root, device)
 
     news = pd.read_parquet(proc_root / "news.parquet")
     news_meta = build_news_meta(news)
@@ -112,6 +112,7 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
             if labels.sum() <= 0:
                 continue
             user_idx = int(r["user_idx"])
+            hist_news_idx = [int(x) for x in list(r["hist_news_idx"])]
             cand_news_id = list(r["cand_news_id"])
             cand_news_idx = np.array(r["cand_news_idx"], dtype=np.int64)
             cand_cat_idx = np.array(r["cand_cat_idx"], dtype=np.int64)
@@ -124,22 +125,14 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
                 [np.full_like(cand_clicks_log1p, hlen), cand_clicks_log1p], axis=1
             )
 
-            tu = torch.tensor(
-                teacher_user[user_idx : user_idx + 1],
-                dtype=torch.float32,
-                device=device,
-            ).repeat(len(cand_news_idx), 1)
-            ti = torch.tensor(
-                teacher_item[cand_news_idx], dtype=torch.float32, device=device
-            )
-
             # Score all candidates
             logits = []
             bs = 2048
             for i in range(0, len(cand_news_idx), bs):
                 sl = slice(i, i + bs)
+                batch_size = len(cand_news_idx[sl])
                 b_user = torch.tensor(
-                    [user_idx] * len(cand_news_idx[sl]), dtype=torch.long, device=device
+                    [user_idx] * batch_size, dtype=torch.long, device=device
                 )
                 b_news = torch.tensor(
                     cand_news_idx[sl], dtype=torch.long, device=device
@@ -149,16 +142,24 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
                     cand_subcat_idx[sl], dtype=torch.long, device=device
                 )
                 b_dense = torch.tensor(dense[sl], dtype=torch.float32, device=device)
-                b_tu = tu[sl]
-                b_ti = ti[sl]
+                b_item_base = torch.tensor(
+                    item_base[cand_news_idx[sl]], dtype=torch.float32, device=device
+                )
+                b_hist_base, b_hist_mask = _expand_history_base(
+                    item_base=item_base,
+                    hist_idx=hist_news_idx,
+                    batch_size=batch_size,
+                    device=device,
+                )
                 logit, _ = model(
                     user_idx=b_user,
                     news_idx=b_news,
                     cat_idx=b_cat,
                     subcat_idx=b_sub,
                     dense=b_dense,
-                    teacher_user_emb=b_tu,
-                    teacher_item_emb=b_ti,
+                    item_base=b_item_base,
+                    history_item_base=b_hist_base,
+                    history_mask=b_hist_mask,
                 )
                 logits.append(logit.detach().cpu().numpy())
             scores = np.concatenate(logits, axis=0)

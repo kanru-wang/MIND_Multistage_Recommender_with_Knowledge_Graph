@@ -20,7 +20,7 @@ from mindrec.metrics.fairness import (
     uniform_target,
 )
 from mindrec.metrics.ranking import ndcg_at_k, ndcg_from_order, recall_at_k, recall_from_order
-from mindrec.pipeline.evaluate import _load_model
+from mindrec.pipeline.evaluate import _expand_history_base, _load_model
 from mindrec.rerank.greedy import build_news_meta, cosine_sim_matrix, greedy_rerank
 from mindrec.utils import position_bias_weights, save_json
 
@@ -84,7 +84,7 @@ def _score_impressions(
     runs_root: Path,
     device: torch.device,
 ) -> tuple[list[ImpressionScores], dict[str, Any]]:
-    model, teacher_user, teacher_item = _load_model(cfg, proc_root, runs_root, device)
+    model, item_base, teacher_item = _load_model(cfg, proc_root, runs_root, device)
     impr = pd.read_parquet(proc_root / "dev_impressions.parquet")
 
     scored: list[ImpressionScores] = []
@@ -95,6 +95,7 @@ def _score_impressions(
                 continue
 
             user_idx = int(r["user_idx"])
+            hist_news_idx = [int(x) for x in list(r["hist_news_idx"])]
             cand_news_id = list(r["cand_news_id"])
             cand_news_idx = np.array(r["cand_news_idx"], dtype=np.int64)
             cand_cat_idx = np.array(r["cand_cat_idx"], dtype=np.int64)
@@ -106,21 +107,13 @@ def _score_impressions(
                 [np.full_like(cand_clicks_log1p, hlen), cand_clicks_log1p], axis=1
             )
 
-            tu = torch.tensor(
-                teacher_user[user_idx : user_idx + 1],
-                dtype=torch.float32,
-                device=device,
-            ).repeat(len(cand_news_idx), 1)
-            ti = torch.tensor(
-                teacher_item[cand_news_idx], dtype=torch.float32, device=device
-            )
-
             logits = []
             bs = 2048
             for i in range(0, len(cand_news_idx), bs):
                 sl = slice(i, i + bs)
+                batch_size = len(cand_news_idx[sl])
                 b_user = torch.tensor(
-                    [user_idx] * len(cand_news_idx[sl]), dtype=torch.long, device=device
+                    [user_idx] * batch_size, dtype=torch.long, device=device
                 )
                 b_news = torch.tensor(
                     cand_news_idx[sl], dtype=torch.long, device=device
@@ -130,14 +123,24 @@ def _score_impressions(
                     cand_subcat_idx[sl], dtype=torch.long, device=device
                 )
                 b_dense = torch.tensor(dense[sl], dtype=torch.float32, device=device)
+                b_item_base = torch.tensor(
+                    item_base[cand_news_idx[sl]], dtype=torch.float32, device=device
+                )
+                b_hist_base, b_hist_mask = _expand_history_base(
+                    item_base=item_base,
+                    hist_idx=hist_news_idx,
+                    batch_size=batch_size,
+                    device=device,
+                )
                 logit, _ = model(
                     user_idx=b_user,
                     news_idx=b_news,
                     cat_idx=b_cat,
                     subcat_idx=b_sub,
                     dense=b_dense,
-                    teacher_user_emb=tu[sl],
-                    teacher_item_emb=ti[sl],
+                    item_base=b_item_base,
+                    history_item_base=b_hist_base,
+                    history_mask=b_hist_mask,
                 )
                 logits.append(logit.detach().cpu().numpy())
 
@@ -332,18 +335,20 @@ def _evaluate_candidate(
 def _make_constraint(
     baseline: dict[str, float], search_cfg: dict[str, Any]
 ) -> dict[str, Any]:
-    absolute_cfg = dict(search_cfg.get("absolute_guardrails", {}))
+    relative_cfg = dict(search_cfg.get("relative_guardrails", {}))
     return {
-        "absolute_guardrails": {
-            "min_ndcg@k": float(absolute_cfg.get("min_ndcg@k", 0.0)),
-            "min_new_item_exposure_frac": float(
-                absolute_cfg.get("min_new_item_exposure_frac", 0.0)
+        "relative_guardrails": {
+            "max_ndcg_drop_ratio": float(
+                relative_cfg.get("max_ndcg_drop_ratio", 0.03)
             ),
-            "min_category_coverage": float(
-                absolute_cfg.get("min_category_coverage", 0.0)
+            "min_new_item_exposure_gain": float(
+                relative_cfg.get("min_new_item_exposure_gain", 0.0)
             ),
-            "max_fairness_kl_pool": float(
-                absolute_cfg.get("max_fairness_kl_pool", float("inf"))
+            "min_category_coverage_gain": float(
+                relative_cfg.get("min_category_coverage_gain", 0.3)
+            ),
+            "min_fairness_kl_pool_improvement": float(
+                relative_cfg.get("min_fairness_kl_pool_improvement", 0.05)
             ),
         },
         "baseline_metrics": {
@@ -359,19 +364,21 @@ def _make_constraint(
 def _constraint_check(
     baseline: dict[str, float], metrics: dict[str, Any], constraint: dict[str, float]
 ) -> dict[str, Any]:
-    absolute = constraint["absolute_guardrails"]
-    ndcg_drop_pct = 100.0 * max(
+    relative = constraint["relative_guardrails"]
+    ndcg_drop_ratio = max(
         0.0, (baseline["ndcg@k"] - metrics["ndcg@k"]) / max(baseline["ndcg@k"], 1e-12)
     )
+    ndcg_drop_pct = 100.0 * ndcg_drop_ratio
     new_gain = metrics["new_item_exposure_frac"] - baseline["new_item_exposure_frac"]
     cov_gain = metrics["category_coverage"] - baseline["category_coverage"]
     fair_kl_pool_delta = metrics["fairness_kl_pool"] - baseline["fairness_kl_pool"]
     fair_kl_full_delta = metrics["fairness_kl_full"] - baseline["fairness_kl_full"]
+    fair_kl_pool_improvement = baseline["fairness_kl_pool"] - metrics["fairness_kl_pool"]
     feasible = (
-        metrics["ndcg@k"] >= absolute["min_ndcg@k"]
-        and metrics["new_item_exposure_frac"] >= absolute["min_new_item_exposure_frac"]
-        and metrics["category_coverage"] >= absolute["min_category_coverage"]
-        and metrics["fairness_kl_pool"] <= absolute["max_fairness_kl_pool"]
+        ndcg_drop_ratio <= relative["max_ndcg_drop_ratio"]
+        and new_gain >= relative["min_new_item_exposure_gain"]
+        and cov_gain >= relative["min_category_coverage_gain"]
+        and fair_kl_pool_improvement >= relative["min_fairness_kl_pool_improvement"]
     )
     return {
         "feasible": bool(feasible),
@@ -379,6 +386,7 @@ def _constraint_check(
         "new_item_exposure_gain": float(new_gain),
         "category_coverage_gain": float(cov_gain),
         "fairness_kl_pool_delta": float(fair_kl_pool_delta),
+        "fairness_kl_pool_improvement": float(fair_kl_pool_improvement),
         "fairness_kl_full_delta": float(fair_kl_full_delta),
         "absolute_metrics": {
             "ndcg@k": float(metrics["ndcg@k"]),
@@ -435,41 +443,41 @@ def _attach_objective_views(
     )
     cov_gain = metrics["category_coverage"] - baseline["category_coverage"]
     fair_pool_delta = metrics["fairness_kl_pool"] - baseline["fairness_kl_pool"]
-    absolute = constraint["absolute_guardrails"]
-    fairness_ceiling = float(absolute["max_fairness_kl_pool"])
-    if np.isfinite(fairness_ceiling):
-        fairness_kl_pool_vs_ceiling_units = float(
-            (fairness_ceiling - metrics["fairness_kl_pool"])
-            / max(fairness_ceiling, 1e-12)
-        )
-    else:
-        fairness_kl_pool_vs_ceiling_units = 0.0
+    relative = constraint["relative_guardrails"]
+    fairness_target_improvement = float(relative["min_fairness_kl_pool_improvement"])
+    fairness_kl_pool_improvement_units = float(
+        (baseline["fairness_kl_pool"] - metrics["fairness_kl_pool"])
+        / max(fairness_target_improvement, 1e-12)
+    )
 
     utility_terms = {
-        # Normalize each term by the absolute guardrail scale.
-        "ndcg_vs_floor_units": float(
-            metrics["ndcg@k"] / max(absolute["min_ndcg@k"], 1e-12)
+        # Normalize each term by the relative guardrail scale.
+        "ndcg_retention_units": float(
+            1.0 - ((baseline["ndcg@k"] - metrics["ndcg@k"]) / max(baseline["ndcg@k"], 1e-12))
         ),
-        "new_item_exposure_vs_floor_units": float(
-            metrics["new_item_exposure_frac"]
-            / max(absolute["min_new_item_exposure_frac"], 1e-12)
+        "new_item_exposure_gain_units": float(
+            (metrics["new_item_exposure_frac"] - baseline["new_item_exposure_frac"])
+            / max(relative["min_new_item_exposure_gain"], 1e-12)
+            if relative["min_new_item_exposure_gain"] > 0.0
+            else (metrics["new_item_exposure_frac"] - baseline["new_item_exposure_frac"])
         ),
-        "category_coverage_vs_floor_units": float(
-            metrics["category_coverage"] / max(absolute["min_category_coverage"], 1e-12)
+        "category_coverage_gain_units": float(
+            (metrics["category_coverage"] - baseline["category_coverage"])
+            / max(relative["min_category_coverage_gain"], 1e-12)
         ),
-        "fairness_kl_pool_vs_ceiling_units": fairness_kl_pool_vs_ceiling_units,
+        "fairness_kl_pool_improvement_units": fairness_kl_pool_improvement_units,
     }
     utility_cfg = dict(search_cfg.get("utility_coefficients", {}))
     utility_coefficients = {
-        "ndcg_vs_floor_units": float(utility_cfg.get("ndcg_vs_floor_units", 4.0)),
-        "new_item_exposure_vs_floor_units": float(
-            utility_cfg.get("new_item_exposure_vs_floor_units", 1.5)
+        "ndcg_retention_units": float(utility_cfg.get("ndcg_retention_units", 4.0)),
+        "new_item_exposure_gain_units": float(
+            utility_cfg.get("new_item_exposure_gain_units", 0.5)
         ),
-        "category_coverage_vs_floor_units": float(
-            utility_cfg.get("category_coverage_vs_floor_units", 1.0)
+        "category_coverage_gain_units": float(
+            utility_cfg.get("category_coverage_gain_units", 1.5)
         ),
-        "fairness_kl_pool_vs_ceiling_units": float(
-            utility_cfg.get("fairness_kl_pool_vs_ceiling_units", 0.75)
+        "fairness_kl_pool_improvement_units": float(
+            utility_cfg.get("fairness_kl_pool_improvement_units", 1.5)
         ),
     }
     scalar_utility = sum(

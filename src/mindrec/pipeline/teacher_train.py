@@ -290,6 +290,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
     lr = float(teacher_cfg.get("lr", 2.0e-4))
     hidden_dim = int(teacher_cfg.get("user_attn_dim", 256))
     heads = int(teacher_cfg.get("user_attn_heads", 4))
+    dropout = float(teacher_cfg.get("dropout", 0.1))
     temperature = float(teacher_cfg.get("temperature", 0.07))
     negatives_per_positive = int(teacher_cfg.get("negatives_per_positive", 8))
     device_str = str(teacher_cfg.get("device", "cuda"))
@@ -359,6 +360,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
         item_dim=item_base.shape[1],
         hidden_dim=hidden_dim,
         heads=heads,
+        dropout=dropout,
     ).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1.0e-6)
 
@@ -438,6 +440,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
                     "item_dim": int(item_base.shape[1]),
                     "hidden_dim": hidden_dim,
                     "heads": heads,
+                    "dropout": dropout,
                     "state_dict": model.state_dict(),
                     "epoch": epoch,
                     "train_loss_mean": train_loss_mean,
@@ -477,11 +480,13 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
 
     np.save(art_root / "item_teacher_emb.npy", item_teacher_emb.astype(np.float32))
     np.save(art_root / "user_teacher_emb.npy", user_teacher_emb.astype(np.float32))
+    np.save(art_root / "item_base_emb.npy", item_base.astype(np.float32))
     torch.save(
         {
             "item_dim": int(item_base.shape[1]),
             "hidden_dim": hidden_dim,
             "heads": heads,
+            "dropout": dropout,
             "state_dict": model.state_dict(),
             "best_epoch": best_epoch,
             "best_dev_loss_mean": best_dev_loss_mean,
@@ -498,6 +503,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
         "teacher_dim": int(item_teacher_emb.shape[1]),
         "hidden_dim": hidden_dim,
         "user_pooling": "attention",
+        "dropout": dropout,
         "temperature": temperature,
         "negatives_per_positive": negatives_per_positive,
         "train_samples": int(len(samples)),

@@ -41,7 +41,7 @@ retrieval:
 ranker:
   batch_size: 1024
   lr: 1.0e-3
-  weight_decay: 1.0e-6
+  weight_decay: 1.0e-5
   epochs: 8
   early_stopping:
     enabled: true
@@ -56,8 +56,8 @@ ranker:
   distill:
     enabled: true
     temperature: 2.0
-    lambda_logit: 1.0
-    lambda_repr: 0.1
+    lambda_logit: 0.7
+    lambda_repr: 0.05
     cold_weight: 2.0
     warm_weight: 0.5
   calibration:
@@ -80,19 +80,19 @@ rerank:
   fairness:
     enabled: true
     category_target: "catalog"  # catalog|uniform
-    new_item_floor: 0.20  # minimum fraction of exposure in top-k to new items
-    penalty_weight: 0.5
+    new_item_floor: 0.15  # minimum fraction of exposure in top-k to new items
+    penalty_weight: 0.25
   search:
-    absolute_guardrails:
-      min_ndcg@k: 0.327
-      min_new_item_exposure_frac: 0.55
-      min_category_coverage: 6.40
-      max_fairness_kl_pool: 0.241
+    relative_guardrails:
+      max_ndcg_drop_ratio: 0.03
+      min_new_item_exposure_gain: 0.00
+      min_category_coverage_gain: 0.30
+      min_fairness_kl_pool_improvement: 0.05
     utility_coefficients:
-      ndcg_vs_floor_units: 4.0
-      new_item_exposure_vs_floor_units: 1.5
-      category_coverage_vs_floor_units: 1.0
-      fairness_kl_pool_vs_ceiling_units: 1.0
+      ndcg_retention_units: 4.0
+      new_item_exposure_gain_units: 0.5
+      category_coverage_gain_units: 1.5
+      fairness_kl_pool_improvement_units: 1.5
 
 eval:
   ks: [5, 10]

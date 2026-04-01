@@ -20,6 +20,7 @@ def build_pairs(
     item_clicks_train: dict[str, int],
     min_user_hist_for_warm: int,
     min_item_train_clicks_for_warm: int,
+    max_history: int,
     neg_per_pos: int = 4,
     seed: int = 13,
 ) -> pd.DataFrame:
@@ -33,6 +34,11 @@ def build_pairs(
         user_id = str(r["user_id"])
         user_idx = maps.user2idx.get(user_id, 0)
         hist = r["history"]
+        hist_news_idx = [
+            maps.news2idx[h]
+            for h in hist[-max_history:]
+            if h in maps.news2idx and maps.news2idx[h] != 0
+        ]
         cold_u = 1 if is_cold_user(hist, min_user_hist_for_warm) else 0
 
         cand_ids = list(r["cand_news_id"])
@@ -66,7 +72,8 @@ def build_pairs(
                         "news_idx": int(meta["news_idx"]),
                         "cat_idx": int(meta["cat_idx"]),
                         "subcat_idx": int(meta["subcat_idx"]),
-                        "history_len": float(len(hist)),
+                        "hist_news_idx": hist_news_idx,
+                        "history_len": float(len(hist_news_idx)),
                         "item_clicks": float(clicks),
                         "item_clicks_log1p": float(np.log1p(clicks)),
                         "label": lab,
@@ -84,6 +91,7 @@ def build_impressions_for_eval(
     item_clicks_train: dict[str, int],
     min_user_hist_for_warm: int,
     min_item_train_clicks_for_warm: int,
+    max_history: int,
 ) -> pd.DataFrame:
     news_lookup = news_idx_df.set_index("news_id")[
         ["news_idx", "cat_idx", "subcat_idx"]
@@ -93,6 +101,11 @@ def build_impressions_for_eval(
         user_id = str(r["user_id"])
         user_idx = maps.user2idx.get(user_id, 0)
         hist = r["history"]
+        hist_news_idx = [
+            maps.news2idx[h]
+            for h in hist[-max_history:]
+            if h in maps.news2idx and maps.news2idx[h] != 0
+        ]
         cold_u = 1 if is_cold_user(hist, min_user_hist_for_warm) else 0
 
         cand_ids = list(r["cand_news_id"])
@@ -122,7 +135,8 @@ def build_impressions_for_eval(
                 "impression_id": str(r["impression_id"]),
                 "user_id": user_id,
                 "user_idx": user_idx,
-                "history_len": float(len(hist)),
+                "hist_news_idx": hist_news_idx,
+                "history_len": float(len(hist_news_idx)),
                 "is_cold_user": cold_u,
                 "cand_news_id": cand_ids,
                 "cand_label": labels,
@@ -188,6 +202,7 @@ def run_preprocess(cfg: dict[str, Any]) -> None:
         min_item_train_clicks_for_warm=int(
             cfg["data"]["min_item_train_clicks_for_warm"]
         ),
+        max_history=int(cfg["data"]["max_history"]),
         neg_per_pos=4,
         seed=seed,
     )
@@ -200,6 +215,7 @@ def run_preprocess(cfg: dict[str, Any]) -> None:
         min_item_train_clicks_for_warm=int(
             cfg["data"]["min_item_train_clicks_for_warm"]
         ),
+        max_history=int(cfg["data"]["max_history"]),
         neg_per_pos=4,
         seed=seed + 1,
     )
@@ -216,6 +232,7 @@ def run_preprocess(cfg: dict[str, Any]) -> None:
         min_item_train_clicks_for_warm=int(
             cfg["data"]["min_item_train_clicks_for_warm"]
         ),
+        max_history=int(cfg["data"]["max_history"]),
     )
     impr_dev.to_parquet(proc_root / "dev_impressions.parquet", index=False)
 

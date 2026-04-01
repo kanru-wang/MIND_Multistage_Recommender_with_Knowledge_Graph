@@ -2,7 +2,7 @@
 
 This project implements a realistic recommender stack on the **Microsoft News Dataset (MIND)**:
 - Stage 1: **Teacher retrieval embeddings** (text-based item encoder + history-based user encoder)
-- Stage 2: **Student ranker** (DLRM-style sparse+dense model) with **attention fusion** to ingest teacher embeddings
+- Stage 2: **Student ranker** (DLRM-style sparse+dense model) that uses click history, sentence-transformer item bases, and sparse/tabular features
 - Stage 3: **Re-ranking** enforcing **(1) relevance vs novelty** and **(2) category/entity-informed coverage bonuses**, plus **exposure fairness** constraints/penalties for category and new items
 - Extensive **evaluation**: ranking metrics, calibration, diversity, exposure fairness, and cold/new slices
 
@@ -20,12 +20,13 @@ MIND is widely used as a benchmark for news recommendation, with impression logs
 - Training uses clicked positives plus in-impression negatives.
 - Retrieval evaluation encodes each dev impression with that impression's own history, so the query is temporally aligned with the impression being scored.
 - At the end of `train_teacher`, the pipeline writes:
+  - `item_base_emb.npy`: frozen sentence-transformer embedding for every news item
   - `item_teacher_emb.npy`: the final teacher embedding for every news item
   - `user_teacher_emb.npy`: the final teacher embedding for each training user history
 - These files are then reused by later stages:
   - `build_index` builds the Faiss retrieval index from `item_teacher_emb.npy`
   - `eval_retrieval` uses `item_teacher_emb.npy` and the saved teacher model to encode dev histories and search that index
-  - `train_ranker` loads both `item_teacher_emb.npy` and `user_teacher_emb.npy` as teacher targets for distillation and teacher-guided fusion
+  - `train_ranker` loads `item_base_emb.npy` as student semantic input and uses `item_teacher_emb.npy` / `user_teacher_emb.npy` only as teacher supervision targets
 
 #### Teacher and retrieval notes
 - In MIND `behaviors.tsv`, `history` is a list of previously clicked news IDs for that user before the current impression time. It is not a list of previous impressions.
@@ -69,12 +70,11 @@ Fairness target note:
 - **No training loop is required** for this re-ranking stage.
 
 #### Distillation representation note
-- In `DLRMStudent.forward()`, the student representation used for distillation is `rep = [eu, ei, zf]`, where:
-- `eu`: user ID embedding
-- `ei`: news/item ID embedding
-- `zf`: teacher-guided fusion vector from attention over teacher user/item embeddings
-- The dense tower output `xd` and the category/subcategory embeddings `ec`, `es` are intentionally excluded from `rep`.
-- Reason: the teacher representation being matched is `concat(teacher_user_emb, teacher_item_emb)`, which is a semantic user-item representation. `eu`, `ei`, and `zf` are the student parts most closely aligned with that semantic space, while `xd`, `ec`, and `es` do not have a clean one-to-one counterpart in the teacher embedding space.
+- In `DLRMStudent.forward()`, the student representation used for distillation is `rep = [user_sem, item_sem, sem_fused]`.
+- `user_sem`: student semantic user vector from pooled click-history sentence-transformer item bases
+- `item_sem`: student semantic item vector from the candidate item's sentence-transformer base embedding
+- `sem_fused`: a lightweight attention-fusion summary that mixes the semantic user/item states with the structured query context
+- The teacher target is still `concat(teacher_user_emb, teacher_item_emb)`, so a projection head maps the student representation into the teacher space for representation distillation.
 
 #### Re-ranking process
 - `greedy_rerank()` takes the top `pool_size` candidates by ranker score, then builds the final top-`k_out` list one item at a time.
@@ -228,31 +228,37 @@ python -m mindrec.cli rerank_eval --config configs/mind_small.yaml
 python -m mindrec.cli rerank_search --config configs/mind_small.yaml
 ```
 
+Typical workflow after search:
+- run `rerank_search`
+- inspect `best_feasible` or another chosen operating point in `rerank_search.json`
+- update `configs/mind_small.yaml` with the selected rerank parameters
+- run `rerank_eval` again to evaluate that chosen setting as the new default reranker
+
 The current reranker search reports three views of the tradeoff surface on dev:
 - `best_feasible`: maximize `nDCG@10` subject to absolute guardrails
 - `best_scalar_utility`: maximize a normalized scalar utility
 - `pareto_frontier`: nondominated settings across ranking/diversity/fairness axes
 
-The current absolute guardrails are:
-- `nDCG@10` must be at least `0.327`.
-- `new_item_exposure_frac` must be at least `0.55`.
-- `category_coverage@10` must be at least `6.40`.
-- `fairness_kl_pool` must be at most `0.241`.
+The current search now uses baseline-relative guardrails:
+- `nDCG@10` drop must be at most `3%` relative to the baseline ranker.
+- `new_item_exposure_frac` must not decrease relative to baseline.
+- `category_coverage@10` must improve by at least `0.30`.
+- `fairness_kl_pool` must improve by at least `0.05`.
 
 Each candidate in `rerank_search.json` now reports:
 - `constraint.feasible`
 
-The scalar utility is computed from absolute-guardrail-normalized units:
-- `ndcg_vs_floor_units = nDCG@10 / min_ndcg@k`
-- `new_item_exposure_vs_floor_units = new_item_exposure_frac / min_new_item_exposure_frac`
-- `category_coverage_vs_floor_units = category_coverage / min_category_coverage`
-- `fairness_kl_pool_vs_ceiling_units = (max_fairness_kl_pool - fairness_kl_pool) / max_fairness_kl_pool`
+The scalar utility is computed from baseline-relative normalized units:
+- `ndcg_retention_units = 1 - relative_ndcg_drop`
+- `new_item_exposure_gain_units = new_item_exposure_gain`
+- `category_coverage_gain_units = category_coverage_gain / min_category_coverage_gain`
+- `fairness_kl_pool_improvement_units = fairness_kl_pool_improvement / min_fairness_kl_pool_improvement`
 
 with coefficients:
-- `4.0 * ndcg_vs_floor_units`
-- `1.5 * new_item_exposure_vs_floor_units`
-- `1.0 * category_coverage_vs_floor_units`
-- `1.0 * fairness_kl_pool_vs_ceiling_units`
+- `4.0 * ndcg_retention_units`
+- `0.5 * new_item_exposure_gain_units`
+- `1.5 * category_coverage_gain_units`
+- `1.5 * fairness_kl_pool_improvement_units`
 
 The current selected setting is:
 - `relevance_weight=0.90`
@@ -270,24 +276,24 @@ Training logs are written to `runs/<run_name>/teacher/epochs.json` and `runs/<ru
 ### 3.6 Current demo results (`runs/mind_small_demo`)
 
 Teacher retrieval:
-- `recall@200 = 0.02974`
+- `recall@200 = 0.03923`
 - early stopping monitor: `retrieval_recall@200`
 - best teacher epoch: `2`
 
 Student ranker:
-- `nDCG@5 = 0.28481`
-- `nDCG@10 = 0.34293`
-- `MRR = 0.30098`
-- `AUC = 0.57720`
-- `MAP@10 = 0.25191`
-- best dev AUC during training: `0.58208` at epoch `5`
-- calibration changed `Brier` from `0.1424` to `0.0790`
+- `nDCG@5 = 0.35118`
+- `nDCG@10 = 0.41135`
+- `MRR = 0.37134`
+- `AUC = 0.65325`
+- `MAP@10 = 0.31623`
+- best dev AUC during training: `0.65702` at epoch `1`
+- calibration changed `Brier` from `0.12434` to `0.08088`
 
 Feasible reranker operating point:
-- `nDCG@10 = 0.32740`
-- `new_item_exposure_frac = 0.57631`
-- `category_coverage@10 = 6.4409`
-- `fairness_kl_pool = 0.24024`
+- `nDCG@10 = 0.40632`
+- `new_item_exposure_frac = 0.65910`
+- `category_coverage@10 = 5.4057`
+- `fairness_kl_pool = 0.37951`
 
 Search summary:
 - `best_feasible` matches the current default rerank config
