@@ -428,13 +428,13 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
         )
         save_json(art_root / "epochs.json", epoch_metrics)
 
-        improved = (recall_at_k - best_metric) > es_min_delta
+        improved = recall_at_k > best_metric
+        significant_improvement = (recall_at_k - best_metric) > es_min_delta
         if improved:
             best_metric = recall_at_k
             best_epoch = epoch
             best_dev_loss_mean = val_loss_mean
             best_eval_count = n_eval
-            epochs_without_improvement = 0
             torch.save(
                 {
                     "item_dim": int(item_base.shape[1]),
@@ -451,6 +451,8 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
                 },
                 art_root / "best.pt",
             )
+        if significant_improvement:
+            epochs_without_improvement = 0
         else:
             epochs_without_improvement += 1
 

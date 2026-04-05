@@ -567,6 +567,102 @@ def _pareto_frontier(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
+def _format_frontier_row(idx: int, item: dict[str, Any]) -> str:
+    weights = item["weights"]
+    fairness = item["fairness"]
+    constraint = item["constraint"]
+    utility = item["objective_view"]["scalar_utility"]["score"]
+    feasible = "Y" if bool(constraint["feasible"]) else "N"
+    return (
+        f"| {idx} | {feasible} | {item['ndcg@k']:.6f} | "
+        f"{item['new_item_exposure_frac']:.6f} | {item['category_coverage']:.6f} | "
+        f"{item['fairness_kl_pool']:.6f} | {item['ild']:.6f} | "
+        f"{weights['relevance']:.2f} | {weights['novelty']:.2f} | "
+        f"{weights['coverage']:.2f} | {fairness['penalty_weight']:.2f} | "
+        f"{fairness['new_item_floor']:.2f} | {utility:.6f} |"
+    )
+
+
+def _write_pareto_frontier_md(out_root: Path, out: dict[str, Any]) -> None:
+    baseline = out["baseline"]
+    guardrails = out["product_constraint"]["relative_guardrails"]
+    best_feasible = out.get("best_feasible")
+    best_scalar = out.get("best_scalar_utility")
+    frontier = out.get("pareto_frontier", [])
+
+    lines = [
+        "# Pareto Frontier Summary",
+        "",
+        f"Source: `runs/{out_root.parent.name}/eval/rerank_search.json`",
+        "",
+        (
+            "Baseline: "
+            f"nDCG@k={baseline['ndcg@k']:.6f}, "
+            f"new_item_exposure_frac={baseline['new_item_exposure_frac']:.6f}, "
+            f"category_coverage={baseline['category_coverage']:.6f}, "
+            f"fairness_kl_pool={baseline['fairness_kl_pool']:.6f}"
+        ),
+        "",
+        (
+            "Guardrails: "
+            f"max_ndcg_drop_ratio={guardrails['max_ndcg_drop_ratio']}, "
+            f"min_new_item_exposure_gain={guardrails['min_new_item_exposure_gain']:.2f}, "
+            f"min_category_coverage_gain={guardrails['min_category_coverage_gain']:.2f}, "
+            f"min_fairness_kl_pool_improvement={guardrails['min_fairness_kl_pool_improvement']:.2f}"
+        ),
+        "",
+    ]
+
+    if best_feasible is not None:
+        lines.extend(
+            [
+                (
+                    "Best feasible: "
+                    f"nDCG@k={best_feasible['ndcg@k']:.6f}, "
+                    f"new_item_exposure_frac={best_feasible['new_item_exposure_frac']:.6f}, "
+                    f"category_coverage={best_feasible['category_coverage']:.6f}, "
+                    f"fairness_kl_pool={best_feasible['fairness_kl_pool']:.6f}, "
+                    f"fairness_penalty={best_feasible['fairness']['penalty_weight']:.2f}, "
+                    f"new_item_floor={best_feasible['fairness']['new_item_floor']:.2f}"
+                ),
+                "",
+            ]
+        )
+    else:
+        lines.extend(["Best feasible: none", ""])
+
+    if best_scalar is not None:
+        lines.extend(
+            [
+                (
+                    "Best scalar utility: "
+                    f"nDCG@k={best_scalar['ndcg@k']:.6f}, "
+                    f"new_item_exposure_frac={best_scalar['new_item_exposure_frac']:.6f}, "
+                    f"category_coverage={best_scalar['category_coverage']:.6f}, "
+                    f"fairness_kl_pool={best_scalar['fairness_kl_pool']:.6f}, "
+                    f"fairness_penalty={best_scalar['fairness']['penalty_weight']:.2f}, "
+                    f"new_item_floor={best_scalar['fairness']['new_item_floor']:.2f}"
+                ),
+                "",
+            ]
+        )
+    else:
+        lines.extend(["Best scalar utility: none", ""])
+
+    lines.extend(
+        [
+            "| # | Feasible | nDCG@k | New Item Exposure | Category Coverage | Fairness KL | Intra-List Diversity | Relevance Weight | Novelty Weight | Coverage Weight | Fairness Penalty | New Item Floor | Utility |",
+            "|---:|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    lines.extend(
+        _format_frontier_row(idx, item) for idx, item in enumerate(frontier, start=1)
+    )
+    lines.append("")
+
+    (out_root / "pareto_frontier.md").write_text("\n".join(lines), encoding="utf-8")
+
+
 def run_rerank_search(cfg: dict[str, Any]) -> None:
     ds = cfg["data"]["dataset_name"]
     proc_root = Path(cfg["data"]["processed_root"]) / ds
@@ -757,3 +853,4 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
         "top_10_scalar_utility_sample": sample_results_by_utility[:10],
     }
     save_json(out_root / "rerank_search.json", out)
+    _write_pareto_frontier_md(out_root, out)

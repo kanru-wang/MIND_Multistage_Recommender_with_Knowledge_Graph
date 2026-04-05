@@ -64,19 +64,51 @@ class DLRMStudent(nn.Module):
         dense_dim: int,
         item_base_dim: int,
         emb_dim: int = 64,
+        id_emb_dim: int | None = None,
         bottom_mlp: list[int] | None = None,
         top_mlp: list[int] | None = None,
         dropout: float = 0.0,
         fusion_heads: int = 4,
+        semantic_ff_mult: int = 1,
+        use_user_id_embedding: bool = False,
+        use_news_id_embedding: bool = False,
+        use_category_embeddings: bool = True,
     ) -> None:
         super().__init__()
         bottom_mlp = bottom_mlp or [128, 64]
         top_mlp = top_mlp or [256, 128, 1]
+        id_emb_dim = id_emb_dim or emb_dim
 
-        self.user_emb = nn.Embedding(n_users, emb_dim, padding_idx=0)
-        self.news_emb = nn.Embedding(n_news, emb_dim, padding_idx=0)
-        self.cat_emb = nn.Embedding(n_cats, emb_dim, padding_idx=0)
-        self.subcat_emb = nn.Embedding(n_subcats, emb_dim, padding_idx=0)
+        self.use_user_id_embedding = use_user_id_embedding
+        self.use_news_id_embedding = use_news_id_embedding
+        self.use_category_embeddings = use_category_embeddings
+
+        self.user_emb = (
+            nn.Embedding(n_users, id_emb_dim, padding_idx=0)
+            if use_user_id_embedding
+            else None
+        )
+        self.news_emb = (
+            nn.Embedding(n_news, id_emb_dim, padding_idx=0)
+            if use_news_id_embedding
+            else None
+        )
+        self.user_id_proj = (
+            nn.Linear(id_emb_dim, emb_dim) if use_user_id_embedding else None
+        )
+        self.news_id_proj = (
+            nn.Linear(id_emb_dim, emb_dim) if use_news_id_embedding else None
+        )
+        self.cat_emb = (
+            nn.Embedding(n_cats, emb_dim, padding_idx=0)
+            if use_category_embeddings
+            else None
+        )
+        self.subcat_emb = (
+            nn.Embedding(n_subcats, emb_dim, padding_idx=0)
+            if use_category_embeddings
+            else None
+        )
 
         self.bottom = make_mlp(
             dense_dim, bottom_mlp, dropout=dropout, last_activation=True
@@ -85,24 +117,35 @@ class DLRMStudent(nn.Module):
         self.xd_proj = nn.Linear(d_bottom, emb_dim)
 
         self.item_base_proj = nn.Linear(item_base_dim, emb_dim)
+        semantic_hidden = emb_dim * semantic_ff_mult
         self.item_base_mlp = nn.Sequential(
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(emb_dim, emb_dim),
-        )
-        self.hist_refine = nn.Sequential(
-            nn.Linear(emb_dim, emb_dim),
+            nn.Linear(emb_dim, semantic_hidden),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(emb_dim, emb_dim),
+            nn.Linear(semantic_hidden, emb_dim),
+        )
+        self.hist_refine = nn.Sequential(
+            nn.Linear(emb_dim, semantic_hidden),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(semantic_hidden, emb_dim),
         )
         self.user_sem_proj = nn.Linear(emb_dim, emb_dim)
         self.item_sem_proj = nn.Linear(emb_dim, emb_dim)
         self.semantic_fusion = AttentionFusion(dim=emb_dim, heads=fusion_heads)
 
-        self.n_feat = 1 + 4 + 3
+        self.n_feat = 1 + 3
+        if self.use_user_id_embedding:
+            self.n_feat += 1
+        if self.use_news_id_embedding:
+            self.n_feat += 1
+        if self.use_category_embeddings:
+            self.n_feat += 2
         n_inter = self.n_feat * (self.n_feat - 1) // 2
-        top_in = d_bottom + 7 * emb_dim + n_inter
+        n_concat_emb = self.n_feat
+        top_in = d_bottom + n_concat_emb * emb_dim + n_inter
 
         self.top = make_mlp(top_in, top_mlp, dropout=dropout, last_activation=False)
 
@@ -123,11 +166,6 @@ class DLRMStudent(nn.Module):
         history_mask: torch.Tensor,
         return_repr: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        eu = self.user_emb(user_idx)
-        ei = self.news_emb(news_idx)
-        ec = self.cat_emb(cat_idx)
-        es = self.subcat_emb(subcat_idx)
-
         xd = self.bottom(dense)
         xd_emb = self.xd_proj(xd)
 
@@ -138,9 +176,30 @@ class DLRMStudent(nn.Module):
         user_sem = self.user_sem_proj(user_hist)
         user_sem = mask_pooled_vector(user_sem, history_mask)
         user_sem = F.normalize(user_sem, dim=-1)
-        sem_fused = self.semantic_fusion(q=eu + xd_emb, kv=torch.stack([user_sem, item_sem], dim=1))
+        query = xd_emb
 
-        feats = [xd_emb, eu, ei, ec, es, user_sem, item_sem, sem_fused]
+        concat_feats = [xd_emb]
+        if self.use_user_id_embedding and self.user_emb is not None:
+            eu = self.user_id_proj(self.user_emb(user_idx))
+            concat_feats.append(eu)
+            query = query + eu
+        if (
+            self.use_news_id_embedding
+            and self.news_emb is not None
+            and self.news_id_proj is not None
+        ):
+            concat_feats.append(self.news_id_proj(self.news_emb(news_idx)))
+        if self.use_category_embeddings and self.cat_emb is not None and self.subcat_emb is not None:
+            ec = self.cat_emb(cat_idx)
+            es = self.subcat_emb(subcat_idx)
+            concat_feats.extend([ec, es])
+            query = query + 0.5 * (ec + es)
+
+        sem_fused = self.semantic_fusion(
+            q=query, kv=torch.stack([user_sem, item_sem], dim=1)
+        )
+
+        feats = concat_feats + [user_sem, item_sem, sem_fused]
         inter = []
         for i in range(len(feats)):
             for j in range(i + 1, len(feats)):
@@ -152,7 +211,7 @@ class DLRMStudent(nn.Module):
         )
 
         concat = torch.cat(
-            [xd, eu, ei, ec, es, user_sem, item_sem, sem_fused, inter_vec], dim=1
+            [xd] + feats + [inter_vec], dim=1
         )
         logit = self.top(concat).squeeze(1)
 

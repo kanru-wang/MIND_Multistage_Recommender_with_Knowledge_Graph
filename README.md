@@ -2,7 +2,7 @@
 
 This project implements a realistic recommender stack on the **Microsoft News Dataset (MIND)**:
 - Stage 1: **Teacher retrieval embeddings** (text-based item encoder + history-based user encoder)
-- Stage 2: **Student ranker** (DLRM-style sparse+dense model) that uses click history, sentence-transformer item bases, and sparse/tabular features
+- Stage 2: **Student ranker** (lean DLRM-style sparse+dense model) that uses click history, sentence-transformer item bases, projected `user_id`/`news_id` branches, lightweight structured features, and a widened semantic MLP path
 - Stage 3: **Re-ranking** enforcing **(1) relevance vs novelty** and **(2) category/entity-informed coverage bonuses**, plus **exposure fairness** constraints/penalties for category and new items
 - Extensive **evaluation**: ranking metrics, calibration, diversity, exposure fairness, and cold/new slices
 
@@ -10,8 +10,8 @@ MIND is widely used as a benchmark for news recommendation, with impression logs
 
 #### Recommender architecture
 - Candidate generation with ANN search using **Faiss** (CPU-friendly).
-- A **DLRM-style** ranker (dense MLP + sparse embeddings + feature interaction).
-- Knowledge **distillation** (logit + representation) from a powerful teacher into a cheaper student (better cold/new performance vs training the student from scratch).
+- A **lean DLRM-style** ranker (dense MLP + semantic branch with widened semantic MLPs + projected `user_id`/`news_id` branches + lightweight feature interaction).
+- Knowledge **distillation** (logit + representation) from a stronger teacher into a smaller student (better cold/new performance vs training the student from scratch).
 
 #### Teacher model (simple view)
 - The teacher is a learned two-tower retrieval model:
@@ -45,7 +45,7 @@ MIND is widely used as a benchmark for news recommendation, with impression logs
   - `HistoryAttentionPool` (`MultiheadAttention` + learned query)
   - `normalize` on the pooled user vector
 - The learned query vector in `HistoryAttentionPool` is a trainable vector used to emphasize certain click history over other click history. This query vector is global, not per-user.
-- During teacher training, the trainable part are:
+- During teacher training, the trainable parts are:
   - `item_proj`
   - the multi-head attention parameters inside `HistoryAttentionPool`
   - the learned query vector
@@ -265,8 +265,8 @@ The current selected setting is:
 - `novelty_weight=0.05`
 - `coverage_weight=0.05`
 - `novelty_sim=teacher_cosine`
-- `fairness.penalty_weight=0.5`
-- `fairness.new_item_floor=0.20`
+- `fairness.penalty_weight=0.25`
+- `fairness.new_item_floor=0.15`
 
 The search writes its summary to `runs/<run_name>/eval/rerank_search.json`.
 
@@ -281,19 +281,19 @@ Teacher retrieval:
 - best teacher epoch: `2`
 
 Student ranker:
-- `nDCG@5 = 0.35118`
-- `nDCG@10 = 0.41135`
-- `MRR = 0.37134`
-- `AUC = 0.65325`
-- `MAP@10 = 0.31623`
-- best dev AUC during training: `0.65702` at epoch `1`
-- calibration changed `Brier` from `0.12434` to `0.08088`
+- `nDCG@5 = 0.34132`
+- `nDCG@10 = 0.39955`
+- `MRR = 0.35599`
+- `AUC = 0.64824`
+- `MAP@10 = 0.30324`
+- best dev AUC during training: `0.64701` at epoch `2`
+- calibration changed `Brier` from `0.13049` to `0.07039`
 
 Feasible reranker operating point:
-- `nDCG@10 = 0.40632`
-- `new_item_exposure_frac = 0.65910`
-- `category_coverage@10 = 5.4057`
-- `fairness_kl_pool = 0.37951`
+- `nDCG@10 = 0.39009`
+- `new_item_exposure_frac = 0.63324`
+- `category_coverage@10 = 5.9976`
+- `fairness_kl_pool = 0.31439`
 
 Search summary:
 - `best_feasible` matches the current default rerank config

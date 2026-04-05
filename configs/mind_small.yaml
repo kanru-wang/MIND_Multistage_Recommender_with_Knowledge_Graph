@@ -49,10 +49,15 @@ ranker:
     min_delta: 1.0e-5
   device: "cuda"
   dlrm:
-    emb_dim: 64
-    bottom_mlp: [128, 64]
-    top_mlp: [256, 128, 1]
+    emb_dim: 56
+    id_emb_dim: 8
+    semantic_ff_mult: 2
+    bottom_mlp: [64, 56]
+    top_mlp: [128, 64, 1]
     dropout: 0.1
+    use_user_id_embedding: true
+    use_news_id_embedding: true
+    use_category_embeddings: true
   distill:
     enabled: true
     temperature: 2.0

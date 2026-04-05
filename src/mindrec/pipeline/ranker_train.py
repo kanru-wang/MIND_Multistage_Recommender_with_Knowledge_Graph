@@ -82,10 +82,15 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         dense_dim=len(dense_cols),
         item_base_dim=int(item_base.shape[1]),
         emb_dim=int(dlrm_cfg["emb_dim"]),
+        id_emb_dim=int(dlrm_cfg.get("id_emb_dim", dlrm_cfg["emb_dim"])),
         bottom_mlp=[int(x) for x in dlrm_cfg["bottom_mlp"]],
         top_mlp=[int(x) for x in dlrm_cfg["top_mlp"]],
         dropout=float(dlrm_cfg.get("dropout", 0.0)),
         fusion_heads=4,
+        semantic_ff_mult=int(dlrm_cfg.get("semantic_ff_mult", 1)),
+        use_user_id_embedding=bool(dlrm_cfg.get("use_user_id_embedding", False)),
+        use_news_id_embedding=bool(dlrm_cfg.get("use_news_id_embedding", False)),
+        use_category_embeddings=bool(dlrm_cfg.get("use_category_embeddings", True)),
     ).to(device)
 
     emb_dim = int(dlrm_cfg["emb_dim"])
@@ -228,11 +233,11 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         )
         save_json(art_root / "epochs.json", epoch_metrics)
 
-        improved = (auc - best_auc) > es_min_delta
+        improved = auc > best_auc
+        significant_improvement = (auc - best_auc) > es_min_delta
         if improved:
             best_auc = auc
             best_epoch = ep
-            epochs_without_improvement = 0
             torch.save(
                 {
                     "model": model.state_dict(),
@@ -243,6 +248,8 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                 },
                 art_root / "best.pt",
             )
+        if significant_improvement:
+            epochs_without_improvement = 0
         else:
             epochs_without_improvement += 1
 

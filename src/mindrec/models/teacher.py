@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -56,7 +53,11 @@ class TransformerHistoryEncoder(nn.Module):
 
 class TeacherTwoTower(nn.Module):
     def __init__(
-        self, item_dim: int, hidden_dim: int, heads: int = 4, dropout: float = 0.1
+        self,
+        item_dim: int,
+        hidden_dim: int,
+        heads: int = 4,
+        dropout: float = 0.1,
     ) -> None:
         super().__init__()
         self.item_proj = nn.Linear(item_dim, hidden_dim)

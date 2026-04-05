@@ -45,10 +45,15 @@ def _load_model(
         dense_dim=2,
         item_base_dim=int(item_base.shape[1]),
         emb_dim=int(dlrm_cfg["emb_dim"]),
+        id_emb_dim=int(dlrm_cfg.get("id_emb_dim", dlrm_cfg["emb_dim"])),
         bottom_mlp=[int(x) for x in dlrm_cfg["bottom_mlp"]],
         top_mlp=[int(x) for x in dlrm_cfg["top_mlp"]],
         dropout=float(dlrm_cfg.get("dropout", 0.0)),
         fusion_heads=4,
+        semantic_ff_mult=int(dlrm_cfg.get("semantic_ff_mult", 1)),
+        use_user_id_embedding=bool(dlrm_cfg.get("use_user_id_embedding", False)),
+        use_news_id_embedding=bool(dlrm_cfg.get("use_news_id_embedding", False)),
+        use_category_embeddings=bool(dlrm_cfg.get("use_category_embeddings", True)),
     ).to(device)
 
     ckpt = torch.load(runs_root / "ranker" / "best.pt", map_location=device)
