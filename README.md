@@ -281,22 +281,24 @@ Teacher retrieval:
 - best teacher epoch: `2`
 
 Student ranker:
-- `nDCG@5 = 0.34132`
-- `nDCG@10 = 0.39955`
-- `MRR = 0.35599`
-- `AUC = 0.64824`
-- `MAP@10 = 0.30324`
-- best dev AUC during training: `0.64701` at epoch `2`
-- calibration changed `Brier` from `0.13049` to `0.07039`
+- current semantic settings: `semantic_ff_mult=3`, `semantic_dropout=0.15`
+- `nDCG@5 = 0.34525`
+- `nDCG@10 = 0.40207`
+- `MRR = 0.35929`
+- `AUC = 0.64377`
+- `MAP@10 = 0.30595`
+- best dev AUC during training: `0.64731` at epoch `2`
+- calibration changed `Brier` from `0.13089` to `0.07330`
 
 Feasible reranker operating point:
-- `nDCG@10 = 0.39009`
-- `new_item_exposure_frac = 0.63324`
-- `category_coverage@10 = 5.9976`
-- `fairness_kl_pool = 0.31439`
+- `nDCG@10 = 0.39385`
+- `new_item_exposure_frac = 0.64764`
+- `category_coverage@10 = 5.92189`
+- `fairness_kl_pool = 0.31951`
 
 Search summary:
 - `best_feasible` matches the current default rerank config
+- `n_feasible = 7` under the current guardrails
 - `best_scalar_utility` is a more aggressive diversity/fairness point, but it is not feasible under the current guardrails
 
 ---

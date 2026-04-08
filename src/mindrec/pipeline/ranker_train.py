@@ -88,9 +88,9 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         dropout=float(dlrm_cfg.get("dropout", 0.0)),
         fusion_heads=4,
         semantic_ff_mult=int(dlrm_cfg.get("semantic_ff_mult", 1)),
-        use_user_id_embedding=bool(dlrm_cfg.get("use_user_id_embedding", False)),
-        use_news_id_embedding=bool(dlrm_cfg.get("use_news_id_embedding", False)),
-        use_category_embeddings=bool(dlrm_cfg.get("use_category_embeddings", True)),
+        semantic_dropout=float(
+            dlrm_cfg.get("semantic_dropout", dlrm_cfg.get("dropout", 0.0))
+        ),
     ).to(device)
 
     emb_dim = int(dlrm_cfg["emb_dim"])
