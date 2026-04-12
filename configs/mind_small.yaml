@@ -36,7 +36,7 @@ teacher:
 retrieval:
   index_type: "flat_ip"  # flat_ip|ivf_flat_ip
   ivf_nlist: 2048
-  topk: 200
+  topk: 200  # Number of candidates to retrieve for each user. Should be >= rerank.pool_size
 
 ranker:
   batch_size: 1024
@@ -69,8 +69,8 @@ ranker:
     max_iter: 100
 
 rerank:
-  k_out: 10
-  pool_size: 50
+  k_out: 10  # Number of items to output after re-ranking
+  pool_size: 50  # Number of candidates to consider for re-ranking. Should be >= k_out.
   position_bias: "log"  # log|linear
   relevance_weight: 0.90
   novelty_weight: 0.05

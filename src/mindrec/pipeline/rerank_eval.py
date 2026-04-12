@@ -117,7 +117,7 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
             cand_news_idx = np.array(r["cand_news_idx"], dtype=np.int64)
             cand_cat_idx = np.array(r["cand_cat_idx"], dtype=np.int64)
             cand_subcat_idx = np.array(r["cand_subcat_idx"], dtype=np.int64)
-            cand_is_new = list(r["cand_is_new_item"])
+            cand_is_new = list(r["cand_is_new_item"])  # A binary list indicating whether each candidate news is a "new item" based on the training data
             cand_clicks_log1p = np.array(r["cand_item_clicks_log1p"], dtype=np.float32)
             cand_cat_ref_full = [int(c) for c in cand_cat_idx.tolist() if int(c) != 0]
             hlen = float(r["history_len"])
@@ -194,6 +194,9 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
             tgt_pool = _category_target_dist(
                 fairness_cfg.get("category_target", "catalog"), cand_cat_ref_pool
             )
+            # "tgt_full" and "tgt_pool" are not weighted by position bias since they represent the
+            # ideal distribution of relevant items in the catalog/pool, independent of ranking
+            # position, but they still can be compared against "exp".
             base_fair_kl_full.append(kl_divergence(exp, tgt_full))
             base_fair_kl_pool.append(kl_divergence(exp, tgt_pool))
             base_fair_gini.append(gini(list(exp.values())))

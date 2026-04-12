@@ -48,7 +48,11 @@ class NewsMeta:
 
 
 def build_news_meta(news_df) -> dict[str, NewsMeta]:
-    # key by news_id
+    # Example output:
+    # {
+    #     "N12345": NewsMeta(cat_idx=4, subcat_idx=12, ent={101, 202}),
+    #     "N67890": NewsMeta(cat_idx=7, subcat_idx=19, ent=set()),
+    # }
     meta = {}
     for _, r in news_df.iterrows():
         ent = _parse_entities(r.get("title_entities", "")) | _parse_entities(
@@ -123,7 +127,11 @@ def greedy_rerank(
     pool_index = {nid: i for i, nid in enumerate(pool)}
     pool_scores = cand_scores[order]
     pool_is_new = [int(cand_is_new[i]) for i in order]
+    # news_meta example {"N12345": NewsMeta(cat_idx=4, subcat_idx=12, ent={101, 202}), ...}
+    # pool_cats is a list of such news_meta.
     pool_cats = [news_meta.get(nid, NewsMeta(0, 0, set())).cat_idx for nid in pool]
+    # pool is a list of news IDs truncated to pool_size. We will select from this pool.
+    # _build_novelty_similarity returns a similarity matrix for items in the pool based on the specified novelty_sim method.
     sim_mat = _build_novelty_similarity(
         novelty_sim=novelty_sim,
         pool=pool,
@@ -155,18 +163,29 @@ def greedy_rerank(
     }
 
     target_mode = fairness_cfg.get("category_target", "catalog")
+    # For the fairness penalty, we need a target distribution over categories.
+    # Either use the distribution in the candidate pool (catalog) or a uniform distribution over categories.
     if target_mode == "uniform":
         target_dist = normalize_dist(uniform_target([c for c in pool_cats if c != 0]))
     else:
         target_dist = normalize_dist(catalog_target([c for c in pool_cats if c != 0]))
+    # target_keys are the category IDs that appear in the target distribution.
     target_keys = list(target_dist.keys())
 
     def novelty(i: int) -> float:
+        """
+        0 if nothing has been selected yet.
+        Otherwise, - max similarity to anything already selected.
+        Why the minus sign? Because higher similarity means lower novelty.
+        """
         if not chosen_idx:
             return 0.0
         return -float(max_sim_to_chosen[i])
 
     def coverage(i: int) -> float:
+        """
+        coverage = category bonus for a new category + entity bonus for new entities.
+        """
         m = news_meta.get(pool[i], NewsMeta(0, 0, set()))
         bonus = 0.0
         if m.cat_idx not in chosen_cats and m.cat_idx != 0:
@@ -177,12 +196,27 @@ def greedy_rerank(
         return bonus
 
     def fairness_penalty_log(cat_i: int, is_new_i: int, k: int) -> float:
+        """
+        cat_i is the category index of the candidate item at pool[i].
+        is_new_i indicates whether this candidate item is a "new item".
+        """
+        # Look up the position bias weight for the next position k.
         next_w = float(weights_by_len[k][-1])
         total_exp = total_exp_by_len[k]
         kl = 0.0
         l1 = 0.0
+        # Loop through every category in the target distribution.
         for gid in target_keys:
+            # chosen_exp_by_cat keeps track of the accumulated position-bias-weighted exposure
+            # for each category among the already chosen items.
+            # An exmaple value of chosen_exp_by_cat is {4: 1.5, 7: 0.8}, meaning category 4 
+            # has accumulated exposure of 1.5, and category 7 has 0.8 so far.
+            # Instead of recomputing category exposure from scratch over the whole chosen list
+            # every time, having chosen_exp_by_cat would allow efficient reranking.
             raw_exp = chosen_exp_by_cat.get(gid, 0.0)
+
+            # Only one category's exposure will be updated, but all categories in the
+            # target distribution will be used for the KL and L1 calculations.
             if gid == cat_i and gid != 0:
                 raw_exp += next_w
             pk = (raw_exp / total_exp) if total_exp > 0 else 0.0
@@ -229,6 +263,11 @@ def greedy_rerank(
         return pen
 
     def fairness_penalty(i: int) -> float:
+        """
+        Pretend candidate i is added at the next rank position k, and compute
+        how much (i.e. penalty) would the top-k exposure distribution deviate
+        from the desired category mix (either log or linear position-bias mode).
+        """
         if not fairness_cfg.get("enabled", False):
             return 0.0
         k = len(chosen) + 1
@@ -239,10 +278,12 @@ def greedy_rerank(
         return float(fairness_penalty_log(cat_i, is_new_i, k))
 
     # Greedy selection
-    for _ in range(min(k_out, len(pool))):
+    for _ in range(min(k_out, len(pool))):  # in case the pool size < k_out
         best = None
         best_i = None
         best_val = -1e18
+        # Among all items in the pool, examine every candidate that has not already been chosen,
+        # score it for the current position, and find the best one.
         for i, nid in enumerate(pool):
             if nid in chosen_set:
                 continue
@@ -267,6 +308,8 @@ def greedy_rerank(
         chosen_idx.append(int(best_i))
         chosen_set.add(best)
         if sim_mat is not None and best_i is not None:
+            # np.maximum compares two arrays and return a new array of element-wise larger values.
+            # To the not yet chosen items, their similarities to the chosen-set-as-a-whole are represented by max_sim_to_chosen.
             max_sim_to_chosen = np.maximum(max_sim_to_chosen, sim_mat[:, int(best_i)])
         m = news_meta.get(best, NewsMeta(0, 0, set()))
         if m.cat_idx != 0:
