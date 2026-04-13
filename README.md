@@ -74,7 +74,38 @@ Fairness target note:
 - `user_sem`: student semantic user vector from pooled click-history sentence-transformer item bases
 - `item_sem`: student semantic item vector from the candidate item's sentence-transformer base embedding
 - `sem_fused`: a lightweight attention-fusion summary that mixes the semantic user/item states with the structured query context
-- The teacher target is still `concat(teacher_user_emb, teacher_item_emb)`, so a projection head maps the student representation into the teacher space for representation distillation.
+- The teacher target is `concat(teacher_user_emb, teacher_item_emb)`. A projection head maps the student representation into the teacher space for representation distillation.
+
+#### Teacher -> student distillation map
+- Distillation in this project is not copying the teacher into a smaller clone.
+- The student is trained to imitate the teacher's semantic user/item representations and semantic matching behavior, while still having its additional features.
+
+| Teacher block | What it does | Student replacement | Key difference |
+|---|---|---|---|
+| Frozen sentence-transformer news embedding input | Base text semantics for each news item | Same `item_base_emb.npy` input | Both stages start from the same base text embedding |
+| Teacher semantic item encoder | Refines each item into the teacher semantic space | Smaller student semantic item encoder | Student semantic dimension is much smaller than the teacher space |
+| Teacher sequence-aware user encoder | Contextualizes clicked history items with attention before pooling | Cheaper history aggregation path | Student uses a lighter history refinement and aggregation path |
+| Teacher attention pooling over history | Builds one semantic user vector from clicked history | Mean-style pooled semantic user path | Student pooling is cheaper and less sequence-aware |
+| Teacher item embedding | Semantic representation of the candidate item | `item_sem` | Student item representation is trained to approximate teacher behavior |
+| Teacher user embedding | Semantic representation of the current user history | `user_sem` | Student user representation is cheaper to compute |
+| Teacher cosine-style user-item scorer | Measures semantic compatibility between user and item | Student top MLP ranker | Student scoring uses richer ranking signals beyond pure semantic similarity |
+| Teacher representation target | Provides a semantic supervision target for distillation | `rep = [user_sem, item_sem, sem_fused]` plus projection head | Student and teacher representations have different shapes and meanings |
+| No direct teacher counterpart | None | `sem_fused` | Student adds an attention-fusion summary conditioned on query context |
+| No direct teacher counterpart | None | `user_id` / `news_id` branches | Student adds collaborative-style memorization signals |
+| No direct teacher counterpart | None | category / subcategory embeddings | Student adds structured metadata signals |
+| No direct teacher counterpart | None | dense features such as `history_len` and `item_clicks_log1p` | Student adds non-semantic ranking features |
+| No direct teacher counterpart | None | DLRM interaction terms + top MLP | Student is a broader ranker, not just a semantic retriever |
+
+The student keeps a lighter semantic core than the teacher, but combines it with extra ranking-specific signals:
+- projected `user_id` / `news_id` branches
+- category and subcategory embeddings
+- lightweight dense features
+- DLRM-style feature interactions
+
+#### Where the student ranker is simplified
+- teacher semantic item encoder -> smaller student semantic item encoder
+- teacher sequence-aware user encoder -> cheaper history aggregation path
+- teacher cosine scorer -> student MLP ranker with many extra inputs
 
 #### Re-ranking process
 - `greedy_rerank()` takes the top `pool_size` candidates by ranker score, then builds the final top-`k_out` list one item at a time.
