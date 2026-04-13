@@ -235,7 +235,7 @@ Typical workflow after search:
 - run `rerank_eval` again to evaluate that chosen setting as the new default reranker
 
 The current reranker search reports three views of the tradeoff surface on dev:
-- `best_feasible`: maximize `nDCG@10` subject to absolute guardrails
+- `best_feasible`: maximize scalar utility among settings that satisfy the guardrails
 - `best_scalar_utility`: maximize a normalized scalar utility
 - `pareto_frontier`: nondominated settings across ranking/diversity/fairness axes
 
@@ -261,12 +261,12 @@ with coefficients:
 - `1.5 * fairness_kl_pool_improvement_units`
 
 The current selected setting is:
-- `relevance_weight=0.90`
-- `novelty_weight=0.05`
+- `relevance_weight=0.80`
+- `novelty_weight=0.15`
 - `coverage_weight=0.05`
 - `novelty_sim=teacher_cosine`
 - `fairness.penalty_weight=0.25`
-- `fairness.new_item_floor=0.15`
+- `fairness.new_item_floor=0.20`
 
 The search writes its summary to `runs/<run_name>/eval/rerank_search.json`.
 
@@ -297,7 +297,7 @@ Feasible reranker operating point:
 - `fairness_kl_pool = 0.31951`
 
 Search summary:
-- `best_feasible` matches the current default rerank config
+- `best_feasible` is the setting that has the highest-utility and is also feasible
 - `n_feasible = 7` under the current guardrails
 - `best_scalar_utility` is a more aggressive diversity/fairness point, but it is not feasible under the current guardrails
 

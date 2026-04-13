@@ -398,13 +398,16 @@ def _constraint_check(
 
 
 def _candidate_key(item: dict[str, Any]) -> tuple[Any, ...]:
+    def _norm(x: float) -> float:
+        return round(float(x), 8)
+
     return (
         item["novelty_sim"],
-        item["weights"]["relevance"],
-        item["weights"]["novelty"],
-        item["weights"]["coverage"],
-        item["fairness"]["penalty_weight"],
-        item["fairness"]["new_item_floor"],
+        _norm(item["weights"]["relevance"]),
+        _norm(item["weights"]["novelty"]),
+        _norm(item["weights"]["coverage"]),
+        _norm(item["fairness"]["penalty_weight"]),
+        _norm(item["fairness"]["new_item_floor"]),
     )
 
 
@@ -509,6 +512,7 @@ def _sort_feasible_first(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         results,
         key=lambda r: (
             int(r["constraint"]["feasible"]),
+            r["objective_view"]["scalar_utility"]["score"],
             r["ndcg@k"],
             r["new_item_exposure_frac"],
             r["category_coverage"],
@@ -557,8 +561,9 @@ def _pareto_frontier(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         frontier,
         key=lambda r: (
-            r["ndcg@k"],
+            int(r["constraint"]["feasible"]),
             r["objective_view"]["scalar_utility"]["score"],
+            r["ndcg@k"],
             r["new_item_exposure_frac"],
             r["category_coverage"],
             -r["fairness_kl_pool"],
@@ -845,8 +850,10 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
         "best_scalar_utility": results_by_utility[0] if results_by_utility else None,
         "pareto_frontier": pareto_frontier,
         "pareto_frontier_sample": sample_pareto,
-        # top_10_sample: Best settings on the sampled search subset under the feasibility-first ranking.
-        # top_10: Best settings after reevaluating the shortlisted candidates on the full dev set.
+        # top_10_sample: Best settings on the sampled search subset, ranked by
+        # feasibility first and then scalar utility.
+        # top_10: Best settings after reevaluating the shortlisted candidates on
+        # the full dev set, ranked by feasibility first and then scalar utility.
         "top_10": results[:10],
         "top_10_sample": sample_results[:10],
         "top_10_scalar_utility": results_by_utility[:10],
