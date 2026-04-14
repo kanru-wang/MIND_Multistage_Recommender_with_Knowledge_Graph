@@ -8,12 +8,13 @@ This project implements a realistic recommender stack on the **Microsoft News Da
 
 MIND is widely used as a benchmark for news recommendation, with impression logs and rich news metadata.
 
-#### Recommender architecture
-- Candidate generation with ANN search using **Faiss** (CPU-friendly).
-- A **lean DLRM-style** ranker (dense MLP + semantic branch with widened semantic MLPs + projected `user_id`/`news_id` branches + lightweight feature interaction).
-- Knowledge **distillation** (logit + representation) from a stronger teacher into a smaller student (better cold/new performance vs training the student from scratch).
+Recommender architecture
 
-#### Teacher model (simple view)
+- Candidate generation with ANN search using **Faiss** (CPU-friendly).
+- Knowledge **distillation** (logit + representation) from a stronger teacher into a smaller student (better cold/new performance vs training the student from scratch).
+- A **lean DLRM-style** ranker (dense MLP + semantic branch with widened semantic MLPs + projected `user_id`/`news_id` branches + lightweight feature interaction).
+
+## Teacher model
 - The teacher is a learned two-tower retrieval model:
   - a **news/item encoder** that starts from frozen sentence-transformer news embeddings and applies a trainable projection
   - a **user encoder** that attention-pools clicked-history item embeddings into a user vector
@@ -28,7 +29,7 @@ MIND is widely used as a benchmark for news recommendation, with impression logs
   - `eval_retrieval` uses `item_teacher_emb.npy` and the saved teacher model to encode dev histories and search that index
   - `train_ranker` loads `item_base_emb.npy` as student semantic input and uses `item_teacher_emb.npy` / `user_teacher_emb.npy` only as teacher supervision targets
 
-#### Teacher and retrieval notes
+## Teacher and retrieval
 - In MIND `behaviors.tsv`, `history` is a list of previously clicked news IDs for that user before the current impression time. It is not a list of previous impressions.
 - The user embedding is built from those clicked-history items before the current impression.
 - During retrieval evaluation, the query vector for a row is built from that row's own `history` only, not from some later history for the same user.
@@ -51,25 +52,7 @@ MIND is widely used as a benchmark for news recommendation, with impression logs
   - the learned query vector
 - The training objective pushes each user vector closer to its clicked positive item and farther from sampled in-impression negatives and other in-batch positives.
 
-#### Evaluation (many angles)
-- **Ranking quality**: AUC, MRR, nDCG@K, MAP@K, Recall@K
-- **Calibration**: ECE (expected calibration error), Brier score
-- **Diversity**: intra-list diversity (ILD), category coverage@K, category entropy@K
-- **Exposure fairness**: position-weighted exposure, disparity vs target distribution (KL / L1 / Gini), new-item exposure floor
-
-Fairness target note:
-- In the current reranker/evaluation code, `fairness.category_target: "catalog"` means the category distribution of the impression candidate pool (the candidates available for that user/impression), not the selected top-K list and not the global corpus-wide catalog.
-- `rerank_eval` and `rerank_search` now report both `fairness_kl_pool` and `fairness_kl_full`.
-- `fairness_kl_pool` compares top-K exposure against the reranker's top-`pool_size` candidate mix.
-- `fairness_kl_full` compares top-K exposure against the full impression candidate set.
-- Product constraints in reranker search use `fairness_kl_pool`, because that matches the reranker's actual optimization target.
-
-#### Re-ranking (important implementation note)
-- In this project, re-ranking is a **deterministic optimization layer** on top of ranker scores.
-- It is controlled by hyperparameters/constraints (relevance, novelty, coverage, fairness).
-- **No training loop is required** for this re-ranking stage.
-
-#### Distillation representation note
+## Distillation representation
 - In `DLRMStudent.forward()`, the student representation used for distillation is `rep = [user_sem, item_sem, sem_fused]`.
 - `user_sem`: student semantic user vector from pooled click-history sentence-transformer item bases
 - `item_sem`: student semantic item vector from the candidate item's sentence-transformer base embedding
@@ -106,6 +89,11 @@ The student keeps a lighter semantic core than the teacher, but combines it with
 - teacher semantic item encoder -> smaller student semantic item encoder
 - teacher sequence-aware user encoder -> cheaper history aggregation path
 - teacher cosine scorer -> student MLP ranker with many extra inputs
+
+## Re-ranking
+- In this project, re-ranking is a **deterministic optimization layer** on top of ranker scores.
+- It is controlled by hyperparameters/constraints (relevance, novelty, coverage, fairness).
+- **No training loop is required** for this re-ranking stage.
 
 #### Re-ranking process
 - `greedy_rerank()` takes the top `pool_size` candidates by ranker score, then builds the final top-`k_out` list one item at a time.
@@ -160,7 +148,23 @@ The student keeps a lighter semantic core than the teacher, but combines it with
   - So `new_item_exposure_frac = 0.50 / 2.13 = 0.235`, which is above the floor, so no extra penalty is added.
   - If no selected item is new, then `new_item_exposure_frac = 0.0`, which is below `0.20`, so the fairness penalty is increased.
 
----
+## Evaluation
+- **Ranking quality**: AUC, MRR, nDCG@K, MAP@K, Recall@K
+- **Calibration**: ECE (expected calibration error), Brier score
+- **Diversity**: intra-list diversity (ILD), category coverage@K, category entropy@K
+- **Exposure fairness**: position-weighted exposure, disparity vs target distribution (KL / L1 / Gini), new-item exposure floor
+
+Fairness target note:
+- In the current reranker/evaluation code, `fairness.category_target: "catalog"` means the category distribution of the impression candidate pool (the candidates available for that user/impression), not the selected top-K list and not the global corpus-wide catalog.
+- `rerank_eval` and `rerank_search` now report both `fairness_kl_pool` and `fairness_kl_full`.
+- `fairness_kl_pool` compares top-K exposure against the reranker's top-`pool_size` candidate mix.
+- `fairness_kl_full` compares top-K exposure against the full impression candidate set.
+- Product constraints in reranker search use `fairness_kl_pool`, because that matches the reranker's actual optimization target.
+
+<br>
+<br>
+
+# Quickstart
 
 ## 0) Hardware target
 
@@ -196,7 +200,7 @@ In this repo, for simplicity, these two files are currently **not used** by the 
 
 ---
 
-## 2.1) Quick terminology: entities in MIND
+### 2.1) Quick terminology: entities in MIND
 
 - In MIND, an **entity** is a named entity extracted from a news article (person, organization, location, etc.) and linked to a knowledge graph (the MIND paper references Wikidata).
 - `entity_embedding.vec`: embedding vector for each entity ID.
@@ -206,7 +210,7 @@ If you choose to use these files, a common approach is to use KG triples `(entit
 
 ---
 
-## 2.2) What `run_preprocess()` does
+### 2.2) What `run_preprocess()` does
 
 `run_preprocess()` converts raw MIND TSV files into model-ready parquet/json files.
 
@@ -227,7 +231,7 @@ Why there is no `train_impressions.parquet`:
 
 ---
 
-## 3) Quickstart (end-to-end on a small slice)
+## 3) End-to-end on a small slice
 
 ### 3.1 Preprocess TSV → Parquet + feature maps
 ```bash
@@ -270,7 +274,7 @@ The current reranker search reports three views of the tradeoff surface on dev:
 - `best_scalar_utility`: maximize a normalized scalar utility
 - `pareto_frontier`: nondominated settings across ranking/diversity/fairness axes
 
-The current search now uses baseline-relative guardrails:
+The search uses baseline-relative guardrails. We need guardrails because guardrails define what “acceptable” means, and then we can choose the setting with the highest utility among acceptable tradeoffs. Also, if the coefficients underweight relevance or overweight coverage/fairness, then a setting can look “best” by utility while still being a bad product choice; guardrails can prevent that. Current guardrails:
 - `nDCG@10` drop must be at most `3%` relative to the baseline ranker.
 - `new_item_exposure_frac` must not decrease relative to baseline.
 - `category_coverage@10` must improve by at least `0.30`.
