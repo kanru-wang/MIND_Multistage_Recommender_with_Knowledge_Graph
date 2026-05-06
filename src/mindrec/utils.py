@@ -53,3 +53,27 @@ def position_bias_weights(k: int, mode: str = "log") -> np.ndarray:
     if mode == "linear":
         return (k - pos + 1.0) / k
     raise ValueError(f"Unknown position bias mode: {mode}")
+
+
+def holdout_enabled(cfg: dict[str, Any]) -> bool:
+    return bool(cfg.get("data", {}).get("holdout", {}).get("enabled", False))
+
+
+def validation_split_name(cfg: dict[str, Any]) -> str:
+    return "val" if holdout_enabled(cfg) else "dev"
+
+
+def test_split_name(cfg: dict[str, Any]) -> str:
+    return "test" if holdout_enabled(cfg) else "dev"
+
+
+def pair_artifact_path(proc_root: Path, split_name: str) -> Path:
+    return proc_root / f"{split_name}_pairs.parquet"
+
+
+def impression_artifact_path(proc_root: Path, split_name: str) -> Path:
+    return proc_root / f"{split_name}_impressions.parquet"
+
+
+def behavior_artifact_path(proc_root: Path, split_name: str) -> Path:
+    return proc_root / f"{split_name}_behaviors.parquet"

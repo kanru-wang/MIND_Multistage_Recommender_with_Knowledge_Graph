@@ -71,12 +71,16 @@ class DLRMStudent(nn.Module):
         fusion_heads: int = 4,
         semantic_ff_mult: int = 1,
         semantic_dropout: float | None = None,
+        news_id_warm_scale: float = 1.0,
+        news_id_cold_scale: float = 1.0,
     ) -> None:
         super().__init__()
         bottom_mlp = bottom_mlp or [128, 64]
         top_mlp = top_mlp or [256, 128, 1]
         id_emb_dim = id_emb_dim or emb_dim
         semantic_dropout = dropout if semantic_dropout is None else semantic_dropout
+        self.news_id_warm_scale = float(news_id_warm_scale)
+        self.news_id_cold_scale = float(news_id_cold_scale)
 
         self.user_emb = nn.Embedding(n_users, id_emb_dim, padding_idx=0)
         self.news_emb = nn.Embedding(n_news, id_emb_dim, padding_idx=0)
@@ -133,6 +137,7 @@ class DLRMStudent(nn.Module):
         item_base: torch.Tensor,
         history_item_base: torch.Tensor,
         history_mask: torch.Tensor,
+        is_new_item: torch.Tensor | None = None,
         return_repr: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         xd = self.bottom(dense)
@@ -151,6 +156,10 @@ class DLRMStudent(nn.Module):
         user_sem = F.normalize(user_sem, dim=-1)
         eu = self.user_id_proj(self.user_emb(user_idx))
         en = self.news_id_proj(self.news_emb(news_idx))
+        if is_new_item is not None:
+            cold = is_new_item.to(dtype=en.dtype).unsqueeze(1)
+            scale = (1.0 - cold) * self.news_id_warm_scale + cold * self.news_id_cold_scale
+            en = en * scale
         ec = self.cat_emb(cat_idx)
         es = self.subcat_emb(subcat_idx)
         query = xd_emb + eu + 0.5 * (ec + es)

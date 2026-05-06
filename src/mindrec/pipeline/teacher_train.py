@@ -17,7 +17,12 @@ from mindrec.config import ensure_dir
 from mindrec.data.featurize import IdMaps
 from mindrec.data.mind_io import read_behaviors_tsv
 from mindrec.models.teacher import TeacherTwoTower
-from mindrec.utils import save_json, set_seed
+from mindrec.utils import (
+    behavior_artifact_path,
+    save_json,
+    set_seed,
+    validation_split_name,
+)
 
 
 @dataclass
@@ -106,7 +111,7 @@ def _teacher_batch_loss(
 def _eval_teacher_recall_at_k(
     model: TeacherTwoTower,
     item_base_tensor: torch.Tensor,
-    beh_dev: pd.DataFrame,
+    beh_eval: pd.DataFrame,
     maps: IdMaps,
     max_hist: int,
     topk: int,
@@ -124,7 +129,9 @@ def _eval_teacher_recall_at_k(
 
     recalls = []
     with torch.no_grad():
-        for _, r in tqdm(beh_dev.iterrows(), total=len(beh_dev), desc="Teacher recall"):
+        for _, r in tqdm(
+            beh_eval.iterrows(), total=len(beh_eval), desc="Teacher recall"
+        ):
             hist_idx = [
                 maps.news2idx[h]
                 for h in r["history"][-max_hist:]
@@ -174,7 +181,9 @@ def _build_teacher_samples(
         user_idx = maps.user2idx.get(str(row["user_id"]), 0)
         if user_idx == 0:
             continue
-        row_time = pd.to_datetime(row.get("time"), errors="coerce")
+        row_time = pd.to_datetime(
+            row.get("time"), format="%m/%d/%Y %I:%M:%S %p", errors="coerce"
+        )
 
         hist_news_idx = [
             maps.news2idx[h]
@@ -227,8 +236,21 @@ def _encode_news_text(
     st: SentenceTransformer,
     news: pd.DataFrame,
     batch_size: int,
+    include_category_prefix: bool,
 ) -> np.ndarray:
-    texts = news["text"].fillna("").tolist()
+    if include_category_prefix:
+        texts = (
+            "Category: "
+            + news["category"].fillna("").astype(str)
+            + ". Subcategory: "
+            + news["subcategory"].fillna("").astype(str)
+            + ". Title: "
+            + news["title"].fillna("").astype(str)
+            + " [SEP] Abstract: "
+            + news["abstract"].fillna("").astype(str)
+        ).str.strip().tolist()
+    else:
+        texts = news["text"].fillna("").tolist()
     news_idx = news["news_idx"].astype(int).tolist()
     dim = int(st.get_sentence_embedding_dimension())
     item_emb = np.zeros((max(news_idx) + 1, dim), dtype=np.float32)
@@ -308,15 +330,22 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
         device=device_str,
         local_files_only=True,
     )
-    item_base = _encode_news_text(st=st, news=news, batch_size=batch_size)
+    text_cfg = dict(teacher_cfg.get("text", {}))
+    include_category_prefix = bool(text_cfg.get("include_category_prefix", False))
+    item_base = _encode_news_text(
+        st=st,
+        news=news,
+        batch_size=batch_size,
+        include_category_prefix=include_category_prefix,
+    )
     item_base_dim = int(item_base.shape[1])
     if hidden_dim <= 0:
         hidden_dim = item_base_dim
 
     raw_root = Path(cfg["data"]["raw_root"]) / cfg["data"]["train_dir"]
     beh_train = read_behaviors_tsv(raw_root / "behaviors.tsv")
-    raw_dev_root = Path(cfg["data"]["raw_root"]) / cfg["data"]["dev_dir"]
-    beh_dev = read_behaviors_tsv(raw_dev_root / "behaviors.tsv")
+    val_split = validation_split_name(cfg)
+    beh_val = pd.read_parquet(behavior_artifact_path(proc_root, val_split))
     max_hist = int(cfg["data"]["max_history"])
     topk = int(cfg["retrieval"]["topk"])
     samples, histories_by_user = _build_teacher_samples(
@@ -329,7 +358,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
     if not samples:
         raise ValueError("No teacher training samples were built from train behaviors.")
     dev_samples, _ = _build_teacher_samples(
-        beh_dev,
+        beh_val,
         maps,
         max_hist=max_hist,
         negatives_per_positive=negatives_per_positive,
@@ -409,7 +438,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
         recall_at_k, n_eval = _eval_teacher_recall_at_k(
             model=model,
             item_base_tensor=item_base_tensor,
-            beh_dev=beh_dev,
+            beh_eval=beh_val,
             maps=maps,
             max_hist=max_hist,
             topk=topk,
@@ -420,9 +449,9 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
             {
                 "epoch": epoch,
                 "train_loss_mean": train_loss_mean,
-                "dev_loss_mean": val_loss_mean,
-                "dev_recall_at_k": recall_at_k,
-                "dev_recall_k": topk,
+                "val_loss_mean": val_loss_mean,
+                "val_recall_at_k": recall_at_k,
+                "val_recall_k": topk,
                 "n_eval": n_eval,
             }
         )
@@ -444,9 +473,9 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
                     "state_dict": model.state_dict(),
                     "epoch": epoch,
                     "train_loss_mean": train_loss_mean,
-                    "dev_loss_mean": val_loss_mean,
-                    "dev_recall_at_k": recall_at_k,
-                    "dev_recall_k": topk,
+                    "val_loss_mean": val_loss_mean,
+                    "val_recall_at_k": recall_at_k,
+                    "val_recall_k": topk,
                     "n_eval": n_eval,
                 },
                 art_root / "best.pt",
@@ -491,9 +520,9 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
             "dropout": dropout,
             "state_dict": model.state_dict(),
             "best_epoch": best_epoch,
-            "best_dev_loss_mean": best_dev_loss_mean,
-            "best_dev_recall_at_k": best_metric,
-            "best_dev_recall_k": topk,
+            "best_val_loss_mean": best_dev_loss_mean,
+            "best_val_recall_at_k": best_metric,
+            "best_val_recall_k": topk,
         },
         art_root / "model.pt",
     )
@@ -508,9 +537,13 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
         "dropout": dropout,
         "temperature": temperature,
         "negatives_per_positive": negatives_per_positive,
+        "text": {
+            "include_category_prefix": include_category_prefix,
+        },
         "train_samples": int(len(samples)),
         "train_users": int(len(histories_by_user)),
-        "dev_samples": int(len(dev_samples)),
+        "validation_split_name": val_split,
+        "val_samples": int(len(dev_samples)),
         "epochs": epochs,
         "early_stopping_enabled": es_enabled,
         "early_stopping_monitor": monitor_name,
@@ -518,10 +551,10 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
         "early_stopping_min_delta": es_min_delta,
         "stopped_epoch": epoch,
         "best_epoch": best_epoch,
-        "best_dev_loss_mean": best_dev_loss_mean,
-        "best_dev_recall_at_k": best_metric,
-        "best_dev_recall_k": topk,
-        "best_dev_recall_n_eval": best_eval_count,
+        "best_val_loss_mean": best_dev_loss_mean,
+        "best_val_recall_at_k": best_metric,
+        "best_val_recall_k": topk,
+        "best_val_recall_n_eval": best_eval_count,
         "stop_reason": stop_reason,
         "lr": lr,
         "train_loss_mean": train_loss_mean,

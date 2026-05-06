@@ -17,7 +17,7 @@ from mindrec.data.featurize import IdMaps
 from mindrec.models.calibration import fit_temperature_scaler
 from mindrec.models.dlrm import DLRMStudent
 from mindrec.models.teacher import TeacherTwoTower
-from mindrec.utils import set_seed, save_json, to_device
+from mindrec.utils import pair_artifact_path, save_json, set_seed, to_device, validation_split_name
 
 
 class StudentProjHead(nn.Module):
@@ -38,7 +38,8 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     maps = IdMaps.load(proc_root / "id_maps.json")
 
     pairs_train = pd.read_parquet(proc_root / "train_pairs.parquet")
-    pairs_dev = pd.read_parquet(proc_root / "dev_pairs.parquet")
+    val_split = validation_split_name(cfg)
+    pairs_dev = pd.read_parquet(pair_artifact_path(proc_root, val_split))
 
     dense_cols = ["history_len", "item_clicks_log1p"]
     train_ds = PairDataset(pairs_train, dense_cols=dense_cols)
@@ -91,6 +92,8 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         semantic_dropout=float(
             dlrm_cfg.get("semantic_dropout", dlrm_cfg.get("dropout", 0.0))
         ),
+        news_id_warm_scale=float(dlrm_cfg.get("news_id_warm_scale", 1.0)),
+        news_id_cold_scale=float(dlrm_cfg.get("news_id_cold_scale", 1.0)),
     ).to(device)
 
     emb_dim = int(dlrm_cfg["emb_dim"])
@@ -162,6 +165,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                 item_base=item_base_batch,
                 history_item_base=hist_base_batch,
                 history_mask=batch["hist_mask"],
+                is_new_item=batch["is_new_item"],
                 return_repr=True,
             )
             y = batch["label"]
@@ -215,6 +219,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                     item_base=item_base_tensor[batch["news_idx"]],
                     history_item_base=item_base_tensor[batch["hist_news_idx"]],
                     history_mask=batch["hist_mask"],
+                    is_new_item=batch["is_new_item"],
                     return_repr=False,
                 )
                 ys.extend(batch["label"].detach().cpu().numpy().tolist())
@@ -228,7 +233,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             {
                 "epoch": ep,
                 "train_loss_mean": float(np.mean(losses) if losses else 0.0),
-                "dev_auc": auc,
+                "val_auc": auc,
             }
         )
         save_json(art_root / "epochs.json", epoch_metrics)
@@ -244,7 +249,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                     "proj": proj.state_dict(),
                     "cfg": cfg,
                     "epoch": ep,
-                    "dev_auc": auc,
+                    "val_auc": auc,
                 },
                 art_root / "best.pt",
             )
@@ -260,7 +265,8 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     save_json(
         art_root / "train_summary.json",
         {
-            "best_dev_auc": best_auc,
+            "validation_split_name": val_split,
+            "best_val_auc": best_auc,
             "best_epoch": best_epoch,
             "early_stopping_enabled": es_enabled,
             "early_stopping_patience": es_patience,
@@ -290,6 +296,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                     item_base=item_base_tensor[batch["news_idx"]],
                     history_item_base=item_base_tensor[batch["hist_news_idx"]],
                     history_mask=batch["hist_mask"],
+                    is_new_item=batch["is_new_item"],
                     return_repr=False,
                 )
                 logits_all.append(logits.detach().cpu().numpy())
@@ -304,7 +311,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         scaler.save(
             art_root / "calibration.json",
             meta={
-                "fit_split": "dev_pairs",
+                "fit_split": f"{val_split}_pairs",
                 "stats": stats,
             },
         )

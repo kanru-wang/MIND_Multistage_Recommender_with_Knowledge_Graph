@@ -9,8 +9,12 @@ data:
   max_history: 50
   min_user_hist_for_warm: 5
   min_item_train_clicks_for_warm: 10
+  holdout:
+    enabled: true
+    split_by: "time"  # time|random
+    validation_fraction: 0.8  # Early 80% becomes validation, later 20% becomes test
   negative_sampling:
-    enabled: false  # Use in-impression negatives by default
+    enabled: false  # Reserved; ranker pair building currently samples in-impression negatives.
   sub_sample:
     enabled: false
     train_impressions: 200000
@@ -19,6 +23,8 @@ data:
 
 teacher:
   model_name: "sentence-transformers/all-MiniLM-L6-v2"
+  text:
+    include_category_prefix: false  # Category/subcategory prefixes improved retrieval Val recall but hurt downstream rank quality.
   batch_size: 128
   user_attn_heads: 4
   user_attn_dim: 384
@@ -29,19 +35,25 @@ teacher:
     patience: 2
     monitor: "retrieval_recall@k"
     min_delta: 1.0e-4
-  temperature: 0.07
+  temperature: 0.05
   negatives_per_positive: 8
   device: "cuda"  # cuda|cpu
 
 retrieval:
   index_type: "flat_ip"  # flat_ip|ivf_flat_ip
+  base_index_type: "flat_ip"  # Raw sentence-transformer semantic fallback index
+  hybrid_base_weight: 0.075  # Best downstream operating point before category/subcategory text-prefix experiment
+  hybrid_oversample: 18  # Retrieve topk * this from each retrieval signal before merging
+  sweep:
+    hybrid_base_weights: [0.0625, 0.075, 0.0875]
+    hybrid_oversamples: [18, 20, 22]
   ivf_nlist: 2048
   topk: 200  # Number of candidates to retrieve for each user. Should be >= rerank.pool_size
 
 ranker:
   batch_size: 1024
   lr: 1.0e-3
-  weight_decay: 1.0e-5
+  weight_decay: 3.0e-5
   epochs: 8
   early_stopping:
     enabled: true
@@ -51,11 +63,13 @@ ranker:
   dlrm:
     emb_dim: 56
     id_emb_dim: 8
+    news_id_warm_scale: 1.0
+    news_id_cold_scale: 0.0
     semantic_ff_mult: 3
-    semantic_dropout: 0.15
+    semantic_dropout: 0.20
     bottom_mlp: [64, 56]
     top_mlp: [128, 64, 1]
-    dropout: 0.1
+    dropout: 0.15
   distill:
     enabled: true
     temperature: 2.0
@@ -72,9 +86,9 @@ rerank:
   k_out: 10  # Number of items to output after re-ranking
   pool_size: 50  # Number of candidates to consider for re-ranking. Should be >= k_out.
   position_bias: "log"  # log|linear
-  relevance_weight: 0.80
-  novelty_weight: 0.15
-  coverage_weight: 0.05
+  relevance_weight: 0.89
+  novelty_weight: 0.05
+  coverage_weight: 0.06
   novelty_sim: "teacher_cosine"  # teacher_cosine|entity_jaccard|category
   coverage:
     max_new_entities_per_item: 3
@@ -84,13 +98,13 @@ rerank:
     enabled: true
     category_target: "catalog"  # catalog|uniform
     new_item_floor: 0.20  # minimum fraction of exposure in top-k to new items
-    penalty_weight: 0.25
+    penalty_weight: 0.20
   search:
     relative_guardrails:
-      max_ndcg_drop_ratio: 0.03
+      max_ndcg_drop_ratio: 0.021
       min_new_item_exposure_gain: 0.00
-      min_category_coverage_gain: 0.30
-      min_fairness_kl_pool_improvement: 0.05
+      min_category_coverage_gain: 0.25
+      min_fairness_kl_pool_improvement: 0.04
     utility_coefficients:
       ndcg_retention_units: 4.0
       new_item_exposure_gain_units: 0.5
@@ -98,5 +112,7 @@ rerank:
       fairness_kl_pool_improvement_units: 1.5
 
 eval:
+  report_splits: ["val", "test"]
   ks: [5, 10]
+  time_periods: 4
   plot_curves: true

@@ -10,7 +10,13 @@ from tqdm import tqdm
 from mindrec.config import ensure_dir
 from mindrec.data.featurize import IdMaps, add_indices, build_id_maps, is_cold_user
 from mindrec.data.mind_io import read_behaviors_tsv, read_news_tsv, sub_sample_behaviors
-from mindrec.utils import set_seed, save_json
+from mindrec.utils import (
+    behavior_artifact_path,
+    impression_artifact_path,
+    pair_artifact_path,
+    save_json,
+    set_seed,
+)
 
 
 def build_pairs(
@@ -150,6 +156,64 @@ def build_impressions_for_eval(
     return pd.DataFrame(rows)
 
 
+def _split_holdout_behaviors(
+    beh: pd.DataFrame,
+    split_by: str,
+    validation_fraction: float,
+    seed: int,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    if len(beh) < 2:
+        raise ValueError("Need at least 2 holdout impressions to create val/test splits.")
+    if not 0.0 < validation_fraction < 1.0:
+        raise ValueError(
+            f"validation_fraction must be between 0 and 1, got {validation_fraction}."
+        )
+
+    n_val = int(np.floor(len(beh) * validation_fraction))
+    n_val = min(max(n_val, 1), len(beh) - 1)
+
+    meta: dict[str, Any] = {
+        "strategy": split_by,
+        "validation_fraction": float(validation_fraction),
+        "n_holdout_impressions": int(len(beh)),
+        "n_val_impressions": int(n_val),
+        "n_test_impressions": int(len(beh) - n_val),
+    }
+
+    if split_by == "time":
+        ordered = beh.copy()
+        ordered["_parsed_time"] = pd.to_datetime(
+            ordered["time"], format="%m/%d/%Y %I:%M:%S %p", errors="coerce"
+        )
+        ordered["_sort_impression_id"] = pd.to_numeric(
+            ordered["impression_id"], errors="coerce"
+        )
+        ordered = ordered.sort_values(
+            by=["_parsed_time", "_sort_impression_id", "impression_id"],
+            kind="stable",
+            na_position="last",
+        ).reset_index(drop=True)
+        val = ordered.iloc[:n_val].drop(
+            columns=["_parsed_time", "_sort_impression_id"]
+        )
+        test = ordered.iloc[n_val:].drop(
+            columns=["_parsed_time", "_sort_impression_id"]
+        )
+        meta["val_time_min"] = str(val["time"].iloc[0])
+        meta["val_time_max"] = str(val["time"].iloc[-1])
+        meta["test_time_min"] = str(test["time"].iloc[0])
+        meta["test_time_max"] = str(test["time"].iloc[-1])
+        return val.reset_index(drop=True), test.reset_index(drop=True), meta
+
+    if split_by == "random":
+        shuffled = beh.sample(frac=1.0, random_state=seed).reset_index(drop=True)
+        val = shuffled.iloc[:n_val].reset_index(drop=True)
+        test = shuffled.iloc[n_val:].reset_index(drop=True)
+        return val, test, meta
+
+    raise ValueError(f"Unknown holdout split strategy: {split_by}")
+
+
 def run_preprocess(cfg: dict[str, Any]) -> None:
     seed = int(cfg["data"].get("sub_sample", {}).get("seed", 13))
     set_seed(seed)
@@ -193,6 +257,30 @@ def run_preprocess(cfg: dict[str, Any]) -> None:
                 click_counts[nid] = click_counts.get(nid, 0) + 1
     save_json(proc_root / "item_click_counts.json", click_counts)
 
+    holdout_cfg = dict(cfg["data"].get("holdout", {}))
+    use_holdout = bool(holdout_cfg.get("enabled", False))
+    if use_holdout:
+        val_name = "val"
+        test_name = "test"
+        val_beh, test_beh, holdout_meta = _split_holdout_behaviors(
+            beh=beh_dev,
+            split_by=str(holdout_cfg.get("split_by", "time")),
+            validation_fraction=float(holdout_cfg.get("validation_fraction", 0.5)),
+            seed=seed,
+        )
+    else:
+        val_name = "dev"
+        test_name = "dev"
+        val_beh = beh_dev.reset_index(drop=True)
+        test_beh = beh_dev.reset_index(drop=True)
+        holdout_meta = {
+            "strategy": "disabled",
+            "validation_fraction": 1.0,
+            "n_holdout_impressions": int(len(beh_dev)),
+            "n_val_impressions": int(len(val_beh)),
+            "n_test_impressions": int(len(test_beh)),
+        }
+
     pairs_train = build_pairs(
         beh=beh_train,
         news_idx_df=news_idx_df,
@@ -206,8 +294,8 @@ def run_preprocess(cfg: dict[str, Any]) -> None:
         neg_per_pos=4,
         seed=seed,
     )
-    pairs_dev = build_pairs(
-        beh=beh_dev,
+    pairs_val = build_pairs(
+        beh=val_beh,
         news_idx_df=news_idx_df,
         maps=maps,
         item_clicks_train=click_counts,
@@ -219,12 +307,26 @@ def run_preprocess(cfg: dict[str, Any]) -> None:
         neg_per_pos=4,
         seed=seed + 1,
     )
+    pairs_test = build_pairs(
+        beh=test_beh,
+        news_idx_df=news_idx_df,
+        maps=maps,
+        item_clicks_train=click_counts,
+        min_user_hist_for_warm=int(cfg["data"]["min_user_hist_for_warm"]),
+        min_item_train_clicks_for_warm=int(
+            cfg["data"]["min_item_train_clicks_for_warm"]
+        ),
+        max_history=int(cfg["data"]["max_history"]),
+        neg_per_pos=4,
+        seed=seed + 2,
+    )
 
-    pairs_train.to_parquet(proc_root / "train_pairs.parquet", index=False)
-    pairs_dev.to_parquet(proc_root / "dev_pairs.parquet", index=False)
+    pairs_train.to_parquet(pair_artifact_path(proc_root, "train"), index=False)
+    pairs_val.to_parquet(pair_artifact_path(proc_root, val_name), index=False)
+    pairs_test.to_parquet(pair_artifact_path(proc_root, test_name), index=False)
 
-    impr_dev = build_impressions_for_eval(
-        beh=beh_dev,
+    impr_val = build_impressions_for_eval(
+        beh=val_beh,
         news_idx_df=news_idx_df,
         maps=maps,
         item_clicks_train=click_counts,
@@ -234,15 +336,36 @@ def run_preprocess(cfg: dict[str, Any]) -> None:
         ),
         max_history=int(cfg["data"]["max_history"]),
     )
-    impr_dev.to_parquet(proc_root / "dev_impressions.parquet", index=False)
+    impr_test = build_impressions_for_eval(
+        beh=test_beh,
+        news_idx_df=news_idx_df,
+        maps=maps,
+        item_clicks_train=click_counts,
+        min_user_hist_for_warm=int(cfg["data"]["min_user_hist_for_warm"]),
+        min_item_train_clicks_for_warm=int(
+            cfg["data"]["min_item_train_clicks_for_warm"]
+        ),
+        max_history=int(cfg["data"]["max_history"]),
+    )
+    impr_val.to_parquet(impression_artifact_path(proc_root, val_name), index=False)
+    impr_test.to_parquet(impression_artifact_path(proc_root, test_name), index=False)
+    val_beh.to_parquet(behavior_artifact_path(proc_root, val_name), index=False)
+    test_beh.to_parquet(behavior_artifact_path(proc_root, test_name), index=False)
 
     meta = {
         "dataset": ds,
         "n_news": int(len(news_idx_df)),
         "n_train_impressions": int(len(beh_train)),
-        "n_dev_impressions": int(len(beh_dev)),
+        "n_holdout_source_impressions": int(len(beh_dev)),
+        "validation_split_name": val_name,
+        "test_split_name": test_name,
+        "n_validation_impressions": int(len(val_beh)),
+        "n_test_impressions": int(len(test_beh)),
         "n_train_pairs": int(len(pairs_train)),
-        "n_dev_pairs": int(len(pairs_dev)),
-        "n_dev_eval_impressions": int(len(impr_dev)),
+        "n_validation_pairs": int(len(pairs_val)),
+        "n_test_pairs": int(len(pairs_test)),
+        "n_validation_eval_impressions": int(len(impr_val)),
+        "n_test_eval_impressions": int(len(impr_test)),
+        "holdout": holdout_meta,
     }
     save_json(proc_root / "preprocess_meta.json", meta)

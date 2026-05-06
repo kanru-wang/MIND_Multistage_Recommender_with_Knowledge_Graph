@@ -26,7 +26,12 @@ from mindrec.metrics.ranking import (
 )
 from mindrec.pipeline.evaluate import _expand_history_base, _load_model
 from mindrec.rerank.greedy import build_news_meta, cosine_sim_matrix, greedy_rerank
-from mindrec.utils import position_bias_weights, save_json
+from mindrec.utils import (
+    impression_artifact_path,
+    position_bias_weights,
+    save_json,
+    test_split_name,
+)
 
 
 def _cat_idx(news_meta: dict[str, Any], news_id: str) -> int:
@@ -72,7 +77,8 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
     news = pd.read_parquet(proc_root / "news.parquet")
     news_meta = build_news_meta(news)
 
-    impr = pd.read_parquet(proc_root / "dev_impressions.parquet")
+    eval_split = test_split_name(cfg)
+    impr = pd.read_parquet(impression_artifact_path(proc_root, eval_split))
 
     rr_cfg = cfg["rerank"]
     k_out = int(rr_cfg["k_out"])
@@ -118,6 +124,7 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
             cand_cat_idx = np.array(r["cand_cat_idx"], dtype=np.int64)
             cand_subcat_idx = np.array(r["cand_subcat_idx"], dtype=np.int64)
             cand_is_new = list(r["cand_is_new_item"])  # A binary list indicating whether each candidate news is a "new item" based on the training data
+            cand_is_new_arr = np.array(cand_is_new, dtype=np.int64)
             cand_clicks_log1p = np.array(r["cand_item_clicks_log1p"], dtype=np.float32)
             cand_cat_ref_full = [int(c) for c in cand_cat_idx.tolist() if int(c) != 0]
             hlen = float(r["history_len"])
@@ -141,6 +148,9 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
                 b_sub = torch.tensor(
                     cand_subcat_idx[sl], dtype=torch.long, device=device
                 )
+                b_is_new = torch.tensor(
+                    cand_is_new_arr[sl], dtype=torch.long, device=device
+                )
                 b_dense = torch.tensor(dense[sl], dtype=torch.float32, device=device)
                 b_item_base = torch.tensor(
                     item_base[cand_news_idx[sl]], dtype=torch.float32, device=device
@@ -160,6 +170,7 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
                     item_base=b_item_base,
                     history_item_base=b_hist_base,
                     history_mask=b_hist_mask,
+                    is_new_item=b_is_new,
                 )
                 logits.append(logit.detach().cpu().numpy())
             scores = np.concatenate(logits, axis=0)
@@ -285,5 +296,6 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
         },
         "novelty_sim": novelty_sim,
         "position_bias": pos_mode,
+        "eval_split": eval_split,
     }
     save_json(out_root / "rerank_eval.json", out)

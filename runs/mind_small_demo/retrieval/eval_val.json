@@ -1,0 +1,712 @@
+{
+  "recall_at_k": 0.04575383453681275,
+  "n_eval": 56744,
+  "k": 200,
+  "eval_split": "val",
+  "hybrid_base_weight": 0.075,
+  "hybrid_oversample": 18,
+  "slices": {
+    "overall": {
+      "recall_at_k": 0.04575383453681283,
+      "n_impressions": 56744
+    },
+    "history_len_bucket__1_4": {
+      "recall_at_k": 0.0375233354075918,
+      "n_impressions": 6428
+    },
+    "time_period__period_1_of_4": {
+      "recall_at_k": 0.05302682993754048,
+      "n_impressions": 14229
+    },
+    "impressions_with_clicked_popularity_bucket__1_4": {
+      "recall_at_k": 0.04581506547622584,
+      "n_impressions": 15682
+    },
+    "impressions_with_clicked_category__weather": {
+      "recall_at_k": 0.015680371052271876,
+      "n_impressions": 1331
+    },
+    "impressions_with_clicked_subcategory__weathertopstories": {
+      "recall_at_k": 0.015680371052271876,
+      "n_impressions": 1331
+    },
+    "impressions_with_clicked_popularity_bucket__20_plus": {
+      "recall_at_k": 0.06333810272404451,
+      "n_impressions": 22854
+    },
+    "impressions_with_clicked_category__sports": {
+      "recall_at_k": 0.03201343006025094,
+      "n_impressions": 18994
+    },
+    "impressions_with_clicked_category__video": {
+      "recall_at_k": 0.03539782171841337,
+      "n_impressions": 2055
+    },
+    "impressions_with_clicked_category__autos": {
+      "recall_at_k": 0.030681894059756066,
+      "n_impressions": 1639
+    },
+    "impressions_with_clicked_subcategory__science": {
+      "recall_at_k": 0.00942301332926333,
+      "n_impressions": 288
+    },
+    "impressions_with_clicked_subcategory__autosmotorcycles": {
+      "recall_at_k": 0.06051292761819078,
+      "n_impressions": 117
+    },
+    "impressions_with_clicked_subcategory__autosclassics": {
+      "recall_at_k": 0.037037037037037035,
+      "n_impressions": 117
+    },
+    "impressions_with_clicked_subcategory__baseball_mlb": {
+      "recall_at_k": 0.03168348384084423,
+      "n_impressions": 591
+    },
+    "impressions_with_clicked_subcategory__viral": {
+      "recall_at_k": 0.025542083172095695,
+      "n_impressions": 1260
+    },
+    "history_len_bucket__21_plus": {
+      "recall_at_k": 0.04776912920000417,
+      "n_impressions": 27858
+    },
+    "impressions_with_clicked_category__lifestyle": {
+      "recall_at_k": 0.06859943988882429,
+      "n_impressions": 14411
+    },
+    "impressions_with_clicked_category__news": {
+      "recall_at_k": 0.030909968001748597,
+      "n_impressions": 14756
+    },
+    "impressions_with_clicked_subcategory__newscrime": {
+      "recall_at_k": 0.032925926083218426,
+      "n_impressions": 3058
+    },
+    "impressions_with_clicked_subcategory__lifestylecelebstyle": {
+      "recall_at_k": 0.0567639786232751,
+      "n_impressions": 398
+    },
+    "impressions_with_clicked_category__entertainment": {
+      "recall_at_k": 0.10863512721038324,
+      "n_impressions": 2210
+    },
+    "impressions_with_clicked_subcategory__celebrity": {
+      "recall_at_k": 0.06406376479947005,
+      "n_impressions": 1412
+    },
+    "impressions_with_clicked_subcategory__lifestylesmartliving": {
+      "recall_at_k": 0.07894736842105263,
+      "n_impressions": 19
+    },
+    "impressions_with_clicked_subcategory__newspolitics": {
+      "recall_at_k": 0.03950716935355621,
+      "n_impressions": 2311
+    },
+    "impressions_with_clicked_popularity_bucket__5_19": {
+      "recall_at_k": 0.04007210453995379,
+      "n_impressions": 3157
+    },
+    "impressions_with_clicked_subcategory__newsworld": {
+      "recall_at_k": 0.024513542035460915,
+      "n_impressions": 1999
+    },
+    "impressions_with_clicked_category__music": {
+      "recall_at_k": 0.022669801975828453,
+      "n_impressions": 3089
+    },
+    "impressions_with_clicked_subcategory__music_celebrity": {
+      "recall_at_k": 0.02073995835605743,
+      "n_impressions": 442
+    },
+    "history_len_bucket__5_20": {
+      "recall_at_k": 0.045609724183061195,
+      "n_impressions": 22458
+    },
+    "impressions_with_clicked_subcategory__newsus": {
+      "recall_at_k": 0.02217216110338785,
+      "n_impressions": 8070
+    },
+    "impressions_with_clicked_subcategory__football_nfl": {
+      "recall_at_k": 0.03321881359725925,
+      "n_impressions": 16743
+    },
+    "impressions_with_clicked_popularity_bucket__0": {
+      "recall_at_k": 0.034231457759083206,
+      "n_impressions": 28898
+    },
+    "impressions_with_clicked_category__tv": {
+      "recall_at_k": 0.048210590794701386,
+      "n_impressions": 4266
+    },
+    "impressions_with_clicked_category__foodanddrink": {
+      "recall_at_k": 0.0833295546061502,
+      "n_impressions": 5264
+    },
+    "impressions_with_clicked_category__travel": {
+      "recall_at_k": 0.029868030915840255,
+      "n_impressions": 1910
+    },
+    "impressions_with_clicked_category__health": {
+      "recall_at_k": 0.045358719272199435,
+      "n_impressions": 3013
+    },
+    "impressions_with_clicked_category__finance": {
+      "recall_at_k": 0.03224555901229131,
+      "n_impressions": 2540
+    },
+    "impressions_with_clicked_subcategory__traveltips": {
+      "recall_at_k": 0.012403657427354107,
+      "n_impressions": 211
+    },
+    "impressions_with_clicked_subcategory__foodnews": {
+      "recall_at_k": 0.04773847814925552,
+      "n_impressions": 566
+    },
+    "impressions_with_clicked_subcategory__travelarticle": {
+      "recall_at_k": 0.02456705899688356,
+      "n_impressions": 171
+    },
+    "impressions_with_clicked_subcategory__lifestylebuzz": {
+      "recall_at_k": 0.021738550553946825,
+      "n_impressions": 2677
+    },
+    "impressions_with_clicked_subcategory__lifestyleroyals": {
+      "recall_at_k": 0.13142265290098123,
+      "n_impressions": 5661
+    },
+    "impressions_with_clicked_subcategory__health_news": {
+      "recall_at_k": 0.03921106528965174,
+      "n_impressions": 1531
+    },
+    "impressions_with_clicked_subcategory__finance_companies": {
+      "recall_at_k": 0.025850291175889974,
+      "n_impressions": 668
+    },
+    "impressions_with_clicked_subcategory__tvnews": {
+      "recall_at_k": 0.03686765515676133,
+      "n_impressions": 1790
+    },
+    "impressions_with_clicked_subcategory__video": {
+      "recall_at_k": 0.03650611248925856,
+      "n_impressions": 89
+    },
+    "impressions_with_clicked_subcategory__entertainment_celebrity": {
+      "recall_at_k": 0.20289464190779977,
+      "n_impressions": 670
+    },
+    "impressions_with_clicked_subcategory__humor": {
+      "recall_at_k": 0.12219810576164163,
+      "n_impressions": 181
+    },
+    "impressions_with_clicked_subcategory__traveltripideas": {
+      "recall_at_k": 0.04551802364302364,
+      "n_impressions": 104
+    },
+    "impressions_with_clicked_subcategory__shop_holidays": {
+      "recall_at_k": 0.03599536871761272,
+      "n_impressions": 5107
+    },
+    "impressions_with_clicked_subcategory__wellness": {
+      "recall_at_k": 0.04961757482943924,
+      "n_impressions": 354
+    },
+    "impressions_with_clicked_subcategory__tipsandtricks": {
+      "recall_at_k": 0.026896370129452833,
+      "n_impressions": 665
+    },
+    "impressions_with_clicked_subcategory__autosvideos": {
+      "recall_at_k": 0.013333333333333334,
+      "n_impressions": 15
+    },
+    "impressions_with_clicked_subcategory__restaurantsandnews": {
+      "recall_at_k": 0.10585994323351026,
+      "n_impressions": 2966
+    },
+    "impressions_with_clicked_subcategory__autosnews": {
+      "recall_at_k": 0.04253881987577639,
+      "n_impressions": 460
+    },
+    "impressions_with_clicked_subcategory__autosresearchguides": {
+      "recall_at_k": 0.020833333333333332,
+      "n_impressions": 24
+    },
+    "impressions_with_clicked_category__movies": {
+      "recall_at_k": 0.03972816693377614,
+      "n_impressions": 2692
+    },
+    "impressions_with_clicked_subcategory__movies_gallery": {
+      "recall_at_k": 0.032361593000452556,
+      "n_impressions": 947
+    },
+    "impressions_with_clicked_subcategory__markets": {
+      "recall_at_k": 0.034467690909408696,
+      "n_impressions": 489
+    },
+    "impressions_with_clicked_subcategory__personalfinance": {
+      "recall_at_k": 0.012696678321678322,
+      "n_impressions": 208
+    },
+    "impressions_with_clicked_subcategory__travelnews": {
+      "recall_at_k": 0.02926769659262594,
+      "n_impressions": 1192
+    },
+    "impressions_with_clicked_subcategory__news": {
+      "recall_at_k": 0.021468699839486356,
+      "n_impressions": 89
+    },
+    "impressions_with_clicked_subcategory__elections_2020_us": {
+      "recall_at_k": 0.020390070921985814,
+      "n_impressions": 47
+    },
+    "impressions_with_clicked_subcategory__basketball_nba": {
+      "recall_at_k": 0.02858105472213356,
+      "n_impressions": 241
+    },
+    "impressions_with_clicked_subcategory__finance_video": {
+      "recall_at_k": 0.05168890249535411,
+      "n_impressions": 31
+    },
+    "impressions_with_clicked_subcategory__nutrition": {
+      "recall_at_k": 0.039655126226908394,
+      "n_impressions": 404
+    },
+    "impressions_with_clicked_subcategory__voices": {
+      "recall_at_k": 0.030481722393487103,
+      "n_impressions": 1258
+    },
+    "impressions_with_clicked_subcategory__cma_awards": {
+      "recall_at_k": 0.08766285486715591,
+      "n_impressions": 279
+    },
+    "impressions_with_clicked_subcategory__internationaltravel": {
+      "recall_at_k": 0.0501082251082251,
+      "n_impressions": 70
+    },
+    "impressions_with_clicked_subcategory__tv_celebrity": {
+      "recall_at_k": 0.05469598059055869,
+      "n_impressions": 2321
+    },
+    "impressions_with_clicked_subcategory__medical": {
+      "recall_at_k": 0.04153274323152618,
+      "n_impressions": 493
+    },
+    "impressions_with_clicked_subcategory__weightloss": {
+      "recall_at_k": 0.13616611661166114,
+      "n_impressions": 101
+    },
+    "impressions_with_clicked_subcategory__finance_real_estate": {
+      "recall_at_k": 0.060422422084433255,
+      "n_impressions": 358
+    },
+    "impressions_with_clicked_subcategory__football_nfl_videos": {
+      "recall_at_k": 0.016431024467910314,
+      "n_impressions": 361
+    },
+    "impressions_with_clicked_subcategory__finance_saving_investing": {
+      "recall_at_k": 0.07906976744186046,
+      "n_impressions": 129
+    },
+    "impressions_with_clicked_subcategory__newsgoodnews": {
+      "recall_at_k": 0.026661644806806096,
+      "n_impressions": 403
+    },
+    "impressions_with_clicked_subcategory__lifestylehomeandgarden": {
+      "recall_at_k": 0.08070565797838525,
+      "n_impressions": 143
+    },
+    "impressions_with_clicked_subcategory__autosenthusiasts": {
+      "recall_at_k": 0.025029158393820045,
+      "n_impressions": 532
+    },
+    "impressions_with_clicked_subcategory__movies_celebrity": {
+      "recall_at_k": 0.08651976503283695,
+      "n_impressions": 459
+    },
+    "impressions_with_clicked_subcategory__newsscienceandtechnology": {
+      "recall_at_k": 0.014583333333333332,
+      "n_impressions": 48
+    },
+    "impressions_with_clicked_subcategory__tvvideos": {
+      "recall_at_k": 0.08082622244761463,
+      "n_impressions": 155
+    },
+    "impressions_with_clicked_subcategory__videos": {
+      "recall_at_k": 0.028805003013863774,
+      "n_impressions": 158
+    },
+    "impressions_with_clicked_subcategory__animals": {
+      "recall_at_k": 0.12013387066889011,
+      "n_impressions": 257
+    },
+    "impressions_with_clicked_subcategory__financenews": {
+      "recall_at_k": 0.043984220907297825,
+      "n_impressions": 26
+    },
+    "impressions_with_clicked_subcategory__traveltrivia": {
+      "recall_at_k": 0.1111111111111111,
+      "n_impressions": 3
+    },
+    "impressions_with_clicked_subcategory__newstrends": {
+      "recall_at_k": 0.008750508750508751,
+      "n_impressions": 78
+    },
+    "impressions_with_clicked_subcategory__more_sports": {
+      "recall_at_k": 0.011675537242109478,
+      "n_impressions": 706
+    },
+    "impressions_with_clicked_subcategory__ustravel": {
+      "recall_at_k": 0.012820512820512818,
+      "n_impressions": 71
+    },
+    "impressions_with_clicked_subcategory__mma": {
+      "recall_at_k": 0.16666666666666666,
+      "n_impressions": 15
+    },
+    "impressions_with_clicked_subcategory__beverages": {
+      "recall_at_k": 0.0,
+      "n_impressions": 2
+    },
+    "impressions_with_clicked_subcategory__music_gallery": {
+      "recall_at_k": 0.037037037037037035,
+      "n_impressions": 9
+    },
+    "impressions_with_clicked_subcategory__newsopinion": {
+      "recall_at_k": 0.299180203854117,
+      "n_impressions": 230
+    },
+    "impressions_with_clicked_subcategory__tv_gallery": {
+      "recall_at_k": 0.06370456027990275,
+      "n_impressions": 73
+    },
+    "impressions_with_clicked_subcategory__football_ncaa": {
+      "recall_at_k": 0.04489134805399865,
+      "n_impressions": 498
+    },
+    "impressions_with_clicked_subcategory__movienews": {
+      "recall_at_k": 0.029700580157201156,
+      "n_impressions": 1314
+    },
+    "impressions_with_clicked_subcategory__lifestylevideo": {
+      "recall_at_k": 0.022310405643738977,
+      "n_impressions": 108
+    },
+    "impressions_with_clicked_subcategory__recipes": {
+      "recall_at_k": 0.0936744575506044,
+      "n_impressions": 763
+    },
+    "impressions_with_clicked_subcategory__lifestyle": {
+      "recall_at_k": 0.08712121212121211,
+      "n_impressions": 11
+    },
+    "impressions_with_clicked_subcategory__newsfactcheck": {
+      "recall_at_k": 0.06683673469387755,
+      "n_impressions": 7
+    },
+    "impressions_with_clicked_subcategory__lifestyledidyouknow": {
+      "recall_at_k": 0.04912551440329218,
+      "n_impressions": 54
+    },
+    "impressions_with_clicked_subcategory__popculture": {
+      "recall_at_k": 0.024816345270890723,
+      "n_impressions": 231
+    },
+    "impressions_with_clicked_subcategory__soccer_epl": {
+      "recall_at_k": 0.0,
+      "n_impressions": 1
+    },
+    "impressions_with_clicked_subcategory__basketball_ncaa": {
+      "recall_at_k": 0.032575757575757584,
+      "n_impressions": 88
+    },
+    "impressions_with_clicked_subcategory__lifestylecleaningandorganizing": {
+      "recall_at_k": 0.0,
+      "n_impressions": 7
+    },
+    "impressions_with_clicked_subcategory__lifestylefashion": {
+      "recall_at_k": 0.041666666666666664,
+      "n_impressions": 8
+    },
+    "impressions_with_clicked_subcategory__factcheck": {
+      "recall_at_k": 0.03968253968253968,
+      "n_impressions": 12
+    },
+    "impressions_with_clicked_subcategory__autossuvs": {
+      "recall_at_k": 0.12329931972789114,
+      "n_impressions": 14
+    },
+    "impressions_with_clicked_subcategory__musicnews": {
+      "recall_at_k": 0.01560676892168605,
+      "n_impressions": 2353
+    },
+    "impressions_with_clicked_subcategory__finance_taxes": {
+      "recall_at_k": 0.026899402680652683,
+      "n_impressions": 352
+    },
+    "impressions_with_clicked_subcategory__autossports": {
+      "recall_at_k": 0.04181077694235589,
+      "n_impressions": 190
+    },
+    "impressions_with_clicked_subcategory__finance_career_education": {
+      "recall_at_k": 0.0,
+      "n_impressions": 4
+    },
+    "impressions_with_clicked_subcategory__ads_latingrammys": {
+      "recall_at_k": 0.03209109730848861,
+      "n_impressions": 46
+    },
+    "impressions_with_clicked_subcategory__golf": {
+      "recall_at_k": 0.009700465019613958,
+      "n_impressions": 611
+    },
+    "impressions_with_clicked_subcategory__gaming": {
+      "recall_at_k": 0.14583333333333331,
+      "n_impressions": 16
+    },
+    "impressions_with_clicked_subcategory__finance_retirement": {
+      "recall_at_k": 0.012483850129198969,
+      "n_impressions": 344
+    },
+    "impressions_with_clicked_subcategory__ads_lung_health": {
+      "recall_at_k": 0.08586290758421905,
+      "n_impressions": 61
+    },
+    "impressions_with_clicked_subcategory__autostrucks": {
+      "recall_at_k": 0.05416666666666667,
+      "n_impressions": 8
+    },
+    "impressions_with_clicked_subcategory__movievideo": {
+      "recall_at_k": 0.03563218390804597,
+      "n_impressions": 29
+    },
+    "impressions_with_clicked_subcategory__autosbuying": {
+      "recall_at_k": 0.08333333333333333,
+      "n_impressions": 3
+    },
+    "impressions_with_clicked_subcategory__outdoors": {
+      "recall_at_k": 0.08333333333333333,
+      "n_impressions": 3
+    },
+    "impressions_with_clicked_subcategory__racing": {
+      "recall_at_k": 0.022727272727272728,
+      "n_impressions": 11
+    },
+    "impressions_with_clicked_subcategory__lifestylediy": {
+      "recall_at_k": 0.08333333333333331,
+      "n_impressions": 22
+    },
+    "impressions_with_clicked_subcategory__icehockey_nhl": {
+      "recall_at_k": 0.0,
+      "n_impressions": 34
+    },
+    "impressions_with_clicked_subcategory__lifestylecareer": {
+      "recall_at_k": 0.03901515151515151,
+      "n_impressions": 44
+    },
+    "impressions_with_clicked_subcategory__mentalhealth": {
+      "recall_at_k": 0.028571428571428574,
+      "n_impressions": 7
+    },
+    "impressions_with_clicked_subcategory__entertainment_books": {
+      "recall_at_k": 0.026373626373626374,
+      "n_impressions": 13
+    },
+    "impressions_with_clicked_subcategory__quickandeasy": {
+      "recall_at_k": 0.09047764227642276,
+      "n_impressions": 410
+    },
+    "impressions_with_clicked_subcategory__finance_insurance": {
+      "recall_at_k": 0.0,
+      "n_impressions": 10
+    },
+    "impressions_with_clicked_subcategory__finance_savemoney": {
+      "recall_at_k": 0.009259259259259259,
+      "n_impressions": 18
+    },
+    "impressions_with_clicked_subcategory__autosluxury": {
+      "recall_at_k": 0.25,
+      "n_impressions": 2
+    },
+    "impressions_with_clicked_subcategory__newsphotos": {
+      "recall_at_k": 0.0,
+      "n_impressions": 2
+    },
+    "impressions_with_clicked_subcategory__travel": {
+      "recall_at_k": 0.0,
+      "n_impressions": 1
+    },
+    "impressions_with_clicked_subcategory__newsoffbeat": {
+      "recall_at_k": 0.026041666666666664,
+      "n_impressions": 32
+    },
+    "impressions_with_clicked_subcategory__finance_billstopay": {
+      "recall_at_k": 0.03809523809523809,
+      "n_impressions": 14
+    },
+    "impressions_with_clicked_subcategory__finance_top_stocks": {
+      "recall_at_k": 0.007407407407407408,
+      "n_impressions": 27
+    },
+    "impressions_with_clicked_subcategory__autoslosangeles": {
+      "recall_at_k": 0.0,
+      "n_impressions": 55
+    },
+    "impressions_with_clicked_subcategory__musicvideos": {
+      "recall_at_k": 0.0,
+      "n_impressions": 4
+    },
+    "impressions_with_clicked_subcategory__fitness": {
+      "recall_at_k": 0.02181286549707602,
+      "n_impressions": 95
+    },
+    "impressions_with_clicked_subcategory__lifestylehoroscope": {
+      "recall_at_k": 0.09722222222222221,
+      "n_impressions": 6
+    },
+    "impressions_with_clicked_subcategory__lifestyledecor": {
+      "recall_at_k": 0.3333333333333333,
+      "n_impressions": 1
+    },
+    "impressions_with_clicked_subcategory__peopleandplaces": {
+      "recall_at_k": 0.0,
+      "n_impressions": 1
+    },
+    "impressions_with_clicked_subcategory__lifestylefamilyandrelationships": {
+      "recall_at_k": 0.0,
+      "n_impressions": 1
+    },
+    "impressions_with_clicked_subcategory__lifestylepetsanimals": {
+      "recall_at_k": 0.027777777777777776,
+      "n_impressions": 6
+    },
+    "time_period__period_2_of_4": {
+      "recall_at_k": 0.04867743146557428,
+      "n_impressions": 14177
+    },
+    "impressions_with_clicked_subcategory__lifestylefamily": {
+      "recall_at_k": 0.0,
+      "n_impressions": 4
+    },
+    "impressions_with_clicked_subcategory__tennis": {
+      "recall_at_k": 0.0,
+      "n_impressions": 3
+    },
+    "impressions_with_clicked_subcategory__basketball_wnba": {
+      "recall_at_k": 0.0,
+      "n_impressions": 1
+    },
+    "impressions_with_clicked_subcategory__newsscience": {
+      "recall_at_k": 0.03333333333333333,
+      "n_impressions": 10
+    },
+    "impressions_with_clicked_subcategory__newsbusiness": {
+      "recall_at_k": 0.0,
+      "n_impressions": 2
+    },
+    "impressions_with_clicked_subcategory__lifestyleparenting": {
+      "recall_at_k": 0.0,
+      "n_impressions": 1
+    },
+    "impressions_with_clicked_subcategory__lifestylebeauty": {
+      "recall_at_k": 0.0,
+      "n_impressions": 8
+    },
+    "impressions_with_clicked_subcategory__lifestyleweddings": {
+      "recall_at_k": 0.0,
+      "n_impressions": 1
+    },
+    "impressions_with_clicked_subcategory__autosownership": {
+      "recall_at_k": 0.012737262737262736,
+      "n_impressions": 195
+    },
+    "time_period__period_3_of_4": {
+      "recall_at_k": 0.04752858010123817,
+      "n_impressions": 14176
+    },
+    "impressions_with_clicked_subcategory__causes_disaster_relief": {
+      "recall_at_k": 0.026382876382876383,
+      "n_impressions": 33
+    },
+    "impressions_with_clicked_subcategory__finance_home_loans": {
+      "recall_at_k": 0.0,
+      "n_impressions": 1
+    },
+    "impressions_with_clicked_subcategory__movies_awards": {
+      "recall_at_k": 0.0,
+      "n_impressions": 1
+    },
+    "impressions_with_clicked_subcategory__yearinoffbeatgoodnews": {
+      "recall_at_k": 0.0,
+      "n_impressions": 1
+    },
+    "impressions_with_clicked_subcategory__lifestylelovesex": {
+      "recall_at_k": 0.3333333333333333,
+      "n_impressions": 3
+    },
+    "impressions_with_clicked_subcategory__finance_credit": {
+      "recall_at_k": 0.0,
+      "n_impressions": 2
+    },
+    "impressions_with_clicked_subcategory__awardstyle": {
+      "recall_at_k": 0.0203125,
+      "n_impressions": 16
+    },
+    "time_period__period_4_of_4": {
+      "recall_at_k": 0.033743237280966065,
+      "n_impressions": 14162
+    },
+    "impressions_with_clicked_subcategory__soccer": {
+      "recall_at_k": 0.0,
+      "n_impressions": 1
+    },
+    "impressions_with_clicked_subcategory__finance_small_business": {
+      "recall_at_k": 0.0,
+      "n_impressions": 2
+    },
+    "impressions_with_clicked_subcategory__tv_recaps": {
+      "recall_at_k": 0.0,
+      "n_impressions": 1
+    },
+    "impressions_with_clicked_subcategory__baseball_mlb_videos": {
+      "recall_at_k": 0.0,
+      "n_impressions": 1
+    },
+    "impressions_with_clicked_subcategory__retirement": {
+      "recall_at_k": 0.0,
+      "n_impressions": 1
+    },
+    "impressions_with_clicked_subcategory__shop_apparel": {
+      "recall_at_k": 0.0,
+      "n_impressions": 1
+    },
+    "impressions_with_clicked_subcategory__lifestylepets": {
+      "recall_at_k": 0.0,
+      "n_impressions": 1
+    }
+  },
+  "time_periods": [
+    {
+      "name": "period_1_of_4",
+      "n_impressions": 14631,
+      "time_min": "2019-11-15 00:00:01",
+      "time_max": "2019-11-15 06:27:34"
+    },
+    {
+      "name": "period_2_of_4",
+      "n_impressions": 14630,
+      "time_min": "2019-11-15 06:27:34",
+      "time_max": "2019-11-15 08:41:07"
+    },
+    {
+      "name": "period_3_of_4",
+      "n_impressions": 14630,
+      "time_min": "2019-11-15 08:41:07",
+      "time_max": "2019-11-15 10:58:06"
+    },
+    {
+      "name": "period_4_of_4",
+      "n_impressions": 14630,
+      "time_min": "2019-11-15 10:58:07",
+      "time_max": "2019-11-15 13:24:48"
+    }
+  ]
+}

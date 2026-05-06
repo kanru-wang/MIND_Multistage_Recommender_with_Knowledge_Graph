@@ -1,5 +1,6 @@
 {
-  "best_dev_auc": 0.6473149442943597,
+  "validation_split_name": "val",
+  "best_val_auc": 0.6544470405032897,
   "best_epoch": 2,
   "early_stopping_enabled": true,
   "early_stopping_patience": 2,

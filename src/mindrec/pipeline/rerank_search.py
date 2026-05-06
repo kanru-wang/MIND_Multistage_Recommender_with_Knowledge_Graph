@@ -22,7 +22,12 @@ from mindrec.metrics.fairness import (
 from mindrec.metrics.ranking import ndcg_at_k, ndcg_from_order, recall_at_k, recall_from_order
 from mindrec.pipeline.evaluate import _expand_history_base, _load_model
 from mindrec.rerank.greedy import build_news_meta, cosine_sim_matrix, greedy_rerank
-from mindrec.utils import position_bias_weights, save_json
+from mindrec.utils import (
+    impression_artifact_path,
+    position_bias_weights,
+    save_json,
+    validation_split_name,
+)
 
 
 @dataclass
@@ -83,9 +88,10 @@ def _score_impressions(
     proc_root: Path,
     runs_root: Path,
     device: torch.device,
+    split_name: str,
 ) -> tuple[list[ImpressionScores], dict[str, Any]]:
     model, item_base, teacher_item = _load_model(cfg, proc_root, runs_root, device)
-    impr = pd.read_parquet(proc_root / "dev_impressions.parquet")
+    impr = pd.read_parquet(impression_artifact_path(proc_root, split_name))
 
     scored: list[ImpressionScores] = []
     with torch.no_grad():
@@ -101,6 +107,7 @@ def _score_impressions(
             cand_cat_idx = np.array(r["cand_cat_idx"], dtype=np.int64)
             cand_subcat_idx = np.array(r["cand_subcat_idx"], dtype=np.int64)
             cand_is_new = [int(x) for x in list(r["cand_is_new_item"])]
+            cand_is_new_arr = np.array(cand_is_new, dtype=np.int64)
             cand_clicks_log1p = np.array(r["cand_item_clicks_log1p"], dtype=np.float32)
             hlen = float(r["history_len"])
             dense = np.stack(
@@ -122,6 +129,9 @@ def _score_impressions(
                 b_sub = torch.tensor(
                     cand_subcat_idx[sl], dtype=torch.long, device=device
                 )
+                b_is_new = torch.tensor(
+                    cand_is_new_arr[sl], dtype=torch.long, device=device
+                )
                 b_dense = torch.tensor(dense[sl], dtype=torch.float32, device=device)
                 b_item_base = torch.tensor(
                     item_base[cand_news_idx[sl]], dtype=torch.float32, device=device
@@ -141,6 +151,7 @@ def _score_impressions(
                     item_base=b_item_base,
                     history_item_base=b_hist_base,
                     history_mask=b_hist_mask,
+                    is_new_item=b_is_new,
                 )
                 logits.append(logit.detach().cpu().numpy())
 
@@ -678,7 +689,10 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
     device = _resolve_device(cfg)
     news = pd.read_parquet(proc_root / "news.parquet")
     news_meta = build_news_meta(news)
-    scored_impressions, assets = _score_impressions(cfg, proc_root, runs_root, device)
+    search_split = validation_split_name(cfg)
+    scored_impressions, assets = _score_impressions(
+        cfg, proc_root, runs_root, device, split_name=search_split
+    )
     teacher_item = assets["teacher_item"]
 
     k_out = int(rr_cfg["k_out"])
@@ -711,10 +725,18 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
         scored_search = scored_impressions
 
     novelty_sims = ["teacher_cosine"]
-    novelty_weights = [0.05, 0.10, 0.15]
-    coverage_weights = [0.05, 0.10]
-    fairness_penalties = [0.25, 0.50, 0.75]
-    new_item_floors = [0.15, 0.20]
+    # (novelty_weight, coverage_weight) pairs
+    weight_pairs = [
+        (0.05, 0.05),
+        (0.04, 0.05),
+        (0.05, 0.04),
+        (0.06, 0.05),
+        (0.05, 0.06),
+        (0.075, 0.05),
+        (0.05, 0.075),
+    ]
+    fairness_penalties = [0.20, 0.25, 0.30]
+    new_item_floors = [0.15, 0.175, 0.20]
 
     sample_baseline = _evaluate_baseline(
         scored_impressions=scored_search,
@@ -729,23 +751,22 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
     sample_results = []
     search_space = []
     for novelty_sim in novelty_sims:
-        for novelty_weight in novelty_weights:
-            for coverage_weight in coverage_weights:
-                relevance_weight = 1.0 - novelty_weight - coverage_weight
-                if relevance_weight <= 0.0:
-                    continue
-                for penalty_weight in fairness_penalties:
-                    for new_item_floor in new_item_floors:
-                        search_space.append(
-                            (
-                                novelty_sim,
-                                relevance_weight,
-                                novelty_weight,
-                                coverage_weight,
-                                penalty_weight,
-                                new_item_floor,
-                            )
+        for novelty_weight, coverage_weight in weight_pairs:
+            relevance_weight = 1.0 - novelty_weight - coverage_weight
+            if relevance_weight <= 0.0:
+                continue
+            for penalty_weight in fairness_penalties:
+                for new_item_floor in new_item_floors:
+                    search_space.append(
+                        (
+                            novelty_sim,
+                            relevance_weight,
+                            novelty_weight,
+                            coverage_weight,
+                            penalty_weight,
+                            new_item_floor,
                         )
+                    )
 
     for (
         novelty_sim,
@@ -808,7 +829,7 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
         seen.add(current_key)
 
     results = []
-    for item in tqdm(shortlist, desc="Evaluate shortlist on full dev"):
+    for item in tqdm(shortlist, desc=f"Evaluate shortlist on full {search_split}"):
         fairness_cfg = dict(fairness_base)
         fairness_cfg["penalty_weight"] = item["fairness"]["penalty_weight"]
         fairness_cfg["new_item_floor"] = item["fairness"]["new_item_floor"]
@@ -838,6 +859,7 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
         "k_out": k_out,
         "pool_size": pool_size,
         "position_bias": position_bias,
+        "eval_split": search_split,
         "baseline": baseline,
         "product_constraint": constraint,
         "search_sample_size": len(scored_search),
@@ -853,7 +875,7 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
         # top_10_sample: Best settings on the sampled search subset, ranked by
         # feasibility first and then scalar utility.
         # top_10: Best settings after reevaluating the shortlisted candidates on
-        # the full dev set, ranked by feasibility first and then scalar utility.
+        # the full validation split, ranked by feasibility first and then scalar utility.
         "top_10": results[:10],
         "top_10_sample": sample_results[:10],
         "top_10_scalar_utility": results_by_utility[:10],

@@ -9,7 +9,11 @@ from mindrec.pipeline.preprocess import run_preprocess
 from mindrec.pipeline.ranker_train import run_train_ranker
 from mindrec.pipeline.rerank_eval import run_rerank_eval
 from mindrec.pipeline.rerank_search import run_rerank_search
-from mindrec.pipeline.retrieval import run_build_index, run_eval_retrieval
+from mindrec.pipeline.retrieval import (
+    run_build_index,
+    run_eval_retrieval,
+    run_eval_retrieval_sweep,
+)
 from mindrec.pipeline.teacher_train import run_train_teacher
 
 
@@ -33,7 +37,12 @@ def main() -> None:
     _add_config_arg(p)
 
     p = sub.add_parser(
-        "eval_retrieval", help="Evaluate retrieval recall@K on dev impressions"
+        "eval_retrieval", help="Evaluate retrieval recall@K on the held-out eval split"
+    )
+    _add_config_arg(p)
+    p = sub.add_parser(
+        "eval_retrieval_sweep",
+        help="Sweep hybrid retrieval settings on the held-out eval split",
     )
     _add_config_arg(p)
 
@@ -43,7 +52,7 @@ def main() -> None:
     _add_config_arg(p)
 
     p = sub.add_parser(
-        "evaluate", help="Evaluate ranker on dev impressions (many metrics)"
+        "evaluate", help="Evaluate ranker on the held-out eval split (many metrics)"
     )
     _add_config_arg(p)
 
@@ -53,7 +62,7 @@ def main() -> None:
     _add_config_arg(p)
 
     p = sub.add_parser(
-        "rerank_search", help="Search reranker hyperparameters under product constraints"
+        "rerank_search", help="Search reranker hyperparameters on validation under product constraints"
     )
     _add_config_arg(p)
 
@@ -71,6 +80,9 @@ def main() -> None:
         return
     if args.cmd == "eval_retrieval":
         run_eval_retrieval(cfg)
+        return
+    if args.cmd == "eval_retrieval_sweep":
+        run_eval_retrieval_sweep(cfg)
         return
     if args.cmd == "train_ranker":
         run_train_ranker(cfg)
