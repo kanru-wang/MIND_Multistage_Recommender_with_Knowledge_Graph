@@ -158,9 +158,7 @@ def build_impressions_for_eval(
 
 def _split_holdout_behaviors(
     beh: pd.DataFrame,
-    split_by: str,
     validation_fraction: float,
-    seed: int,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     if len(beh) < 2:
         raise ValueError("Need at least 2 holdout impressions to create val/test splits.")
@@ -173,45 +171,36 @@ def _split_holdout_behaviors(
     n_val = min(max(n_val, 1), len(beh) - 1)
 
     meta: dict[str, Any] = {
-        "strategy": split_by,
+        "strategy": "time",
         "validation_fraction": float(validation_fraction),
         "n_holdout_impressions": int(len(beh)),
         "n_val_impressions": int(n_val),
         "n_test_impressions": int(len(beh) - n_val),
     }
 
-    if split_by == "time":
-        ordered = beh.copy()
-        ordered["_parsed_time"] = pd.to_datetime(
-            ordered["time"], format="%m/%d/%Y %I:%M:%S %p", errors="coerce"
-        )
-        ordered["_sort_impression_id"] = pd.to_numeric(
-            ordered["impression_id"], errors="coerce"
-        )
-        ordered = ordered.sort_values(
-            by=["_parsed_time", "_sort_impression_id", "impression_id"],
-            kind="stable",
-            na_position="last",
-        ).reset_index(drop=True)
-        val = ordered.iloc[:n_val].drop(
-            columns=["_parsed_time", "_sort_impression_id"]
-        )
-        test = ordered.iloc[n_val:].drop(
-            columns=["_parsed_time", "_sort_impression_id"]
-        )
-        meta["val_time_min"] = str(val["time"].iloc[0])
-        meta["val_time_max"] = str(val["time"].iloc[-1])
-        meta["test_time_min"] = str(test["time"].iloc[0])
-        meta["test_time_max"] = str(test["time"].iloc[-1])
-        return val.reset_index(drop=True), test.reset_index(drop=True), meta
-
-    if split_by == "random":
-        shuffled = beh.sample(frac=1.0, random_state=seed).reset_index(drop=True)
-        val = shuffled.iloc[:n_val].reset_index(drop=True)
-        test = shuffled.iloc[n_val:].reset_index(drop=True)
-        return val, test, meta
-
-    raise ValueError(f"Unknown holdout split strategy: {split_by}")
+    ordered = beh.copy()
+    ordered["_parsed_time"] = pd.to_datetime(
+        ordered["time"], format="%m/%d/%Y %I:%M:%S %p", errors="coerce"
+    )
+    ordered["_sort_impression_id"] = pd.to_numeric(
+        ordered["impression_id"], errors="coerce"
+    )
+    ordered = ordered.sort_values(
+        by=["_parsed_time", "_sort_impression_id", "impression_id"],
+        kind="stable",
+        na_position="last",
+    ).reset_index(drop=True)
+    val = ordered.iloc[:n_val].drop(
+        columns=["_parsed_time", "_sort_impression_id"]
+    )
+    test = ordered.iloc[n_val:].drop(
+        columns=["_parsed_time", "_sort_impression_id"]
+    )
+    meta["val_time_min"] = str(val["time"].iloc[0])
+    meta["val_time_max"] = str(val["time"].iloc[-1])
+    meta["test_time_min"] = str(test["time"].iloc[0])
+    meta["test_time_max"] = str(test["time"].iloc[-1])
+    return val.reset_index(drop=True), test.reset_index(drop=True), meta
 
 
 def run_preprocess(cfg: dict[str, Any]) -> None:
@@ -258,28 +247,13 @@ def run_preprocess(cfg: dict[str, Any]) -> None:
     save_json(proc_root / "item_click_counts.json", click_counts)
 
     holdout_cfg = dict(cfg["data"].get("holdout", {}))
-    use_holdout = bool(holdout_cfg.get("enabled", False))
-    if use_holdout:
-        val_name = "val"
-        test_name = "test"
-        val_beh, test_beh, holdout_meta = _split_holdout_behaviors(
-            beh=beh_dev,
-            split_by=str(holdout_cfg.get("split_by", "time")),
-            validation_fraction=float(holdout_cfg.get("validation_fraction", 0.5)),
-            seed=seed,
-        )
-    else:
-        val_name = "dev"
-        test_name = "dev"
-        val_beh = beh_dev.reset_index(drop=True)
-        test_beh = beh_dev.reset_index(drop=True)
-        holdout_meta = {
-            "strategy": "disabled",
-            "validation_fraction": 1.0,
-            "n_holdout_impressions": int(len(beh_dev)),
-            "n_val_impressions": int(len(val_beh)),
-            "n_test_impressions": int(len(test_beh)),
-        }
+    val_name = "val"
+    test_name = "test"
+    val_beh, test_beh, holdout_meta = _split_holdout_behaviors(
+        beh=beh_dev,
+        validation_fraction=float(holdout_cfg.get("validation_fraction", 0.8)),
+    )
+    ranker_neg_per_pos = int(cfg["data"].get("ranker_negatives_per_positive", 4))
 
     pairs_train = build_pairs(
         beh=beh_train,
@@ -291,7 +265,7 @@ def run_preprocess(cfg: dict[str, Any]) -> None:
             cfg["data"]["min_item_train_clicks_for_warm"]
         ),
         max_history=int(cfg["data"]["max_history"]),
-        neg_per_pos=4,
+        neg_per_pos=ranker_neg_per_pos,
         seed=seed,
     )
     pairs_val = build_pairs(
@@ -304,7 +278,7 @@ def run_preprocess(cfg: dict[str, Any]) -> None:
             cfg["data"]["min_item_train_clicks_for_warm"]
         ),
         max_history=int(cfg["data"]["max_history"]),
-        neg_per_pos=4,
+        neg_per_pos=ranker_neg_per_pos,
         seed=seed + 1,
     )
     pairs_test = build_pairs(
@@ -317,7 +291,7 @@ def run_preprocess(cfg: dict[str, Any]) -> None:
             cfg["data"]["min_item_train_clicks_for_warm"]
         ),
         max_history=int(cfg["data"]["max_history"]),
-        neg_per_pos=4,
+        neg_per_pos=ranker_neg_per_pos,
         seed=seed + 2,
     )
 
@@ -364,6 +338,7 @@ def run_preprocess(cfg: dict[str, Any]) -> None:
         "n_train_pairs": int(len(pairs_train)),
         "n_validation_pairs": int(len(pairs_val)),
         "n_test_pairs": int(len(pairs_test)),
+        "ranker_negatives_per_positive": ranker_neg_per_pos,
         "n_validation_eval_impressions": int(len(impr_val)),
         "n_test_eval_impressions": int(len(impr_test)),
         "holdout": holdout_meta,

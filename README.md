@@ -1,17 +1,25 @@
-# MIND Multi-Stage Recommender (Retrieval → DLRM Ranker → Diversity+Fairness Re-ranker)
+# MIND Multi-Stage News Recommender (Retrieval → DLRM Ranker → Diversity+Coverage+Fairness Re-ranker)
 
 This project implements a realistic recommender stack on the **Microsoft News Dataset (MIND)**:
-- Stage 1: **Teacher retrieval embeddings** (text-based item encoder + history-based user encoder)
-- Stage 2: **Student ranker** (lean DLRM-style sparse+dense model) that uses click history, sentence-transformer item bases, projected `user_id`/`news_id` branches, lightweight structured features, and a widened semantic MLP path
-- Stage 3: **Re-ranking** enforcing **(1) relevance vs novelty** and **(2) category/entity-informed coverage bonuses**, plus **exposure fairness** constraints/penalties for category and new items
-- Extensive **evaluation**: ranking metrics, calibration, diversity, exposure fairness, and cold/new slices
+- Preprocessing: prepare train/val/test data, click-count features, cold/new flags, impression-level eval data, and map IDs to indices.
+- Train **Teacher retrieval encoders** (text-based item encoder + history-based user encoder).
+- Build two Faiss retrieval indexes: (1) for item embeddings from teacher, and (2) for item embeddings from sentence-transformer. These indexes are used for hybrid candidate retrieval.
+- Train **Student ranker** (lean DLRM-style sparse+dense model) narrows **hybrid retrieval** returned `topk` items to more relevant `pool_size` items, by using click history, sentence-transformer item bases, projected `user_id`/`news_id` branches, news category/subcategory embedding, and other structured features.
+- **Re-ranking** enforcing a certain degree of item diversity, category/named-entity coverage, and position-weighted exposure fairness for categories/new-items. It further narrows `pool_size` items to `k_out` items.
+- Find the best set of reranking weights/penalties given constraints on metrics.
+- Extensive **evaluation**: ranking metrics, calibration, diversity, exposure fairness, and cold/new slices.
+
+In production, for each user we have three inference steps:
+1. Retrieval narrows millions/thousands of items to `topk=200`
+2. Student ranker scores the topk, and narrows down to `pool_size=50`
+3. Reranker takes the `pool_size`, and outputs final `k_out=10` items
 
 MIND is widely used as a benchmark for news recommendation, with impression logs and rich news metadata.
 
 Recommender architecture
 
 - Candidate generation with ANN search using **Faiss** (CPU-friendly).
-- Knowledge **distillation** (logit + representation) from a stronger teacher into a smaller student (better cold/new performance vs training the student from scratch).
+- Knowledge **distillation** (logit + representation) from a semantic/history-based teacher into a smaller student, to improve cold/new behavior versus training the student only from click labels (avoid relying on ID memorization, as ID signals are weak for cold users or new items).
 - A **lean DLRM-style** ranker (dense MLP + semantic branch with widened semantic MLPs + projected `user_id`/`news_id` branches + lightweight feature interaction).
 
 ## Teacher model
@@ -52,12 +60,37 @@ Recommender architecture
   - the learned query vector
 - The training objective pushes each user vector closer to its clicked positive item and farther from sampled in-impression negatives and other in-batch positives.
 
+### Hybrid retrieval scoring
+
+During `eval_retrieval`, the teacher retrieval query is built by taking the impression's clicked history news, looking up their teacher item embeddings, and passing those vectors through `TeacherTwoTower.encode_user_from_item_vectors()`.
+The base retrieval query is built by averaging the impression's clicked history news' raw sentence-transformer embeddings.
+
+Faiss returns scalar similarity scores:
+- `teacher_score`: similarity between the teacher user query and a candidate `item_teacher_emb.npy` vector
+- `base_score`: similarity between the raw sentence-transformer history query and a candidate `item_base_emb.npy` vector
+
+The retrieval code searches both Faiss indexes, merges the oversampled candidate lists, and keeps the final `topk` items by hybrid score. (`hybrid_oversample` controls how many candidates are fetched from each index before the merge.) With the current config, candidates are ranked mostly by teacher retrieval with a small raw-text semantic contribution.
+```text
+hybrid_score = (1 - retrieval.hybrid_base_weight) * teacher_score
+             + retrieval.hybrid_base_weight * base_score
+```
+
+Retrieval evaluation currently skips users with no history.
+
 ## Distillation representation
 - In `DLRMStudent.forward()`, the student representation used for distillation is `rep = [user_sem, item_sem, sem_fused]`.
 - `user_sem`: student semantic user vector from pooled click-history sentence-transformer item bases
 - `item_sem`: student semantic item vector from the candidate item's sentence-transformer base embedding
 - `sem_fused`: a lightweight attention-fusion summary that mixes the semantic user/item states with the structured query context
 - The teacher target is `concat(teacher_user_emb, teacher_item_emb)`. A projection head maps the student representation into the teacher space for representation distillation.
+- The teacher is semantic/history-based rather than mostly `user_id`/`news_id` memorization. Representation distillation therefore encourages the student's semantic branch to learn a useful user/item space, especially when ID signals are weak for cold users or new items.
+- If the ranker were trained without distillation, its loss would reduce to the supervised click-label objective:
+```python
+loss = binary_cross_entropy_with_logits(student_logits, click_label)
+```
+- Without distillation, retrieval can still be designed in two ways:
+  - Use only the sentence-transformer/base item embeddings for retrieval
+  - Train a retrieval model, but do not use that model as a teacher to supervise the ranker
 
 #### Teacher -> student distillation map
 - Distillation in this project is not copying the teacher into a smaller clone.
@@ -118,7 +151,7 @@ The student keeps a lighter semantic core than the teacher, but combines it with
 #### Worked examples for novelty, coverage, and fairness
 - Suppose the reranker has already selected two items: `A` and `B`.
 - Candidate `C` has ranker relevance score `0.80`, category `Sports`, entities `{Messi, Inter Miami}`, and is marked as a new item.
-- Candidate `D` has relevance score `0.78`, category `Health`, entities `{WHO, vaccine}`, and is not new.
+- Candidate `D` has relevance score `0.78`, category `Health`, entities `{WHO, vaccine, pandemic, hospital}`, and is not new.
 
 - **Novelty example with `teacher_cosine`**:
   - If `C` has teacher-embedding cosine similarities `0.90` to `A` and `0.35` to `B`, then `novelty(C) = -max(0.90, 0.35) = -0.90`.
@@ -129,7 +162,7 @@ The student keeps a lighter semantic core than the teacher, but combines it with
   - Suppose the selected list has already covered categories `{Sports, Politics}` and entities `{Messi, Real Madrid}`.
   - If `coverage.category_bonus = 1.0`, `coverage.entity_bonus = 0.3`, and `max_new_entities_per_item = 3`:
   - `C` is in `Sports`, which is already covered, so it gets no category bonus. It adds one new entity, `Inter Miami`, so `coverage(C) = 0.3`.
-  - `D` is in `Health`, which is new, so it gets `1.0` category bonus. If both `WHO` and `vaccine` are new, it also gets `2 * 0.3 = 0.6` entity bonus, so `coverage(D) = 1.6`.
+  - `D` is in `Health`, which is new, so it gets `1.0` category bonus. Its four entities are all new, but only the first `max_new_entities_per_item = 3` new entities can contribute, so its entity bonus is `3 * 0.3 = 0.9` and `coverage(D) = 1.9`.
 
 - **Exposure fairness example**:
   - Suppose the current top-3 list has categories `[Sports, Sports, Health]`.
@@ -197,7 +230,7 @@ Each folder should contain `behaviors.tsv` and `news.tsv`.
 
 MIND also provides `entity_embedding.vec` and `relation_embedding.vec`.
 In this repo, for simplicity, these two files are currently **not used** by the pipeline.
-The reranker may still use the entity annotation columns already present in `news.tsv` for coverage when `rerank.coverage.entity_bonus > 0`; this is separate from using the external entity/relation embedding files.
+The reranker may still use the entity annotation columns already present in `news.tsv` for coverage when `rerank.coverage.entity_bonus > 0`. This does **not** mean the pipeline loads or trains on the external `entity_embedding.vec` or `relation_embedding.vec` files.
 
 ---
 
@@ -208,6 +241,14 @@ The reranker may still use the entity annotation columns already present in `new
 - `relation_embedding.vec`: embedding vector for each relation type between entities.
 
 If you choose to use these files, a common approach is to use KG triples `(entity, relation, entity)` to fetch neighbors of entities mentioned in a news article, then build richer representations (for example with graph attention or memory-network style modules).
+
+How this repo uses MIND entity annotations:
+- `news.tsv` contains `title_entities` and `abstract_entities` columns. They are not appended to article text for retrieval.
+- During reranking evaluation, we parse those columns and stores a set of entity IDs for each `news_id`.
+- The code treats each entity as a hashed integer ID, not as a learned embedding.
+- During greedy reranking, the reranker tracks the set of entities already covered by the items selected so far.
+- For each remaining candidate item, the reranker computes which of its entities are new, and calculates entity_bonus.
+- The reranker does not use KG relation paths or graph-neighbor expansion. Entity annotations are used only for coverage/diversity accounting.
 
 ---
 
@@ -224,9 +265,16 @@ Main steps:
 - Build impression-level validation/test data (`val_impressions.parquet`, `test_impressions.parquet`).
 
 How pairs are created:
-- For an impression with `P` positives and `N` negatives, this code contributes:
-- `P * (1 + min(4, N))` pairs
-- because each positive is paired with up to 4 sampled negatives.
+- For an impression with `P` positives and `N` negatives, `P * (1 + min(data.ranker_negatives_per_positive, N))` pairs are generated.
+- Each positive is paired with up to `data.ranker_negatives_per_positive` sampled negatives; the current config uses `4`.
+- These negatives are labeled non-clicked candidates from the same impression.
+  This in-impression sampling is the ranker pair-building behavior.
+- Generated rows are used to train the **DLRM ranker (student)**.
+
+What about the negative sampling for teacher?
+- `teacher.negatives_per_positive` controls the contrastive sample of the teacher retriever.
+- The current config uses `8`, so each clicked item can be paired with up to 8 non-clicked candidates from the same impression when training the teacher. If an impression only has 5 negatives, it uses 5.
+- Samples are generated in-memory. Sampling does not change the ranker pair parquet size.
 
 Why there is no `train_impressions.parquet`:
 - Training uses pairwise rows (`train_pairs.parquet`), not full impression-grouped rows.
@@ -234,12 +282,13 @@ Why there is no `train_impressions.parquet`:
 
 Validation/test split note:
 - Training, early stopping, and calibration use `val`.
-- Final offline evaluation (`eval_retrieval`, `evaluate`, `rerank_eval`) uses `test`.
-- Reranker search uses `val` so the chosen operating point can still be reported fairly on `test`.
+- `eval_retrieval` and `evaluate` evaluate on both `val` and `test` data and report every split listed in `eval.report_splits`.
+- Reranker search only uses `val` so the chosen operating point can still be reported fairly on `test`.
+- `rerank_eval` is the final reranker report and only uses `test`.
 
 Current MINDsmall split sizes in this repo:
 - Training source (`MINDsmall_train`): `156,965` impressions
-- Holdout source (`MINDsmall_dev`): `73,152` impressions
+- Raw holdout source (`MINDsmall_dev`, split into `val` and `test` during preprocessing): `73,152` impressions
 - Validation split: `58,521` impressions
 - Test split: `14,631` impressions
 - Training pairs: `1,135,225`
@@ -267,7 +316,7 @@ With the current config, `eval_retrieval` writes:
 - `runs/<run_name>/retrieval/eval_val.json`
 - `runs/<run_name>/retrieval/eval_test.json`
 
-The retrieval evaluation now includes additional slice families:
+The retrieval evaluation includes additional slice families:
 - chronological `time_period__...` slices within each evaluated split
 - `history_len_bucket__...` slices
 - `impressions_with_clicked_popularity_bucket__...` slices
@@ -377,6 +426,9 @@ Student ranker:
   - `weight_decay=3.0e-5`
   - `news_id_warm_scale=1.0`
   - `news_id_cold_scale=0.0`
+- The `news_id_*_scale` settings control only the learned `news_id` embedding branch in the DLRM ranker.
+  Warm items keep their ID embedding contribution, while new/cold items get that branch zeroed out and are scored relying on semantic, category/subcategory, user, and dense features instead.
+  new/cold items are found during preprocessing from training (click counts under the `min_item_train_clicks_for_warm` limit).
 - Student ranker validation `nDCG@10 = 0.40992`
 - Student ranker validation `Recall@10 = 0.66987`
 - Student ranker validation `AUC = 0.65211`

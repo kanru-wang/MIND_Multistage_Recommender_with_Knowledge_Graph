@@ -55,16 +55,12 @@ def position_bias_weights(k: int, mode: str = "log") -> np.ndarray:
     raise ValueError(f"Unknown position bias mode: {mode}")
 
 
-def holdout_enabled(cfg: dict[str, Any]) -> bool:
-    return bool(cfg.get("data", {}).get("holdout", {}).get("enabled", False))
+def validation_split_name(_cfg: dict[str, Any]) -> str:
+    return "val"
 
 
-def validation_split_name(cfg: dict[str, Any]) -> str:
-    return "val" if holdout_enabled(cfg) else "dev"
-
-
-def test_split_name(cfg: dict[str, Any]) -> str:
-    return "test" if holdout_enabled(cfg) else "dev"
+def test_split_name(_cfg: dict[str, Any]) -> str:
+    return "test"
 
 
 def pair_artifact_path(proc_root: Path, split_name: str) -> Path:

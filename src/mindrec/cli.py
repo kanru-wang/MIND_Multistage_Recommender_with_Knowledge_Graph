@@ -37,12 +37,13 @@ def main() -> None:
     _add_config_arg(p)
 
     p = sub.add_parser(
-        "eval_retrieval", help="Evaluate retrieval recall@K on the held-out eval split"
+        "eval_retrieval",
+        help="Evaluate retrieval recall@K on splits (val and test) from eval.report_splits",
     )
     _add_config_arg(p)
     p = sub.add_parser(
         "eval_retrieval_sweep",
-        help="Sweep hybrid retrieval settings on the held-out eval split",
+        help="Sweep hybrid retrieval settings on the validation split",
     )
     _add_config_arg(p)
 
@@ -52,17 +53,18 @@ def main() -> None:
     _add_config_arg(p)
 
     p = sub.add_parser(
-        "evaluate", help="Evaluate ranker on the held-out eval split (many metrics)"
+        "evaluate",
+        help="Evaluate ranker on splits (val and test) from eval.report_splits (many metrics)",
     )
     _add_config_arg(p)
 
     p = sub.add_parser(
-        "rerank_eval", help="Evaluate diversity+coverage+fairness reranker"
+        "rerank_eval", help="Evaluate diversity+coverage+fairness reranker, on test data only"
     )
     _add_config_arg(p)
 
     p = sub.add_parser(
-        "rerank_search", help="Search reranker hyperparameters on validation under product constraints"
+        "rerank_search", help="Search reranker hyperparameters on val data under product constraints"
     )
     _add_config_arg(p)
 

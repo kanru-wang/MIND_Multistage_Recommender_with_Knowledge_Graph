@@ -357,7 +357,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
     )
     if not samples:
         raise ValueError("No teacher training samples were built from train behaviors.")
-    dev_samples, _ = _build_teacher_samples(
+    val_samples, _ = _build_teacher_samples(
         beh_val,
         maps,
         max_hist=max_hist,
@@ -373,11 +373,11 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
         num_workers=0,
         collate_fn=_collate_teacher_batch,
     )
-    dev_loader = None
-    if dev_samples:
-        dev_ds = TeacherDataset(dev_samples)
-        dev_loader = DataLoader(
-            dev_ds,
+    val_loader = None
+    if val_samples:
+        val_ds = TeacherDataset(val_samples)
+        val_loader = DataLoader(
+            val_ds,
             batch_size=batch_size,
             shuffle=False,
             num_workers=0,
@@ -398,7 +398,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
     best_epoch = 0
     epochs_without_improvement = 0
     stop_reason = "max_epochs"
-    best_dev_loss_mean = float("inf")
+    best_val_loss_mean = float("inf")
     best_eval_count = 0
     epoch_metrics: list[dict[str, float | int]] = []
     for epoch in range(1, epochs + 1):
@@ -421,11 +421,11 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
 
         train_loss_mean = float(np.mean(losses) if losses else 0.0)
         val_loss_mean = train_loss_mean
-        if dev_loader is not None:
+        if val_loader is not None:
             model.eval()
             val_losses = []
             with torch.no_grad():
-                for batch in tqdm(dev_loader, desc=f"Dev teacher ep {epoch}"):
+                for batch in tqdm(val_loader, desc=f"Val teacher ep {epoch}"):
                     loss = _teacher_batch_loss(
                         model=model,
                         item_base_tensor=item_base_tensor,
@@ -462,7 +462,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
         if improved:
             best_metric = recall_at_k
             best_epoch = epoch
-            best_dev_loss_mean = val_loss_mean
+            best_val_loss_mean = val_loss_mean
             best_eval_count = n_eval
             torch.save(
                 {
@@ -495,7 +495,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
     else:
         best_epoch = epochs
         best_metric = recall_at_k
-        best_dev_loss_mean = val_loss_mean
+        best_val_loss_mean = val_loss_mean
         best_eval_count = n_eval
 
     model.eval()
@@ -520,7 +520,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
             "dropout": dropout,
             "state_dict": model.state_dict(),
             "best_epoch": best_epoch,
-            "best_val_loss_mean": best_dev_loss_mean,
+            "best_val_loss_mean": best_val_loss_mean,
             "best_val_recall_at_k": best_metric,
             "best_val_recall_k": topk,
         },
@@ -543,7 +543,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
         "train_samples": int(len(samples)),
         "train_users": int(len(histories_by_user)),
         "validation_split_name": val_split,
-        "val_samples": int(len(dev_samples)),
+        "val_samples": int(len(val_samples)),
         "epochs": epochs,
         "early_stopping_enabled": es_enabled,
         "early_stopping_monitor": monitor_name,
@@ -551,7 +551,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
         "early_stopping_min_delta": es_min_delta,
         "stopped_epoch": epoch,
         "best_epoch": best_epoch,
-        "best_val_loss_mean": best_dev_loss_mean,
+        "best_val_loss_mean": best_val_loss_mean,
         "best_val_recall_at_k": best_metric,
         "best_val_recall_k": topk,
         "best_val_recall_n_eval": best_eval_count,

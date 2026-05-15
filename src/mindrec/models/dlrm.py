@@ -157,6 +157,8 @@ class DLRMStudent(nn.Module):
         eu = self.user_id_proj(self.user_emb(user_idx))
         en = self.news_id_proj(self.news_emb(news_idx))
         if is_new_item is not None:
+            # Down-weight the memorized news-ID branch for cold/new items so
+            # scoring falls back to category, dense, and semantic item signals.
             cold = is_new_item.to(dtype=en.dtype).unsqueeze(1)
             scale = (1.0 - cold) * self.news_id_warm_scale + cold * self.news_id_cold_scale
             en = en * scale

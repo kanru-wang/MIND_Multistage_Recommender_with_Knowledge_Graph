@@ -280,12 +280,11 @@ def _evaluate_single_retrieval_split(
         base_scores = base_idx = None
         if base_index is not None:
             base_scores, base_idx = base_index.search(q_base_np, search_k)
-        teacher_limit = min(search_k, topk * max(int(hybrid_oversample), 1))
         retrieved = _retrieve_topk(
-            teacher_scores=teacher_scores[0][:teacher_limit],
-            teacher_idx=teacher_idx[0][:teacher_limit],
-            base_scores=base_scores[0][:teacher_limit] if base_scores is not None else None,
-            base_idx=base_idx[0][:teacher_limit] if base_idx is not None else None,
+            teacher_scores=teacher_scores[0],
+            teacher_idx=teacher_idx[0],
+            base_scores=base_scores[0] if base_scores is not None else None,
+            base_idx=base_idx[0] if base_idx is not None else None,
             topk=topk,
             hybrid_base_weight=hybrid_base_weight,
         )
@@ -435,6 +434,8 @@ def _evaluate_retrieval_settings(
             base_idx_1d = base_idx[0] if base_idx is not None else None
             for i, setting in enumerate(settings):
                 oversample = max(int(setting["hybrid_oversample"]), 1)
+                # Reuse one large Faiss search for the whole sweep, then slice
+                # each setting down to its own oversample candidate budget.
                 teacher_limit = min(search_k, topk * oversample)
                 retrieved = _retrieve_topk(
                     teacher_scores=teacher_scores_1d[:teacher_limit],

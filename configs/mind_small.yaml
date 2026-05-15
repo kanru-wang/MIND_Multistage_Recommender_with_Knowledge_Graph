@@ -9,12 +9,9 @@ data:
   max_history: 50
   min_user_hist_for_warm: 5
   min_item_train_clicks_for_warm: 10
+  ranker_negatives_per_positive: 4  # In-impression non-clicked candidates sampled per clicked item for ranker pairs
   holdout:
-    enabled: true
-    split_by: "time"  # time|random
     validation_fraction: 0.8  # Early 80% becomes validation, later 20% becomes test
-  negative_sampling:
-    enabled: false  # Reserved; ranker pair building currently samples in-impression negatives.
   sub_sample:
     enabled: false
     train_impressions: 200000
@@ -56,7 +53,6 @@ ranker:
   weight_decay: 3.0e-5
   epochs: 8
   early_stopping:
-    enabled: true
     patience: 2
     min_delta: 1.0e-5
   device: "cuda"
@@ -71,14 +67,12 @@ ranker:
     top_mlp: [128, 64, 1]
     dropout: 0.15
   distill:
-    enabled: true
     temperature: 2.0
     lambda_logit: 0.7
     lambda_repr: 0.05
     cold_weight: 2.0
     warm_weight: 0.5
   calibration:
-    enabled: true
     lr: 0.05
     max_iter: 100
 

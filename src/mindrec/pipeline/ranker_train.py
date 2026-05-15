@@ -39,11 +39,11 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
 
     pairs_train = pd.read_parquet(proc_root / "train_pairs.parquet")
     val_split = validation_split_name(cfg)
-    pairs_dev = pd.read_parquet(pair_artifact_path(proc_root, val_split))
+    pairs_val = pd.read_parquet(pair_artifact_path(proc_root, val_split))
 
     dense_cols = ["history_len", "item_clicks_log1p"]
     train_ds = PairDataset(pairs_train, dense_cols=dense_cols)
-    dev_ds = PairDataset(pairs_dev, dense_cols=dense_cols)
+    val_ds = PairDataset(pairs_val, dense_cols=dense_cols)
 
     device_str = cfg["ranker"].get("device", "cuda")
     if device_str == "cuda" and not torch.cuda.is_available():
@@ -111,19 +111,17 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     train_loader = DataLoader(
         train_ds, batch_size=bsz, shuffle=True, num_workers=0, collate_fn=collate_batch
     )
-    dev_loader = DataLoader(
-        dev_ds, batch_size=bsz, shuffle=False, num_workers=0, collate_fn=collate_batch
+    val_loader = DataLoader(
+        val_ds, batch_size=bsz, shuffle=False, num_workers=0, collate_fn=collate_batch
     )
 
     dist_cfg = cfg["ranker"]["distill"]
-    dist_enabled = bool(dist_cfg.get("enabled", True))
     temp = float(dist_cfg.get("temperature", 2.0))
     lam_logit = float(dist_cfg.get("lambda_logit", 1.0))
     lam_repr = float(dist_cfg.get("lambda_repr", 0.1))
     w_cold = float(dist_cfg.get("cold_weight", 2.0))
     w_warm = float(dist_cfg.get("warm_weight", 0.3))
     es_cfg = dict(cfg["ranker"].get("early_stopping", {}))
-    es_enabled = bool(es_cfg.get("enabled", True))
     es_patience = int(es_cfg.get("patience", 2))
     es_min_delta = float(es_cfg.get("min_delta", 1.0e-4))
 
@@ -171,28 +169,26 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             y = batch["label"]
             loss_rank = nn.functional.binary_cross_entropy_with_logits(logits, y)
 
-            loss = loss_rank
-            if dist_enabled:
-                # teacher logit as cosine / inner product (embeddings are normalized)
-                tlogit = (tu * ti).sum(dim=1)
-                target = torch.sigmoid(tlogit / temp)
-                loss_logit = nn.functional.binary_cross_entropy_with_logits(
-                    logits, target, reduction="none"
-                )
+            # teacher logit as cosine / inner product (embeddings are normalized)
+            tlogit = (tu * ti).sum(dim=1)
+            target = torch.sigmoid(tlogit / temp)
+            loss_logit = nn.functional.binary_cross_entropy_with_logits(
+                logits, target, reduction="none"
+            )
 
-                t_repr = torch.cat([tu, ti], dim=1)
-                s_repr = proj(rep)
-                loss_repr = ((s_repr - t_repr) ** 2).mean(dim=1)
+            t_repr = torch.cat([tu, ti], dim=1)
+            s_repr = proj(rep)
+            loss_repr = ((s_repr - t_repr) ** 2).mean(dim=1)
 
-                cold_mask = (
-                    (batch["is_cold_user"] == 1) | (batch["is_new_item"] == 1)
-                ).float()
-                w = (cold_mask * w_cold) + ((1.0 - cold_mask) * w_warm)
-                w = w * has_hist.float()
-                w = w.detach()
+            cold_mask = (
+                (batch["is_cold_user"] == 1) | (batch["is_new_item"] == 1)
+            ).float()
+            w = (cold_mask * w_cold) + ((1.0 - cold_mask) * w_warm)
+            w = w * has_hist.float()
+            w = w.detach()
 
-                distill_loss = (w * (lam_logit * loss_logit + lam_repr * loss_repr)).mean()
-                loss = loss + distill_loss
+            distill_loss = (w * (lam_logit * loss_logit + lam_repr * loss_repr)).mean()
+            loss = loss_rank + distill_loss
 
             opt.zero_grad()
             loss.backward()
@@ -202,13 +198,13 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             opt.step()
             losses.append(float(loss.item()))
 
-        # Dev AUC (pairwise)
+        # Validation AUC on the split returned by validation_split_name(cfg).
         model.eval()
         proj.eval()
         ys = []
         ps = []
         with torch.no_grad():
-            for batch in tqdm(dev_loader, desc=f"Dev ep {ep}"):
+            for batch in tqdm(val_loader, desc=f"Val ep {ep}"):
                 batch = to_device(batch, device)
                 logits, _ = model(
                     user_idx=batch["user_idx"],
@@ -258,7 +254,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         else:
             epochs_without_improvement += 1
 
-        if es_enabled and epochs_without_improvement >= es_patience:
+        if epochs_without_improvement >= es_patience:
             stop_reason = "early_stopping"
             break
 
@@ -268,7 +264,6 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             "validation_split_name": val_split,
             "best_val_auc": best_auc,
             "best_epoch": best_epoch,
-            "early_stopping_enabled": es_enabled,
             "early_stopping_patience": es_patience,
             "early_stopping_min_delta": es_min_delta,
             "stop_reason": stop_reason,
@@ -277,42 +272,41 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     )
 
     cal_cfg = dict(cfg["ranker"].get("calibration", {}))
-    if bool(cal_cfg.get("enabled", True)):
-        ckpt = torch.load(art_root / "best.pt", map_location=device)
-        model.load_state_dict(ckpt["model"])
-        model.eval()
+    ckpt = torch.load(art_root / "best.pt", map_location=device)
+    model.load_state_dict(ckpt["model"])
+    model.eval()
 
-        logits_all = []
-        labels_all = []
-        with torch.no_grad():
-            for batch in tqdm(dev_loader, desc="Fit temperature"):
-                batch = to_device(batch, device)
-                logits, _ = model(
-                    user_idx=batch["user_idx"],
-                    news_idx=batch["news_idx"],
-                    cat_idx=batch["cat_idx"],
-                    subcat_idx=batch["subcat_idx"],
-                    dense=batch["dense"],
-                    item_base=item_base_tensor[batch["news_idx"]],
-                    history_item_base=item_base_tensor[batch["hist_news_idx"]],
-                    history_mask=batch["hist_mask"],
-                    is_new_item=batch["is_new_item"],
-                    return_repr=False,
-                )
-                logits_all.append(logits.detach().cpu().numpy())
-                labels_all.append(batch["label"].detach().cpu().numpy())
+    logits_all = []
+    labels_all = []
+    with torch.no_grad():
+        for batch in tqdm(val_loader, desc="Fit temperature"):
+            batch = to_device(batch, device)
+            logits, _ = model(
+                user_idx=batch["user_idx"],
+                news_idx=batch["news_idx"],
+                cat_idx=batch["cat_idx"],
+                subcat_idx=batch["subcat_idx"],
+                dense=batch["dense"],
+                item_base=item_base_tensor[batch["news_idx"]],
+                history_item_base=item_base_tensor[batch["hist_news_idx"]],
+                history_mask=batch["hist_mask"],
+                is_new_item=batch["is_new_item"],
+                return_repr=False,
+            )
+            logits_all.append(logits.detach().cpu().numpy())
+            labels_all.append(batch["label"].detach().cpu().numpy())
 
-        scaler, stats = fit_temperature_scaler(
-            logits=np.concatenate(logits_all, axis=0),
-            labels=np.concatenate(labels_all, axis=0),
-            max_iter=int(cal_cfg.get("max_iter", 100)),
-            lr=float(cal_cfg.get("lr", 0.05)),
-        )
-        scaler.save(
-            art_root / "calibration.json",
-            meta={
-                "fit_split": f"{val_split}_pairs",
-                "stats": stats,
-            },
-        )
-        save_json(art_root / "calibration_stats.json", stats)
+    scaler, stats = fit_temperature_scaler(
+        logits=np.concatenate(logits_all, axis=0),
+        labels=np.concatenate(labels_all, axis=0),
+        max_iter=int(cal_cfg.get("max_iter", 100)),
+        lr=float(cal_cfg.get("lr", 0.05)),
+    )
+    scaler.save(
+        art_root / "calibration.json",
+        meta={
+            "fit_split": f"{val_split}_pairs",
+            "stats": stats,
+        },
+    )
+    save_json(art_root / "calibration_stats.json", stats)
