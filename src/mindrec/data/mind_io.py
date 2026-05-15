@@ -4,8 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
-
-NEWS_COLUMNS=[
+NEWS_COLUMNS = [
     "news_id",
     "category",
     "subcategory",
@@ -17,7 +16,7 @@ NEWS_COLUMNS=[
 ]
 
 
-BEH_COLUMNS=[
+BEH_COLUMNS = [
     "impression_id",
     "user_id",
     "time",
@@ -27,7 +26,7 @@ BEH_COLUMNS=[
 
 
 def read_news_tsv(path: str | Path) -> pd.DataFrame:
-    df=pd.read_csv(
+    df = pd.read_csv(
         path,
         sep="\t",
         header=None,
@@ -35,21 +34,23 @@ def read_news_tsv(path: str | Path) -> pd.DataFrame:
         quoting=3,
         dtype=str,
     )
-    for c in ["category","subcategory","title","abstract"]:
-        df[c]=df[c].fillna("")
-    df["text"]=(df["title"].fillna("") + " [SEP] " + df["abstract"].fillna("")).str.strip()
+    for c in ["category", "subcategory", "title", "abstract"]:
+        df[c] = df[c].fillna("")
+    df["text"] = (
+        df["title"].fillna("") + " [SEP] " + df["abstract"].fillna("")
+    ).str.strip()
     return df
 
 
 def parse_impressions(impr: str) -> tuple[list[str], list[int]]:
     # Format: "N12345-1 N54321-0 ..."
-    items=[]
-    labels=[]
+    items = []
+    labels = []
     if not isinstance(impr, str) or not impr.strip():
         return items, labels
     for tok in impr.strip().split():
         if "-" in tok:
-            nid, lab=tok.rsplit("-", 1)
+            nid, lab = tok.rsplit("-", 1)
             items.append(nid)
             labels.append(int(lab))
         else:
@@ -59,7 +60,7 @@ def parse_impressions(impr: str) -> tuple[list[str], list[int]]:
 
 
 def read_behaviors_tsv(path: str | Path) -> pd.DataFrame:
-    df=pd.read_csv(
+    df = pd.read_csv(
         path,
         sep="\t",
         header=None,
@@ -67,14 +68,14 @@ def read_behaviors_tsv(path: str | Path) -> pd.DataFrame:
         quoting=3,
         dtype=str,
     )
-    df["history"]=df["history"].fillna("").apply(lambda s: s.split() if s else [])
-    parsed=df["impressions"].fillna("").apply(parse_impressions)
-    df["cand_news_id"]=parsed.apply(lambda x: x[0])
-    df["cand_label"]=parsed.apply(lambda x: x[1])
+    df["history"] = df["history"].fillna("").apply(lambda s: s.split() if s else [])
+    parsed = df["impressions"].fillna("").apply(parse_impressions)
+    df["cand_news_id"] = parsed.apply(lambda x: x[0])
+    df["cand_label"] = parsed.apply(lambda x: x[1])
     return df
 
 
 def sub_sample_behaviors(df: pd.DataFrame, n: int, seed: int) -> pd.DataFrame:
-    if n<=0 or n>=len(df):
+    if n <= 0 or n >= len(df):
         return df
     return df.sample(n=n, random_state=seed).reset_index(drop=True)
