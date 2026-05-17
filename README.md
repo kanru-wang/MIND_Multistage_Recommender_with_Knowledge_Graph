@@ -189,7 +189,7 @@ The student keeps a lighter semantic core than the teacher, but combines it with
 
 Fairness target note:
 - In the current reranker/evaluation code, `fairness.category_target: "catalog"` means the category distribution of the impression candidate pool (the candidates available for that user/impression), not the selected top-K list and not the global corpus-wide catalog.
-- `rerank_eval` and `rerank_search` now report both `fairness_kl_pool` and `fairness_kl_full`.
+- `rerank_eval` and `rerank_search` report both `fairness_kl_pool` and `fairness_kl_full`.
 - `fairness_kl_pool` compares top-K exposure against the reranker's top-`pool_size` candidate mix.
 - `fairness_kl_full` compares top-K exposure against the full impression candidate set.
 - Product constraints in reranker search use `fairness_kl_pool`, because that matches the reranker's actual optimization target.
@@ -240,7 +240,7 @@ The reranker may still use the entity annotation columns already present in `new
 - `entity_embedding.vec`: embedding vector for each entity ID.
 - `relation_embedding.vec`: embedding vector for each relation type between entities.
 
-If you choose to use these files, a common approach is to use KG triples `(entity, relation, entity)` to fetch neighbors of entities mentioned in a news article, then build richer representations (for example with graph attention or memory-network style modules).
+If we choose to use these files, a common approach is to use KG triples `(entity, relation, entity)` to fetch neighbors of entities mentioned in a news article, then build richer representations (for example with graph attention or memory-network style modules).
 
 How this repo uses MIND entity annotations:
 - `news.tsv` contains `title_entities` and `abstract_entities` columns. They are not appended to article text for retrieval.
@@ -346,7 +346,7 @@ With the current config, `evaluate` writes:
 - `runs/<run_name>/eval/ranker_eval_val.json`
 - `runs/<run_name>/eval/ranker_eval_test.json`
 
-The ranker evaluation now includes additional slice families:
+The ranker evaluation includes additional slice families:
 - chronological `time_period__...` slices within each evaluated split
 - `history_len_bucket__...` slices
 - `impressions_with_clicked_popularity_bucket__...` slices
@@ -369,14 +369,21 @@ The current reranker search reports three views of the tradeoff surface on valid
 - `best_scalar_utility`: maximize a normalized scalar utility
 - `pareto_frontier`: nondominated settings across ranking/diversity/fairness axes
 
+`rerank_search` evaluates candidates in two passes:
+- First pass: fast screening. All candidate settings in the search grid are evaluated on a sample of up to 500 validation impressions.
+- Second pass: full validation. Only a shortlist of promising candidates is evaluated on the full validation split.
+- `pareto_frontier.md` is written from the full-pass shortlisted results, not from every sample-screened candidate.
+
 The search uses baseline-relative guardrails. We need guardrails because guardrails define what “acceptable” means, and then we can choose the setting with the highest utility among acceptable tradeoffs. Also, if the coefficients underweight relevance or overweight coverage/fairness, then a setting can look “best” by utility while still being a bad product choice; guardrails can prevent that. Current guardrails:
 - `nDCG@10` drop must be at most `2.1%` relative to the baseline ranker (initially 2%; changed to 2.1% to allow a good hyperparameter set).
 - `new_item_exposure_frac` must not decrease relative to baseline.
 - `category_coverage@10` must improve by at least `0.25`.
 - `fairness_kl_pool` must improve by at least `0.04`.
 
-Each candidate in `rerank_search.json` now reports:
-- `constraint.feasible`
+Before searching for the best reranker weights, we need to determine the following values that define the search problem:
+- `coverage.category_bonus`, `coverage.entity_bonus`
+- Guardrail thresholds: acceptable nDCG drop, required coverage gain, required fairness improvement, and new-item exposure constraint
+- Utility coefficients: the relative importance of retained relevance, new-item exposure, category coverage, and fairness improvement when ranking candidate settings
 
 The scalar utility is computed from baseline-relative normalized units:
 - `ndcg_retention_units = 1 - relative_ndcg_drop`
@@ -389,6 +396,10 @@ with coefficients:
 - `0.5 * new_item_exposure_gain_units`
 - `1.5 * category_coverage_gain_units`
 - `1.5 * fairness_kl_pool_improvement_units`
+
+The reranking score and scalar utility are used at different levels:
+- The reranking score answers: with this fixed hyperparameter setting, which candidate item should be placed next in this user's top-`k_out` list?
+- `scalar_utility` answers: after evaluating a full candidate setting, which hyperparameter setting gives the best product tradeoff under the predetermined utility coefficients?
 
 The current selected setting is:
 - `relevance_weight=0.89`
