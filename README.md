@@ -77,6 +77,12 @@ hybrid_score = (1 - retrieval.hybrid_base_weight) * teacher_score
 
 Retrieval evaluation currently skips users with no history.
 
+History-length slices show how much the retrieval and ranking stages depend on having enough prior clicks to describe the user:
+
+![Recall@200 by user history length bucket](images/recall_by_user_history_len_bucket.png)
+
+![nDCG@10 by user history length bucket](images/nDCG_by_user_history_len_bucket.png)
+
 ## Distillation representation
 - In `DLRMStudent.forward()`, the student representation used for distillation is `rep = [user_sem, item_sem, sem_fused]`.
 - `user_sem`: student semantic user vector from pooled click-history sentence-transformer item bases
@@ -117,6 +123,16 @@ The student keeps a lighter semantic core than the teacher, but combines it with
 - category and subcategory embeddings
 - lightweight dense features
 - DLRM-style feature interactions
+
+Category and clicked-item-popularity slices help check whether the model is robust across content verticals and between new, low-click, and high-click items:
+
+![Recall@200 by clicked category](images/recall_by_clicked_category.png)
+
+![nDCG@10 by clicked category](images/nDCG_by_clicked_category.png)
+
+![Recall@200 by clicked item popularity](images/recall_by_clicked_item_popularity.png)
+
+![nDCG@10 by clicked item popularity](images/nDCG_by_clicked_item_popularity.png)
 
 #### Where the student ranker is simplified
 - teacher semantic item encoder -> smaller student semantic item encoder
@@ -286,6 +302,12 @@ Validation/test split note:
 - Reranker search only uses `val` so the chosen operating point can still be reported fairly on `test`.
 - `rerank_eval` is the final reranker report and only uses `test`.
 
+The evaluation JSONs also split each evaluated holdout window into chronological `time_period__...` slices, so regressions can be checked against the actual temporal order of impressions:
+
+![Recall@200 over time](images/recall_over_time.png)
+
+![nDCG@10 over time](images/nDCG_over_time.png)
+
 Current MINDsmall split sizes in this repo:
 - Training source (`MINDsmall_train`): `156,965` impressions
 - Raw holdout source (`MINDsmall_dev`, split into `val` and `test` during preprocessing): `73,152` impressions
@@ -349,9 +371,12 @@ With the current config, `evaluate` writes:
 The ranker evaluation includes additional slice families:
 - chronological `time_period__...` slices within each evaluated split
 - `history_len_bucket__...` slices
+- `impressions_with_clicked_new_item` and `impressions_with_clicked_warm_item`
 - `impressions_with_clicked_popularity_bucket__...` slices
 - `impressions_with_clicked_category__...` slices
 - `impressions_with_clicked_subcategory__...` slices
+
+For new/cold item ranking evaluation, each impression contains many candidate items, and ranking metrics are calculated for the whole impression. Therefore `impressions_with_clicked_new_item` means: evaluate whole impressions where at least one clicked positive item is new. It does not mean evaluating only the new candidate items inside all impressions.
 
 ### 3.5 Search reranker hyperparameters under a product constraint
 ```bash
