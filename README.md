@@ -58,7 +58,7 @@ The current repo/CLI does not implement online index updates; it builds and writ
   - `eval_retrieval` uses `item_teacher_emb.npy` and the saved teacher model to encode held-out histories and search that index
   - `train_ranker` loads `item_base_emb.npy` as student semantic input and uses `item_teacher_emb.npy` / `user_teacher_emb.npy` only as teacher supervision targets
 
-### Hybrid retrieval scoring
+## Hybrid retrieval scoring
 
 During `eval_retrieval`, the teacher retrieval query is built by taking the impression's clicked history news, looking up their teacher item embeddings, and passing those vectors through `TeacherTwoTower.encode_user_from_item_vectors()`.
 The base retrieval query is built by averaging the impression's clicked history news' raw sentence-transformer embeddings.
@@ -81,13 +81,26 @@ History-length slices show how much the retrieval and ranking stages depend on h
 
 ![nDCG@10 by user history length bucket](images/nDCG_by_user_history_len_bucket.png)
 
-## Distillation representation
+## Student model
+
+The student keeps a lighter semantic core than the teacher, but combines it with classic DLRM signals:
+- projected `user_id` / `news_id` branches
+- category and subcategory embeddings
+- lightweight dense features
+- DLRM-style feature interactions
+
+#### DLRM-style semantic additions
+- A classic DLRM usually combines sparse ID/category embeddings, dense numerical features, pairwise feature interactions, and a final top MLP. It usually does not include item text embeddings or user-history semantic embeddings directly; those are project-specific additions here.
+- In `DLRMStudent`, the candidate item's sentence-transformer text embedding is projected into `item_sem`, and the clicked-history item embeddings are pooled/projected into `user_sem`. Both are mapped to the same `emb_dim` length as the other DLRM feature vectors.
+- These semantic vectors, plus `sem_fused`, are added to the DLRM feature list as extra feature vectors. They are then included in the pairwise dot-product interaction layer and concatenated into the final top MLP input.
+
+#### Distillation representation
 - In `DLRMStudent.forward()`, the student representation used for distillation is `rep = [user_sem, item_sem, sem_fused]`.
 - `user_sem`: student semantic user vector from pooled click-history sentence-transformer item bases
 - `item_sem`: student semantic item vector from the candidate item's sentence-transformer base embedding
 - `sem_fused`: a lightweight attention-fusion summary that mixes the semantic user/item states with the structured query context
 - The teacher target is `concat(teacher_user_emb, teacher_item_emb)`. A projection head maps the student representation into the teacher space for representation distillation.
-- The teacher is semantic/history-based rather than mostly `user_id`/`news_id` memorization. Representation distillation therefore encourages the student's semantic branch to learn a useful user/item space, especially when ID signals are weak for cold users or new items.
+- The teacher is semantic/history-based rather than mostly `user_id`/`news_id` memorization. Representation distillation therefore **encourages the student's semantic branch to learn a useful user/item space, especially when ID signals are weak for cold users or new items**.
 - If the ranker were trained without distillation, its loss would reduce to the supervised click-label objective:
 ```python
 loss = binary_cross_entropy_with_logits(student_logits, click_label)
@@ -115,17 +128,6 @@ loss = binary_cross_entropy_with_logits(student_logits, click_label)
 | No direct teacher counterpart | None | category / subcategory embeddings | Student adds structured metadata signals |
 | No direct teacher counterpart | None | dense features such as `history_len` and `item_clicks_log1p` | Student adds non-semantic ranking features |
 | No direct teacher counterpart | None | DLRM interaction terms + top MLP | Student is a broader ranker, not just a semantic retriever |
-
-The student keeps a lighter semantic core than the teacher, but combines it with extra ranking-specific signals:
-- projected `user_id` / `news_id` branches
-- category and subcategory embeddings
-- lightweight dense features
-- DLRM-style feature interactions
-
-#### DLRM-style semantic additions
-- A classic DLRM usually combines sparse ID/category embeddings, dense numerical features, pairwise feature interactions, and a final top MLP. It usually does not include item text embeddings or user-history semantic embeddings directly; those are project-specific additions here.
-- In `DLRMStudent`, the candidate item's sentence-transformer text embedding is projected into `item_sem`, and the clicked-history item embeddings are pooled/projected into `user_sem`. Both are mapped to the same `emb_dim` length as the other DLRM feature vectors.
-- These semantic vectors, plus `sem_fused`, are added to the DLRM feature list as extra feature vectors. They are then included in the pairwise dot-product interaction layer and concatenated into the final top MLP input.
 
 Category and clicked-item-popularity slices help check whether the model is robust across content verticals and between new, low-click, and high-click items:
 
