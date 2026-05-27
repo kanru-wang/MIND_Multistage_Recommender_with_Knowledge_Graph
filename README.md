@@ -3,8 +3,8 @@
 This project implements a realistic recommender stack on the **Microsoft News Dataset (MIND)**:
 - Preprocessing: prepare train/val/test data, click-count features, cold/new flags, impression-level eval data, and map IDs to indices.
 - Train **Teacher retrieval encoders** (text-based item encoder + history-based user encoder).
-- Build two Faiss retrieval indexes: (1) for item embeddings from teacher, and (2) for item embeddings from sentence-transformer. These indexes are used for hybrid candidate retrieval.
-- Train **Student ranker** (lean DLRM-style sparse+dense model) narrows **hybrid retrieval** returned `topk` items to more relevant `pool_size` items, by using click history, sentence-transformer item bases, projected `user_id`/`news_id` branches, news category/subcategory embedding, and other structured features.
+- Build two Faiss ANN retrieval indexes: (1) for item embeddings from teacher, and (2) for item embeddings from sentence-transformer. These indexes are used for hybrid candidate retrieval.
+- Train **Student ranker**, a lean DLRM-style sparse+dense model that narrows **hybrid retrieval** returned `topk` items to more relevant `pool_size` items. Alongside the usual DLRM-style ID embeddings, category/subcategory embeddings, and dense features, this student adds semantic branches: it encodes the candidate's sentence-transformer item base embedding, and pools the clicked-history item base embeddings. Teacher **distillation** (logit + representation) from the semantic/history-based teacher helps those semantic branches learn a stronger user/item matching space than click labels alone, **improving cold user/item behavior where ID memorization is weak**.
 - **Re-ranking** enforcing a certain degree of item diversity, category/named-entity coverage, and position-weighted exposure fairness for categories/new-items. It further narrows `pool_size` items to `k_out` items.
 - Find the best set of reranking weights/penalties given constraints on metrics.
 - Extensive **evaluation**: ranking metrics, calibration, diversity, exposure fairness, and cold/new slices.
@@ -16,31 +16,21 @@ In production, for each user we have three inference steps:
 
 MIND is widely used as a benchmark for news recommendation, with impression logs and rich news metadata.
 
-Recommender architecture
+Production design note: if a fresh batch of news arrives, for example from the last 15 minutes, the system would need fresh item-side representations. For each new article:
+- Run the sentence-transformer over text/title/abstract to produce its `item_base` embedding.
+- Pass `item_base` through the teacher item encoder to produce `item_teacher_emb`.
+- Mark as cold/new with `is_new_item = 1`, `item_clicks_log1p = 0`.
+- Add to both Faiss indexes: the teacher index (`item_teacher_emb`) and the base semantic index (`item_base`).
 
-- Candidate generation with ANN search using **Faiss** (CPU-friendly).
-- Knowledge **distillation** (logit + representation) from a semantic/history-based teacher into a smaller student, to improve cold/new behavior versus training the student only from click labels (avoid relying on ID memorization, as ID signals are weak for cold users or new items).
-- A **lean DLRM-style** ranker (dense MLP + semantic branch with widened semantic MLPs + projected `user_id`/`news_id` branches + lightweight feature interaction).
+The current repo/CLI does not implement online index updates; it builds and writes both Faiss indexes in batch via `build_index`.
 
 ## Teacher model
 - The teacher is a learned two-tower retrieval model:
   - a **news/item encoder** that starts from frozen sentence-transformer news embeddings and applies a trainable projection
-  - a **user encoder** that attention-pools clicked-history item embeddings into a user vector
+  - a **user encoder** that attention-pools clicked-history item embeddings (before the current impression) into a user vector
+- In the `behaviors.tsv` dataset, `history` is a list of previously clicked news IDs for that user before the current impression time. It is not a list of previous impressions.
 - Training uses clicked positives plus in-impression negatives.
-- Retrieval evaluation encodes each validation/test impression with that impression's own history, so the query is temporally aligned with the impression being scored.
-- At the end of `train_teacher`, the pipeline writes:
-  - `item_base_emb.npy`: frozen sentence-transformer embedding for every news item
-  - `item_teacher_emb.npy`: the final teacher embedding for every news item
-  - `user_teacher_emb.npy`: the final teacher embedding for each training user history
-- These files are then reused by later stages:
-  - `build_index` builds the Faiss retrieval index from `item_teacher_emb.npy`
-  - `eval_retrieval` uses `item_teacher_emb.npy` and the saved teacher model to encode held-out histories and search that index
-  - `train_ranker` loads `item_base_emb.npy` as student semantic input and uses `item_teacher_emb.npy` / `user_teacher_emb.npy` only as teacher supervision targets
-
-## Teacher and retrieval
-- In MIND `behaviors.tsv`, `history` is a list of previously clicked news IDs for that user before the current impression time. It is not a list of previous impressions.
-- The user embedding is built from those clicked-history items before the current impression.
-- During retrieval evaluation, the query vector for a row is built from that row's own `history` only, not from some later history for the same user.
+- Retrieval evaluation encodes each validation/test impression with that impression's own user history (not from some later history for the same user), so the query is temporally aligned with the impression being scored.
 - `encode_user_from_item_vectors(history_z, mask)` expects:
   - `history_z`: shape `[B, T, D]` where `B` is batch size, `T` is history length, and `D` is the teacher hidden dimension
   - `mask`: shape `[B, T]` with `True` for valid history positions and `False` for padding
@@ -59,6 +49,14 @@ Recommender architecture
   - the multi-head attention parameters inside `HistoryAttentionPool`
   - the learned query vector
 - The training objective pushes each user vector closer to its clicked positive item and farther from sampled in-impression negatives and other in-batch positives.
+- At the end of `train_teacher`, the pipeline writes:
+  - `item_base_emb.npy`: frozen sentence-transformer embedding for every news item
+  - `item_teacher_emb.npy`: the final teacher embedding for every news item
+  - `user_teacher_emb.npy`: the final teacher embedding for each training user history
+- These files are then reused by later stages:
+  - `build_index` builds the Faiss retrieval index from `item_teacher_emb.npy`
+  - `eval_retrieval` uses `item_teacher_emb.npy` and the saved teacher model to encode held-out histories and search that index
+  - `train_ranker` loads `item_base_emb.npy` as student semantic input and uses `item_teacher_emb.npy` / `user_teacher_emb.npy` only as teacher supervision targets
 
 ### Hybrid retrieval scoring
 
@@ -124,6 +122,11 @@ The student keeps a lighter semantic core than the teacher, but combines it with
 - lightweight dense features
 - DLRM-style feature interactions
 
+#### DLRM-style semantic additions
+- A classic DLRM usually combines sparse ID/category embeddings, dense numerical features, pairwise feature interactions, and a final top MLP. It usually does not include item text embeddings or user-history semantic embeddings directly; those are project-specific additions here.
+- In `DLRMStudent`, the candidate item's sentence-transformer text embedding is projected into `item_sem`, and the clicked-history item embeddings are pooled/projected into `user_sem`. Both are mapped to the same `emb_dim` length as the other DLRM feature vectors.
+- These semantic vectors, plus `sem_fused`, are added to the DLRM feature list as extra feature vectors. They are then included in the pairwise dot-product interaction layer and concatenated into the final top MLP input.
+
 Category and clicked-item-popularity slices help check whether the model is robust across content verticals and between new, low-click, and high-click items:
 
 ![Recall@200 by clicked category](images/recall_by_clicked_category.png)
@@ -159,10 +162,12 @@ Category and clicked-item-popularity slices help check whether the model is robu
 - In the current code:
 - `p` is built from the selected top-K list after applying position weights.
 - `q` is derived from the reference candidate set:
-  - `fairness_kl_pool`: reference is the reranker's top-`pool_size` candidate mix
-  - `fairness_kl_full`: reference is the full impression candidate mix
+  - `fairness_kl_pool` compares top-K exposure against the reranker's top-`pool_size` candidate mix.
+  - `fairness_kl_full` compares top-K exposure against the full impression candidate set.
   - If `category_target: uniform`, then `q` is uniform over categories present in the reference set (not used in this project).
-  - If `category_target: catalog`, then `q` is the empirical category distribution of that reference set.
+  - If `category_target: catalog`, then `q` is the category distribution of the impression candidate pool (the candidates available for that user/impression), not the selected top-K list and not the global corpus-wide catalog.
+- `rerank_eval` and `rerank_search` report both `fairness_kl_pool` and `fairness_kl_full`.
+- Product constraints in reranker search use `fairness_kl_pool`, because that matches the reranker's actual optimization target.
 
 #### Worked examples for novelty, coverage, and fairness
 - Suppose the reranker has already selected two items: `A` and `B`.
@@ -202,13 +207,6 @@ Category and clicked-item-popularity slices help check whether the model is robu
 - **Calibration**: ECE (expected calibration error), Brier score
 - **Diversity**: intra-list diversity (ILD), category coverage@K, category entropy@K
 - **Exposure fairness**: position-weighted exposure, disparity vs target distribution (KL / L1 / Gini), new-item exposure floor
-
-Fairness target note:
-- In the current reranker/evaluation code, `fairness.category_target: "catalog"` means the category distribution of the impression candidate pool (the candidates available for that user/impression), not the selected top-K list and not the global corpus-wide catalog.
-- `rerank_eval` and `rerank_search` report both `fairness_kl_pool` and `fairness_kl_full`.
-- `fairness_kl_pool` compares top-K exposure against the reranker's top-`pool_size` candidate mix.
-- `fairness_kl_full` compares top-K exposure against the full impression candidate set.
-- Product constraints in reranker search use `fairness_kl_pool`, because that matches the reranker's actual optimization target.
 
 <br>
 <br>
@@ -319,7 +317,7 @@ Current MINDsmall split sizes in this repo:
 
 ---
 
-## 3) End-to-end on a small slice
+## 3) End-to-end
 
 ### 3.1 Preprocess TSV → Parquet + feature maps
 ```bash
@@ -383,7 +381,44 @@ For new/cold item ranking evaluation, each impression contains many candidate it
 python -m mindrec.cli rerank_search --config configs/mind_small.yaml
 ```
 
-Typical workflow after search:
+The reranking score and scalar utility are used at different levels:
+- The reranking score answers: with this fixed hyperparameter setting, which candidate item should be placed next in this user's top-`k_out` list?
+- `scalar_utility` answers: after evaluating a full candidate setting, which hyperparameter setting gives the best product tradeoff under the predetermined utility coefficients?
+
+In practice, it is usually easier for business/product stakeholders to decide global scalar utility coefficients or guardrails than local reranker weights. That is why we search the local reranker hyperparameters instead of determine them.
+
+Before searching for the best local reranker weights/penalties, we need to determine the following values that define the search problem:
+- `coverage.category_bonus`, `coverage.entity_bonus`
+- Guardrail thresholds: acceptable nDCG drop, required coverage gain, required fairness improvement, and new-item exposure constraint
+- Utility coefficients: the relative importance of retained relevance, new-item exposure, category coverage, and fairness improvement when ranking candidate settings
+- A practical workflow to determine these values is:
+1. Set the maximum acceptable nDCG drop.
+2. Agree on guardrails (minimum improvements) for the other metrics by reviewing mocked or held-out impressions and feeling what the metric changes look like.
+3. Review sample impressions as baseline list vs. reranked list to choose utility coefficients/weights:
+  - Did the list feel repetitive?
+  - Did new items appear in reasonable positions?
+  - Did relevance visibly degrade?
+  - Did category coverage feel diverse but relevant, or completely random?
+
+The scalar utility is computed from baseline-relative **normalized** units:
+- `ndcg_retention_units = 1 - relative_ndcg_drop`
+- `new_item_exposure_gain_units = new_item_exposure_gain`
+- `category_coverage_gain_units = category_coverage_gain / min_category_coverage_gain`
+- `fairness_kl_pool_improvement_units = fairness_kl_pool_improvement / min_fairness_kl_pool_improvement`
+
+with coefficients:
+- `4.0 * ndcg_retention_units`
+- `0.5 * new_item_exposure_gain_units`
+- `1.5 * category_coverage_gain_units`
+- `1.5 * fairness_kl_pool_improvement_units`
+
+The search uses baseline-relative guardrails. We need guardrails because guardrails define what “acceptable” means, and then we can choose the setting with the highest utility among acceptable tradeoffs. Also, if the coefficients underweight relevance or overweight coverage/fairness, then a setting can look “best” by utility while still being a bad product choice; guardrails can prevent that. Current guardrails:
+- `nDCG@10` drop must be at most `2.1%` relative to the baseline ranker (initially 2%; changed to 2.1% to allow a good hyperparameter set).
+- `new_item_exposure_frac` must not decrease relative to baseline.
+- `category_coverage@10` must improve by at least `0.25`.
+- `fairness_kl_pool` must improve by at least `0.04`.
+
+Typical workflow:
 - run `rerank_search`
 - inspect `best_feasible` or another chosen operating point in `rerank_search.json`
 - update `configs/mind_small.yaml` with the selected rerank parameters
@@ -398,33 +433,6 @@ The current reranker search reports three views of the tradeoff surface on valid
 - First pass: fast screening. All candidate settings in the search grid are evaluated on a sample of up to 500 validation impressions.
 - Second pass: full validation. Only a shortlist of promising candidates is evaluated on the full validation split.
 - `pareto_frontier.md` is written from the full-pass shortlisted results, not from every sample-screened candidate.
-
-The search uses baseline-relative guardrails. We need guardrails because guardrails define what “acceptable” means, and then we can choose the setting with the highest utility among acceptable tradeoffs. Also, if the coefficients underweight relevance or overweight coverage/fairness, then a setting can look “best” by utility while still being a bad product choice; guardrails can prevent that. Current guardrails:
-- `nDCG@10` drop must be at most `2.1%` relative to the baseline ranker (initially 2%; changed to 2.1% to allow a good hyperparameter set).
-- `new_item_exposure_frac` must not decrease relative to baseline.
-- `category_coverage@10` must improve by at least `0.25`.
-- `fairness_kl_pool` must improve by at least `0.04`.
-
-Before searching for the best reranker weights, we need to determine the following values that define the search problem:
-- `coverage.category_bonus`, `coverage.entity_bonus`
-- Guardrail thresholds: acceptable nDCG drop, required coverage gain, required fairness improvement, and new-item exposure constraint
-- Utility coefficients: the relative importance of retained relevance, new-item exposure, category coverage, and fairness improvement when ranking candidate settings
-
-The scalar utility is computed from baseline-relative normalized units:
-- `ndcg_retention_units = 1 - relative_ndcg_drop`
-- `new_item_exposure_gain_units = new_item_exposure_gain`
-- `category_coverage_gain_units = category_coverage_gain / min_category_coverage_gain`
-- `fairness_kl_pool_improvement_units = fairness_kl_pool_improvement / min_fairness_kl_pool_improvement`
-
-with coefficients:
-- `4.0 * ndcg_retention_units`
-- `0.5 * new_item_exposure_gain_units`
-- `1.5 * category_coverage_gain_units`
-- `1.5 * fairness_kl_pool_improvement_units`
-
-The reranking score and scalar utility are used at different levels:
-- The reranking score answers: with this fixed hyperparameter setting, which candidate item should be placed next in this user's top-`k_out` list?
-- `scalar_utility` answers: after evaluating a full candidate setting, which hyperparameter setting gives the best product tradeoff under the predetermined utility coefficients?
 
 The current selected setting is:
 - `relevance_weight=0.89`
@@ -463,7 +471,7 @@ Student ranker:
   - `news_id_warm_scale=1.0`
   - `news_id_cold_scale=0.0`
 - The `news_id_*_scale` settings control only the learned `news_id` embedding branch in the DLRM ranker.
-  Warm items keep their ID embedding contribution, while new/cold items get that branch zeroed out and are scored relying on semantic, category/subcategory, user, and dense features instead.
+  Warm items keep their ID embedding contribution, while **new/cold items get that branch zeroed out** and are scored relying on semantic, category/subcategory, user, and dense features instead.
   new/cold items are found during preprocessing from training (click counts under the `min_item_train_clicks_for_warm` limit).
 - Student ranker validation `nDCG@10 = 0.40992`
 - Student ranker validation `Recall@10 = 0.66987`
