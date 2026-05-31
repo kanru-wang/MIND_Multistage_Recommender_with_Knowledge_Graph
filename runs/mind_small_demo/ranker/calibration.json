@@ -1,15 +1,15 @@
 {
   "method": "temperature",
-  "temperature": 0.43854838609695435,
+  "temperature": 0.5029228329658508,
   "meta": {
     "fit_split": "val_pairs",
     "stats": {
-      "nll_raw": 0.5455200672149658,
-      "nll_calibrated": 0.49471503496170044,
-      "brier_raw": 0.17940011620521545,
-      "brier_calibrated": 0.1561158001422882,
-      "ece_15_raw": 0.15313585155084916,
-      "ece_15_calibrated": 0.046682041211529454
+      "nll_raw": 0.5395205616950989,
+      "nll_calibrated": 0.49945616722106934,
+      "brier_raw": 0.17621859908103943,
+      "brier_calibrated": 0.15849067270755768,
+      "ece_15_raw": 0.14273857670690812,
+      "ece_15_calibrated": 0.03864521356468019
     }
   }
 }

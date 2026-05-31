@@ -15,6 +15,7 @@ from tqdm import tqdm
 
 from mindrec.config import ensure_dir
 from mindrec.data.featurize import IdMaps
+from mindrec.data.kg import build_news_kg_feature_matrix_from_config
 from mindrec.data.mind_io import read_behaviors_tsv
 from mindrec.models.teacher import TeacherTwoTower
 from mindrec.utils import (
@@ -269,6 +270,53 @@ def _encode_news_text(
     return item_emb
 
 
+def _build_item_base_features(
+    cfg: dict[str, Any],
+    st: SentenceTransformer,
+    news: pd.DataFrame,
+    batch_size: int,
+    include_category_prefix: bool,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    text_emb = _encode_news_text(
+        st=st,
+        news=news,
+        batch_size=batch_size,
+        include_category_prefix=include_category_prefix,
+    )
+    kg_emb, kg_meta = build_news_kg_feature_matrix_from_config(cfg, news)
+    if kg_emb is None:
+        return text_emb, {
+            "mode": "text_only",
+            "text_dim": int(text_emb.shape[1]),
+            "kg": kg_meta,
+        }
+
+    kg_cfg = dict(cfg.get("knowledge_graph", {}))
+    text_weight = float(kg_cfg.get("text_feature_weight", 1.0))
+    kg_weight = float(kg_cfg.get("kg_feature_weight", 1.0))
+    item_base = np.concatenate(
+        [
+            (text_weight * text_emb).astype(np.float32, copy=False),
+            (kg_weight * kg_emb).astype(np.float32, copy=False),
+        ],
+        axis=1,
+    )
+    normalize_item_base = bool(kg_cfg.get("normalize_item_base", True))
+    if normalize_item_base:
+        norms = np.linalg.norm(item_base, axis=1, keepdims=True)
+        item_base = item_base / np.clip(norms, a_min=1.0e-12, a_max=None)
+    return item_base.astype(np.float32, copy=False), {
+        "mode": "text_plus_kg",
+        "text_dim": int(text_emb.shape[1]),
+        "kg_dim": int(kg_emb.shape[1]),
+        "item_base_dim": int(item_base.shape[1]),
+        "text_feature_weight": text_weight,
+        "kg_feature_weight": kg_weight,
+        "normalize_item_base": normalize_item_base,
+        "kg": kg_meta,
+    }
+
+
 def _compute_user_embeddings(
     model: TeacherTwoTower,
     item_base: np.ndarray,
@@ -332,7 +380,8 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
     )
     text_cfg = dict(teacher_cfg.get("text", {}))
     include_category_prefix = bool(text_cfg.get("include_category_prefix", False))
-    item_base = _encode_news_text(
+    item_base, item_base_meta = _build_item_base_features(
+        cfg=cfg,
         st=st,
         news=news,
         batch_size=batch_size,
@@ -540,6 +589,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
         "text": {
             "include_category_prefix": include_category_prefix,
         },
+        "item_base_features": item_base_meta,
         "train_samples": int(len(samples)),
         "train_users": int(len(histories_by_user)),
         "validation_split_name": val_split,

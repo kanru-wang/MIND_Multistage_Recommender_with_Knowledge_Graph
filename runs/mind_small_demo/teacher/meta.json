@@ -1,7 +1,7 @@
 {
   "model_name": "sentence-transformers/all-MiniLM-L6-v2",
   "device": "cpu",
-  "item_base_dim": 384,
+  "item_base_dim": 484,
   "teacher_dim": 384,
   "hidden_dim": 384,
   "user_pooling": "attention",
@@ -10,6 +10,43 @@
   "negatives_per_positive": 8,
   "text": {
     "include_category_prefix": false
+  },
+  "item_base_features": {
+    "mode": "text_plus_kg",
+    "text_dim": 384,
+    "kg_dim": 100,
+    "item_base_dim": 484,
+    "text_feature_weight": 1.0,
+    "kg_feature_weight": 0.25,
+    "normalize_item_base": true,
+    "kg": {
+      "dim": 100,
+      "n_items": 65239,
+      "n_items_with_linked_entities": 57054,
+      "n_items_with_entity_vectors": 56777,
+      "n_items_with_kg_neighbors": 55252,
+      "n_entity_mentions": 155479,
+      "n_entity_vectors_used": 153550,
+      "n_neighbor_vectors_used": 1529846,
+      "max_entities_per_news": 12,
+      "entity_weight": 1.0,
+      "neighbor_weight": 0.1,
+      "relation_weight": 0.1,
+      "normalize": true,
+      "enabled": true,
+      "entity_embedding_path": [
+        "data\\raw\\MINDsmall_train\\entity_embedding.vec",
+        "data\\raw\\MINDsmall_dev\\entity_embedding.vec"
+      ],
+      "relation_embedding_path": [
+        "data\\raw\\MINDsmall_train\\relation_embedding.vec",
+        "data\\raw\\MINDsmall_dev\\relation_embedding.vec"
+      ],
+      "triples_path": "data/processed/MINDsmall/kg_triples.tsv",
+      "n_entity_embeddings": 31451,
+      "n_relation_embeddings": 1091,
+      "n_entities_with_neighbors": 26361
+    }
   },
   "train_samples": 231530,
   "train_users": 49108,
@@ -20,15 +57,15 @@
   "early_stopping_monitor": "retrieval_recall@k",
   "early_stopping_patience": 2,
   "early_stopping_min_delta": 0.0001,
-  "stopped_epoch": 4,
-  "best_epoch": 2,
-  "best_val_loss_mean": 6.647144834679294,
-  "best_val_recall_at_k": 0.040078068154430976,
+  "stopped_epoch": 5,
+  "best_epoch": 3,
+  "best_val_loss_mean": 6.6490601229380415,
+  "best_val_recall_at_k": 0.04057520468016562,
   "best_val_recall_k": 200,
   "best_val_recall_n_eval": 56744,
   "stop_reason": "early_stopping",
   "lr": 0.0002,
-  "train_loss_mean": 6.265201285242573,
+  "train_loss_mean": 6.2211567397404925,
   "item_encoder": "sentence_transformer_frozen_plus_projection",
   "user_encoder": "attention_pool_over_history"
 }

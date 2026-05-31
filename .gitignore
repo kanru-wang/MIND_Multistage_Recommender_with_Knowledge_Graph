@@ -1,6 +1,10 @@
 # Ignore all files under any data folder
 **/data/**
 
+# Keep package source files under src/mindrec/data
+!src/mindrec/data/
+!src/mindrec/data/**
+
 # Keep data files under scripts/data
 !scripts/data/
 !scripts/data/**

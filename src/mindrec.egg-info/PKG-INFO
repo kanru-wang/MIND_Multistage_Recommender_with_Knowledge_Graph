@@ -3,3 +3,13 @@ Name: mindrec
 Version: 0.1.0
 Summary: MIND multi-stage recommender: retrieval + DLRM ranker + reranking with distillation, diversity, fairness
 Requires-Python: >=3.10
+Requires-Dist: torch>=2.2
+Requires-Dist: numpy>=1.26
+Requires-Dist: pandas>=2.1
+Requires-Dist: pyarrow>=15.0
+Requires-Dist: scikit-learn>=1.4
+Requires-Dist: tqdm>=4.66
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: faiss-cpu>=1.8.0
+Requires-Dist: sentence-transformers>=2.6
+Requires-Dist: matplotlib>=3.8

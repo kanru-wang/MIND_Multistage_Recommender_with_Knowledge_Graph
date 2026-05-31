@@ -18,6 +18,30 @@ data:
     dev_impressions: 50000
     seed: 13
 
+knowledge_graph:
+  enabled: true
+  # By default, the pipeline merges these files from data/raw/<train_dir>/ and
+  # data/raw/<dev_dir> when they exist:
+  #   entity_embedding.vec
+  #   relation_embedding.vec
+  # MIND ships entity/relation embeddings but not the original Wikidata triples.
+  # To build a practical one-hop triples file from Wikidata5M, run:
+  #   python scripts/build_mind_wikidata5m_triples.py --kg-path <wikidata5m-triples> --output data/processed/MINDsmall/kg_triples.tsv
+  # Then set triples_path to that output. The file format is: head relation tail
+  entity_embedding_path: null
+  relation_embedding_path: null
+  triples_path: "data/processed/MINDsmall/kg_triples.tsv"
+  max_entities_per_news: 12
+  max_neighbors_per_entity: 20
+  add_reverse_edges: true
+  entity_weight: 1.0
+  neighbor_weight: 0.1
+  relation_weight: 0.1
+  text_feature_weight: 1.0
+  kg_feature_weight: 0.25
+  normalize_item_base: true
+  normalize: true
+
 teacher:
   model_name: "sentence-transformers/all-MiniLM-L6-v2"
   text:
@@ -38,12 +62,12 @@ teacher:
 
 retrieval:
   index_type: "flat_ip"  # flat_ip|ivf_flat_ip
-  base_index_type: "flat_ip"  # Raw sentence-transformer semantic fallback index
+  base_index_type: "flat_ip"  # Item-base fallback index (text plus optional KG features)
   hybrid_base_weight: 0.075  # Best downstream operating point before category/subcategory text-prefix experiment
-  hybrid_oversample: 18  # Retrieve topk * this from each retrieval signal before merging
+  hybrid_oversample: 26  # Retrieve topk * this from each retrieval signal before merging
   sweep:
-    hybrid_base_weights: [0.0625, 0.075, 0.0875]
-    hybrid_oversamples: [18, 20, 22]
+    hybrid_base_weights: [0.05, 0.0625, 0.075]
+    hybrid_oversamples: [18, 22, 26]
   ivf_nlist: 2048
   topk: 200  # Number of candidates to retrieve for each user. Should be >= rerank.pool_size
 
@@ -92,7 +116,7 @@ rerank:
     enabled: true
     category_target: "catalog"  # catalog|uniform
     new_item_floor: 0.20  # minimum fraction of exposure in top-k to new items
-    penalty_weight: 0.20
+    penalty_weight: 0.30
   search:
     relative_guardrails:
       max_ndcg_drop_ratio: 0.021
