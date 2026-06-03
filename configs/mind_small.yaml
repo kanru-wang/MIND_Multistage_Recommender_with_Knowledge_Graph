@@ -20,25 +20,17 @@ data:
 
 knowledge_graph:
   enabled: true
-  # By default, the pipeline merges these files from data/raw/<train_dir>/ and
-  # data/raw/<dev_dir> when they exist:
-  #   entity_embedding.vec
-  #   relation_embedding.vec
-  # MIND ships entity/relation embeddings but not the original Wikidata triples.
-  # To build a practical one-hop triples file from Wikidata5M, run:
-  #   python scripts/build_mind_wikidata5m_triples.py --kg-path <wikidata5m-triples> --output data/processed/MINDsmall/kg_triples.tsv
-  # Then set triples_path to that output. The file format is: head relation tail
   entity_embedding_path: null
   relation_embedding_path: null
-  triples_path: "data/processed/MINDsmall/kg_triples.tsv"
+  triples_path: "data/processed/MINDsmall/kg_triples.tsv"  # Required when knowledge_graph.enabled is true
   max_entities_per_news: 12
   max_neighbors_per_entity: 20
   add_reverse_edges: true
   entity_weight: 1.0
-  neighbor_weight: 0.1
-  relation_weight: 0.1
+  neighbor_weight: 0.1  # Conservative default; not yet tuned specifically for ranker quality
+  relation_weight: 0.1  # Conservative default; not yet tuned specifically for ranker quality
   text_feature_weight: 1.0
-  kg_feature_weight: 0.25
+  kg_feature_weight: 0.25  # Conservative default; not yet tuned specifically for ranker quality
   normalize_item_base: true
   normalize: true
 
@@ -62,8 +54,8 @@ teacher:
 
 retrieval:
   index_type: "flat_ip"  # flat_ip|ivf_flat_ip
-  base_index_type: "flat_ip"  # Item-base fallback index (text plus optional KG features)
-  hybrid_base_weight: 0.075  # Best downstream operating point before category/subcategory text-prefix experiment
+  base_index_type: "flat_ip"  # Item-base fallback index over the current text-only retrieval base
+  hybrid_base_weight: 0.075  # Current text-only retrieval operating point
   hybrid_oversample: 26  # Retrieve topk * this from each retrieval signal before merging
   sweep:
     hybrid_base_weights: [0.05, 0.0625, 0.075]
@@ -104,9 +96,9 @@ rerank:
   k_out: 10  # Number of items to output after re-ranking
   pool_size: 50  # Number of candidates to consider for re-ranking. Should be >= k_out.
   position_bias: "log"  # log|linear
-  relevance_weight: 0.89
+  relevance_weight: 0.875
   novelty_weight: 0.05
-  coverage_weight: 0.06
+  coverage_weight: 0.075
   novelty_sim: "teacher_cosine"  # teacher_cosine|entity_jaccard|category
   coverage:
     max_new_entities_per_item: 3
@@ -116,7 +108,7 @@ rerank:
     enabled: true
     category_target: "catalog"  # catalog|uniform
     new_item_floor: 0.20  # minimum fraction of exposure in top-k to new items
-    penalty_weight: 0.30
+    penalty_weight: 0.25
   search:
     relative_guardrails:
       max_ndcg_drop_ratio: 0.021

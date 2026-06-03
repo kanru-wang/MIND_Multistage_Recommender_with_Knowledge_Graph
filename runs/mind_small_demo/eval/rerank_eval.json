@@ -2,31 +2,31 @@
   "k_out": 10,
   "pool_size": 50,
   "baseline": {
-    "ndcg@k": 0.36231608545220156,
-    "recall@k": 0.6034613753956648,
-    "ild": 0.4272816579670535,
-    "category_coverage": 5.669400587793042,
-    "category_entropy": 1.5403587236907785,
-    "fairness_kl_full": 0.46595140985749134,
-    "fairness_kl_pool": 0.41572839282899937,
-    "fairness_gini": 0.2846632357733862,
-    "new_item_exposure_frac": 0.7585484356262773
+    "ndcg@k": 0.40503690295000483,
+    "recall@k": 0.6566184479233727,
+    "ild": 0.37619382965742626,
+    "category_coverage": 5.1403185018112225,
+    "category_entropy": 1.405350563327512,
+    "fairness_kl_full": 0.47982184407778344,
+    "fairness_kl_pool": 0.42145899619592003,
+    "fairness_gini": 0.31531459735388817,
+    "new_item_exposure_frac": 0.7743517787972113
   },
   "reranked": {
-    "ndcg@k": 0.36058788494402444,
-    "recall@k": 0.5918783916679199,
-    "ild": 0.4297272069674018,
-    "category_coverage": 6.659080035540975,
-    "category_entropy": 1.7129171733899058,
-    "fairness_kl_full": 0.28971210978206935,
-    "fairness_kl_pool": 0.24510604388749546,
-    "fairness_gini": 0.28275986060965586,
-    "new_item_exposure_frac": 0.7766404590613167
+    "ndcg@k": 0.396905125230089,
+    "recall@k": 0.6462272582800813,
+    "ild": 0.37864850376209513,
+    "category_coverage": 5.999589911831044,
+    "category_entropy": 1.572193662706447,
+    "fairness_kl_full": 0.3484249982974616,
+    "fairness_kl_pool": 0.29570408590039415,
+    "fairness_gini": 0.3124085169905017,
+    "new_item_exposure_frac": 0.7861957429195843
   },
   "weights": {
-    "relevance": 0.89,
+    "relevance": 0.875,
     "novelty": 0.05,
-    "coverage": 0.06
+    "coverage": 0.075
   },
   "novelty_sim": "teacher_cosine",
   "position_bias": "log",

@@ -276,25 +276,34 @@ def _build_item_base_features(
     news: pd.DataFrame,
     batch_size: int,
     include_category_prefix: bool,
-) -> tuple[np.ndarray, dict[str, Any]]:
+) -> tuple[np.ndarray, dict[str, Any], np.ndarray, dict[str, Any]]:
     text_emb = _encode_news_text(
         st=st,
         news=news,
         batch_size=batch_size,
         include_category_prefix=include_category_prefix,
     )
-    kg_emb, kg_meta = build_news_kg_feature_matrix_from_config(cfg, news)
-    if kg_emb is None:
-        return text_emb, {
-            "mode": "text_only",
-            "text_dim": int(text_emb.shape[1]),
-            "kg": kg_meta,
-        }
+    text_meta = {
+        "mode": "text_only",
+        "text_dim": int(text_emb.shape[1]),
+        "item_base_dim": int(text_emb.shape[1]),
+    }
 
     kg_cfg = dict(cfg.get("knowledge_graph", {}))
+    kg_enabled = bool(kg_cfg.get("enabled", False))
+    kg_emb, kg_meta = (
+        build_news_kg_feature_matrix_from_config(cfg, news)
+        if kg_enabled
+        else (None, {"enabled": False})
+    )
+    if kg_emb is None:
+        text_meta["kg"] = kg_meta
+        text_meta["use_kg"] = False
+        return text_emb, text_meta, text_emb, dict(text_meta)
+
     text_weight = float(kg_cfg.get("text_feature_weight", 1.0))
     kg_weight = float(kg_cfg.get("kg_feature_weight", 1.0))
-    item_base = np.concatenate(
+    text_plus_kg = np.concatenate(
         [
             (text_weight * text_emb).astype(np.float32, copy=False),
             (kg_weight * kg_emb).astype(np.float32, copy=False),
@@ -303,18 +312,30 @@ def _build_item_base_features(
     )
     normalize_item_base = bool(kg_cfg.get("normalize_item_base", True))
     if normalize_item_base:
-        norms = np.linalg.norm(item_base, axis=1, keepdims=True)
-        item_base = item_base / np.clip(norms, a_min=1.0e-12, a_max=None)
-    return item_base.astype(np.float32, copy=False), {
+        norms = np.linalg.norm(text_plus_kg, axis=1, keepdims=True)
+        text_plus_kg = text_plus_kg / np.clip(norms, a_min=1.0e-12, a_max=None)
+    text_plus_kg = text_plus_kg.astype(np.float32, copy=False)
+    text_plus_kg_meta = {
         "mode": "text_plus_kg",
         "text_dim": int(text_emb.shape[1]),
         "kg_dim": int(kg_emb.shape[1]),
-        "item_base_dim": int(item_base.shape[1]),
+        "item_base_dim": int(text_plus_kg.shape[1]),
         "text_feature_weight": text_weight,
         "kg_feature_weight": kg_weight,
         "normalize_item_base": normalize_item_base,
         "kg": kg_meta,
     }
+
+    teacher_base = text_emb
+    ranker_base = text_plus_kg
+    teacher_meta = dict(text_meta, kg=kg_meta, use_kg=False)
+    ranker_meta = dict(text_plus_kg_meta, use_kg=True)
+    return (
+        teacher_base.astype(np.float32, copy=False),
+        teacher_meta,
+        ranker_base.astype(np.float32, copy=False),
+        ranker_meta,
+    )
 
 
 def _compute_user_embeddings(
@@ -380,7 +401,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
     )
     text_cfg = dict(teacher_cfg.get("text", {}))
     include_category_prefix = bool(text_cfg.get("include_category_prefix", False))
-    item_base, item_base_meta = _build_item_base_features(
+    item_base, item_base_meta, ranker_item_base, ranker_item_base_meta = _build_item_base_features(
         cfg=cfg,
         st=st,
         news=news,
@@ -561,6 +582,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
     np.save(art_root / "item_teacher_emb.npy", item_teacher_emb.astype(np.float32))
     np.save(art_root / "user_teacher_emb.npy", user_teacher_emb.astype(np.float32))
     np.save(art_root / "item_base_emb.npy", item_base.astype(np.float32))
+    np.save(art_root / "item_ranker_base_emb.npy", ranker_item_base.astype(np.float32))
     torch.save(
         {
             "item_dim": int(item_base.shape[1]),
@@ -590,6 +612,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
             "include_category_prefix": include_category_prefix,
         },
         "item_base_features": item_base_meta,
+        "ranker_item_base_features": ranker_item_base_meta,
         "train_samples": int(len(samples)),
         "train_users": int(len(histories_by_user)),
         "validation_split_name": val_split,

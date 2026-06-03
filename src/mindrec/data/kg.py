@@ -247,6 +247,13 @@ def build_news_kg_feature_matrix_from_config(
             filename="relation_embedding.vec",
         )
     triples_path = kg_cfg.get("triples_path")
+    if not triples_path:
+        raise ValueError(
+            "knowledge_graph.enabled is true but knowledge_graph.triples_path is not set."
+        )
+    triples = Path(triples_path)
+    if not triples.exists():
+        raise FileNotFoundError(f"Configured KG triples file was not found: {triples}")
 
     missing_entity_paths = [path for path in entity_paths if not path.exists()]
     if not entity_paths or missing_entity_paths:
@@ -256,24 +263,21 @@ def build_news_kg_feature_matrix_from_config(
         )
 
     missing_relation_paths = [path for path in relation_paths if not path.exists()]
-    if missing_relation_paths:
+    if not relation_paths or missing_relation_paths:
         raise FileNotFoundError(
-            "Configured relation_embedding_path file was not found: "
-            + ", ".join(str(path) for path in missing_relation_paths)
+            "knowledge_graph.enabled is true but relation_embedding.vec was not found. "
+            "Place it in the MIND train/dev directory or set knowledge_graph.relation_embedding_path."
         )
 
     entity_embeddings = read_embedding_vecs(entity_paths)
-    relation_embeddings = read_embedding_vecs(relation_paths) if relation_paths else {}
-    adjacency: dict[str, list[NeighborEdge]] = {}
-    if triples_path:
-        triples = Path(triples_path)
-        if not triples.exists():
-            raise FileNotFoundError(f"Configured KG triples file was not found: {triples}")
-        adjacency = read_kg_triples(
-            path=triples,
-            max_neighbors_per_entity=int(kg_cfg.get("max_neighbors_per_entity", 20)),
-            add_reverse_edges=bool(kg_cfg.get("add_reverse_edges", True)),
-        )
+    relation_embeddings = read_embedding_vecs(relation_paths)
+    if not relation_embeddings:
+        raise ValueError("relation_embedding.vec files did not contain any usable vectors")
+    adjacency = read_kg_triples(
+        path=triples,
+        max_neighbors_per_entity=int(kg_cfg.get("max_neighbors_per_entity", 20)),
+        add_reverse_edges=bool(kg_cfg.get("add_reverse_edges", True)),
+    )
 
     features, meta = build_news_kg_feature_matrix(
         news=news,
@@ -291,7 +295,7 @@ def build_news_kg_feature_matrix_from_config(
             "enabled": True,
             "entity_embedding_path": _format_paths(entity_paths),
             "relation_embedding_path": _format_paths(relation_paths),
-            "triples_path": str(triples_path) if triples_path else None,
+            "triples_path": str(triples),
             "n_entity_embeddings": int(len(entity_embeddings)),
             "n_relation_embeddings": int(len(relation_embeddings)),
             "n_entities_with_neighbors": int(len(adjacency)),

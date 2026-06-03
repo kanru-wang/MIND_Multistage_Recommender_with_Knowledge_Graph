@@ -104,22 +104,24 @@ def _retrieve_topk(
     topk: int,
     hybrid_base_weight: float,
 ) -> set[int]:
+    combined: dict[int, float] = {}
     if (
         hybrid_base_weight <= 0.0
         or base_scores is None
         or base_idx is None
     ):
-        return {int(idx) for idx in teacher_idx[:topk].tolist()}
+        for idx, score in zip(teacher_idx.tolist(), teacher_scores.tolist()):
+            combined[int(idx)] = float(score)
+    else:
+        for idx, score in zip(teacher_idx.tolist(), teacher_scores.tolist()):
+            combined[int(idx)] = combined.get(int(idx), 0.0) + (
+                (1.0 - hybrid_base_weight) * float(score)
+            )
+        for idx, score in zip(base_idx.tolist(), base_scores.tolist()):
+            combined[int(idx)] = combined.get(int(idx), 0.0) + (
+                hybrid_base_weight * float(score)
+            )
 
-    combined: dict[int, float] = {}
-    for idx, score in zip(teacher_idx.tolist(), teacher_scores.tolist()):
-        combined[int(idx)] = combined.get(int(idx), 0.0) + (
-            (1.0 - hybrid_base_weight) * float(score)
-        )
-    for idx, score in zip(base_idx.tolist(), base_scores.tolist()):
-        combined[int(idx)] = combined.get(int(idx), 0.0) + (
-            hybrid_base_weight * float(score)
-        )
     ranked = sorted(combined.items(), key=lambda kv: kv[1], reverse=True)
     return {idx for idx, _ in ranked[:topk]}
 
@@ -521,7 +523,7 @@ def run_eval_retrieval(cfg: dict[str, Any]) -> None:
     item_click_counts = load_json(proc_root / "item_click_counts.json")
     split_results: dict[str, dict[str, Any]] = {}
     for split_name in _resolve_eval_splits(cfg):
-        split_results[split_name] = _evaluate_single_retrieval_split(
+        result = _evaluate_single_retrieval_split(
             cfg=cfg,
             split_name=split_name,
             model=model,
@@ -534,6 +536,7 @@ def run_eval_retrieval(cfg: dict[str, Any]) -> None:
             hybrid_base_weight=float(cfg["retrieval"].get("hybrid_base_weight", 0.0)),
             hybrid_oversample=int(cfg["retrieval"].get("hybrid_oversample", 3)),
         )
+        split_results[split_name] = result
         save_json(art_root / f"eval_{split_name}.json", split_results[split_name])
 
 

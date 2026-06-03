@@ -10,6 +10,7 @@ from tqdm import tqdm
 
 from mindrec.config import ensure_dir
 from mindrec.data.featurize import IdMaps
+from mindrec.metrics.benchmark import official_mind_benchmark_view
 from mindrec.metrics.calibration import brier_score, expected_calibration_error
 from mindrec.metrics.ranking import (
     auc,
@@ -39,7 +40,13 @@ def _load_model(
     n_cats = int(news["cat_idx"].max()) + 1
     n_subcats = int(news["subcat_idx"].max()) + 1
 
-    item_base = np.load(runs_root / "teacher" / "item_base_emb.npy")
+    ranker_base_name = (
+        "item_ranker_base_emb.npy"
+        if bool(cfg.get("knowledge_graph", {}).get("enabled", False))
+        else "item_base_emb.npy"
+    )
+    ranker_base_path = runs_root / "teacher" / ranker_base_name
+    item_base = np.load(ranker_base_path)
     teacher_item = np.load(runs_root / "teacher" / "item_teacher_emb.npy")
 
     dlrm_cfg = cfg["ranker"]["dlrm"]
@@ -376,8 +383,10 @@ def _evaluate_split(
     p_raw = 1.0 / (1.0 + np.exp(-s))
     p = np.array(all_probs, dtype=np.float32)
 
+    ranking = _finalize_metric_accumulator(agg)
     out = {
-        "ranking": _finalize_metric_accumulator(agg),
+        "ranking": ranking,
+        "official_mind": official_mind_benchmark_view(ranking),
         "calibration": {
             "method": "temperature" if scaler is not None else "sigmoid",
             "temperature": float(scaler.temperature) if scaler is not None else 1.0,

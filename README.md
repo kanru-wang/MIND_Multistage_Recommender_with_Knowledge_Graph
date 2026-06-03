@@ -1,10 +1,10 @@
-# MIND Multi-Stage News Recommender (Retrieval → DLRM Ranker → Diversity+Coverage+Fairness Re-ranker)
+# MIND Multi-Stage News Recommender (Retrieval → DLRM+Knowledge_Graph Ranker → Diversity+Coverage+Fairness Re-ranker)
 
 This project implements a realistic recommender stack on the **Microsoft News Dataset (MIND)**:
 - Preprocessing: prepare train/val/test data, click-count features, cold/new flags, impression-level eval data, and map IDs to indices.
 - Train **Teacher retrieval encoders** (text-based item encoder + history-based user encoder).
-- Build two Faiss ANN retrieval indexes: (1) for item embeddings from teacher, and (2) for item embeddings from sentence-transformer. These indexes are used for hybrid candidate retrieval.
-- Train **Student ranker**, a lean DLRM-style sparse+dense model that narrows **hybrid retrieval** returned `topk` items to more relevant `pool_size` items. Alongside the usual DLRM-style ID embeddings, category/subcategory embeddings, and dense features, this student adds semantic branches: it encodes the candidate's sentence-transformer item base embedding, and pools the clicked-history item base embeddings. Teacher **distillation** (logit + representation) from the semantic/history-based teacher helps those semantic branches learn a stronger user/item matching space than click labels alone, **improving cold user/item behavior where ID memorization is weak**.
+- Build two Faiss ANN retrieval indexes: (1) for item embeddings from teacher, and (2) for item-base features. These indexes are used for hybrid candidate retrieval.
+- Train **Student ranker**, a lean DLRM-style sparse+dense model that narrows **hybrid retrieval** returned `topk` items to more relevant `pool_size` items. Alongside the usual DLRM-style ID embeddings, category/subcategory embeddings, and dense features, this student uses semantic and **Knowledge Graph embeddings**: it encodes the candidate's text-plus-KG item-base embedding and pools the clicked-history text-plus-KG item-base embeddings. Teacher **distillation** (logit + representation) from the text/history-based teacher helps those semantic branches learn a stronger user/item matching space than click labels alone, **improving cold user/item behavior where ID memorization is weak**.
 - **Re-ranking** enforcing a certain degree of item diversity, category/named-entity coverage, and position-weighted exposure fairness for categories/new-items. It further narrows `pool_size` items to `k_out` items.
 - Find the best set of reranking weights/penalties given constraints on metrics.
 - Extensive **evaluation**: ranking metrics, calibration, diversity, exposure fairness, and cold/new slices.
@@ -17,10 +17,11 @@ In production, for each user we have three inference steps:
 MIND is widely used as a benchmark for news recommendation, with impression logs and rich news metadata.
 
 Production design note: if a fresh batch of news arrives, for example from the last 15 minutes, the system would need fresh item-side representations. For each new article:
-- Run the sentence-transformer over text/title/abstract to produce its `item_base` embedding.
-- Pass `item_base` through the teacher item encoder to produce `item_teacher_emb`.
+- Run the sentence-transformer over text/title/abstract to produce the text-only retrieval `item_base` embedding.
+- Pass the text-only `item_base` through the teacher item encoder to produce `item_teacher_emb`.
+- Parse linked Wikidata entities and aggregate entity/relation/one-hop context features to produce the KG-enhanced `item_ranker_base` embedding.
 - Mark as cold/new with `is_new_item = 1`, `item_clicks_log1p = 0`.
-- Add to both Faiss indexes: the teacher index (`item_teacher_emb`) and the base semantic index (`item_base`).
+- Add to both Faiss retrieval indexes: the teacher index (`item_teacher_emb`) and the text-only fallback index (`item_base`).
 
 The current repo/CLI does not implement online index updates; it builds and writes both Faiss indexes in batch via `build_index`.
 
@@ -50,24 +51,25 @@ The current repo/CLI does not implement online index updates; it builds and writ
   - the learned query vector
 - The training objective pushes each user vector closer to its clicked positive item and farther from sampled in-impression negatives and other in-batch positives.
 - At the end of `train_teacher`, the pipeline writes:
-  - `item_base_emb.npy`: frozen sentence-transformer embedding for every news item
+  - `item_base_emb.npy`: frozen text-only sentence-transformer feature for every news item, used by teacher training and retrieval.
+  - `item_ranker_base_emb.npy`: separate `[sentence-transformer text embedding ; KG entity/context embedding]` feature used by the student ranker
   - `item_teacher_emb.npy`: the final teacher embedding for every news item
   - `user_teacher_emb.npy`: the final teacher embedding for each training user history
 - These files are then reused by later stages:
   - `build_index` builds the Faiss retrieval index from `item_teacher_emb.npy`
   - `eval_retrieval` uses `item_teacher_emb.npy` and the saved teacher model to encode held-out histories and search that index
-  - `train_ranker` loads `item_base_emb.npy` as student semantic input and uses `item_teacher_emb.npy` / `user_teacher_emb.npy` only as teacher supervision targets
+  - `train_ranker` loads `item_ranker_base_emb.npy` as student semantic input and uses `item_teacher_emb.npy` / `user_teacher_emb.npy` only as teacher supervision targets
 
 ## Hybrid retrieval scoring
 
 During `eval_retrieval`, the teacher retrieval query is built by taking the impression's clicked history news, looking up their teacher item embeddings, and passing those vectors through `TeacherTwoTower.encode_user_from_item_vectors()`.
-The base retrieval query is built by averaging the impression's clicked history news' raw sentence-transformer embeddings.
+The base retrieval query is built by averaging the impression's clicked history news' raw sentence-transformer `item_base_emb.npy` embeddings.
 
 Faiss returns scalar similarity scores:
 - `teacher_score`: similarity between the teacher user query and a candidate `item_teacher_emb.npy` vector
-- `base_score`: similarity between the raw sentence-transformer history query and a candidate `item_base_emb.npy` vector
+- `base_score`: similarity between the averaged of the clicked-history text-only `item_base_emb.npy` vectors and a candidate `item_base_emb.npy` vector
 
-The retrieval code searches both Faiss indexes, merges the oversampled candidate lists, and keeps the final `topk` items by hybrid score. (`hybrid_oversample` controls how many candidates are fetched from each index before the merge.) With the current config, candidates are ranked mostly by teacher retrieval with a small raw-text semantic contribution.
+The retrieval code searches both Faiss indexes, merges the oversampled candidate lists, and keeps the final `topk` items by hybrid score. (`hybrid_oversample` controls how many candidates are fetched from each index before the merge.) With the current config, candidates are ranked mostly by teacher retrieval with a small text-only semantic contribution. KG is intentionally not used during retrieval.
 ```text
 hybrid_score = (1 - retrieval.hybrid_base_weight) * teacher_score
              + retrieval.hybrid_base_weight * base_score
@@ -91,13 +93,13 @@ The student keeps a lighter semantic core than the teacher, but combines it with
 
 #### DLRM-style semantic additions
 - A classic DLRM usually combines sparse ID/category embeddings, dense numerical features, pairwise feature interactions, and a final top MLP. It usually does not include item text embeddings or user-history semantic embeddings directly; those are project-specific additions here.
-- In `DLRMStudent`, the candidate item's sentence-transformer text embedding is projected into `item_sem`, and the clicked-history item embeddings are pooled/projected into `user_sem`. Both are mapped to the same `emb_dim` length as the other DLRM feature vectors.
+- In `DLRMStudent`, the candidate item's `item_ranker_base_emb.npy` vector is formed by concatenating its sentence-transformer text embedding with a KG feature vector. That KG vector aggregates the article's linked entity embeddings together with relation-aware one-hop neighbor context from the configured triples file. The candidate item's vector is projected into `item_sem`, and the corresponding clicked-history vectors are pooled/projected into `user_sem`. Both are mapped to the same `emb_dim` length as the other DLRM feature vectors.
 - These semantic vectors, plus `sem_fused`, are added to the DLRM feature list as extra feature vectors. They are then included in the pairwise dot-product interaction layer and concatenated into the final top MLP input.
 
 #### Distillation representation
 - In `DLRMStudent.forward()`, the student representation used for distillation is `rep = [user_sem, item_sem, sem_fused]`.
-- `user_sem`: student semantic user vector from pooled click-history sentence-transformer item bases
-- `item_sem`: student semantic item vector from the candidate item's sentence-transformer base embedding
+- `user_sem`: student semantic user vector from pooled click-history KG-enhanced item-base features
+- `item_sem`: student semantic item vector from the candidate item's KG-enhanced item-base feature
 - `sem_fused`: a lightweight attention-fusion summary that mixes the semantic user/item states with the structured query context
 - The teacher target is `concat(teacher_user_emb, teacher_item_emb)`. A projection head maps the student representation into the teacher space for representation distillation.
 - The teacher is semantic/history-based rather than mostly `user_id`/`news_id` memorization. Representation distillation therefore **encourages the student's semantic branch to learn a useful user/item space, especially when ID signals are weak for cold users or new items**.
@@ -106,7 +108,7 @@ The student keeps a lighter semantic core than the teacher, but combines it with
 loss = binary_cross_entropy_with_logits(student_logits, click_label)
 ```
 - Without distillation, retrieval can still be designed in two ways:
-  - Use only the sentence-transformer/base item embeddings for retrieval
+  - Use only the frozen text-only `item_base_emb.npy` sentence-transformer embeddings for retrieval
   - Train a retrieval model, but do not use that model as a teacher to supervise the ranker
 
 #### Teacher -> student distillation map
@@ -115,7 +117,7 @@ loss = binary_cross_entropy_with_logits(student_logits, click_label)
 
 | Teacher block | What it does | Student replacement | Key difference |
 |---|---|---|---|
-| Frozen sentence-transformer news embedding input | Base text semantics for each news item | Same `item_base_emb.npy` input | Both stages start from the same base text embedding |
+| Frozen text-only item-base input | Base text semantics for each news item | KG-enhanced `item_ranker_base_emb.npy` input | Retrieval stays text-only; the ranker receives extra entity/relation/neighbor context |
 | Teacher semantic item encoder | Refines each item into the teacher semantic space | Smaller student semantic item encoder | Student semantic dimension is much smaller than the teacher space |
 | Teacher sequence-aware user encoder | Contextualizes clicked history items with attention before pooling | Cheaper history aggregation path | Student uses a lighter history refinement and aggregation path |
 | Teacher attention pooling over history | Builds one semantic user vector from clicked history | Mean-style pooled semantic user path | Student pooling is cheaper and less sequence-aware |
@@ -210,6 +212,8 @@ Category and clicked-item-popularity slices help check whether the model is robu
 - **Diversity**: intra-list diversity (ILD), category coverage@K, category entropy@K
 - **Exposure fairness**: position-weighted exposure, disparity vs target distribution (KL / L1 / Gini), new-item exposure floor
 
+The official MIND leaderboard reports `AUC`, `MRR`, `nDCG@5`, and `nDCG@10` (see each `ranker_eval_*.json`). The official leaderboard uses the full/large hidden test set. These metrics are not directly comparable to this repo's metrics (from `MINDsmall_dev`'s time-based val-test splits).
+
 <br>
 <br>
 
@@ -242,11 +246,9 @@ Place files under:
 data/raw/MINDsmall_train/
 data/raw/MINDsmall_dev/
 ```
-Each folder should contain `behaviors.tsv` and `news.tsv`.
+Each folder should contain `behaviors.tsv` and `news.tsv`. The reranker may use the entity annotation columns already present in `news.tsv` for coverage when `rerank.coverage.entity_bonus > 0`.
+When `knowledge_graph.enabled: true`, the model also needs to use `entity_embedding.vec` and `relation_embedding.vec`.
 
-MIND also provides `entity_embedding.vec` and `relation_embedding.vec`.
-In this repo, for simplicity, these two files are currently **not used** by the pipeline.
-The reranker may still use the entity annotation columns already present in `news.tsv` for coverage when `rerank.coverage.entity_bonus > 0`. This does **not** mean the pipeline loads or trains on the external `entity_embedding.vec` or `relation_embedding.vec` files.
 
 ---
 
@@ -255,16 +257,53 @@ The reranker may still use the entity annotation columns already present in `new
 - In MIND, an **entity** is a named entity extracted from a news article (person, organization, location, etc.) and linked to a knowledge graph (the MIND paper references Wikidata).
 - `entity_embedding.vec`: embedding vector for each entity ID.
 - `relation_embedding.vec`: embedding vector for each relation type between entities.
+- `WikidataId` is the bridge between `news.tsv` and `entity_embedding.vec`. During the `train_teacher` command, if an article's title or abstract entity annotation contains a `WikidataId`, the KG feature builder looks up the row with that ID in `entity_embedding.vec`.
+- A **knowledge-graph triple** is a directed fact written as `(head entity, relation, tail entity)`. For example, `(Q76, P31, Q5)` means that entity `Q76` has relation `P31` to entity `Q5`. In a one-hop lookup, an entity mentioned by an article is the head or tail of a triple, and the entity at the other end is its neighbor.
 
-If we choose to use these files, a common approach is to use KG triples `(entity, relation, entity)` to fetch neighbors of entities mentioned in a news article, then build richer representations (for example with graph attention or memory-network style modules).
+The implemented approach follows the classic KG recommendation pattern:
+- Parse linked `WikidataId` values from each article's title/abstract entity columns.
+- Fetch those entity vectors from `entity_embedding.vec`.
+- Fetch one-hop neighbors from the required triples file using triples `(entity, relation, entity)`, combine neighbor entity vectors with the relation vector from `relation_embedding.vec`, and aggregate the messages into a context vector.
+- Concatenate the final KG vector with the sentence-transformer text vector to form `item_ranker_base_emb.npy`.
+- Feed this KG-enhanced item base into the student ranker.
+
+#### Building a triples file
+
+A triples file we can use is **Wikidata5M**, a compact Wikidata-derived KG with the exact ID style this project needs: entities use `Q...`, relations use `P...`, and triples are stored as rows like `Q22686 P39 Q11696`. It is not guaranteed to be the exact MIND TransE training subgraph, but it is a reasonable Wikidata subgraph for one-hop neighbor expansion.
+
+Download one of the Wikidata5M KG files from:
+- https://deepgraphlearning.github.io/project/wikidata5m
+
+Then filter it down to MIND-mentioned entities:
+
+```
+python scripts/build_mind_wikidata5m_triples.py
+  --kg-path path/to/wikidata5m_transductive_train.txt
+  --raw-root data/raw
+  --train-dir MINDsmall_train
+  --dev-dir MINDsmall_dev
+  --entity-embedding data/raw/MINDsmall_train/entity_embedding.vec
+  --entity-embedding data/raw/MINDsmall_dev/entity_embedding.vec
+  --relation-embedding data/raw/MINDsmall_train/relation_embedding.vec
+  --relation-embedding data/raw/MINDsmall_dev/relation_embedding.vec
+  --output data/processed/MINDsmall/kg_triples.tsv
+```
 
 How this repo uses MIND entity annotations:
-- `news.tsv` contains `title_entities` and `abstract_entities` columns. They are not appended to article text for retrieval.
-- During reranking evaluation, we parse those columns and stores a set of entity IDs for each `news_id`.
-- The code treats each entity as a hashed integer ID, not as a learned embedding.
-- During greedy reranking, the reranker tracks the set of entities already covered by the items selected so far.
-- For each remaining candidate item, the reranker computes which of its entities are new, and calculates entity_bonus.
-- The reranker does not use KG relation paths or graph-neighbor expansion. Entity annotations are used only for coverage/diversity accounting.
+- `news.tsv` contains `title_entities` and `abstract_entities` columns.
+- During greedy reranking, the reranker tracks covered entities for the entity coverage bonus.
+- Reranker entity coverage is separate from the neural KG feature path: coverage decides list diversity, while KG features affect the learned ranker representation.
+
+#### Rejected KG retrieval experiments
+
+KG is kept in the downstream ranker because the retrieval-stage KG experiments did not generalize reliably:
+
+1. **Full-strength KG in retrieval/item base** concatenated a strongly weighted KG vector with the text vector used by the teacher and base retrieval index. This allowed entity embeddings, one-hop neighbors, and relation messages to directly influence nearest-neighbor retrieval.
+2. **Weakened KG in retrieval** kept the same text-plus-KG retrieval design but reduced the KG, neighbor, and relation weights so text remained the dominant retrieval signal.
+3. **Reserved KG candidate slots** generated candidates from entities and their one-hop neighbors, then forced a fixed quota of those candidates into the final top-`K` retrieval set.
+4. **KG-aware retrieval score bonus** left candidate generation unchanged, but added a small score bonus to candidates whose linked entities matched or neighbored entities found in the user's clicked history.
+
+The accepted design is therefore **text-only retrieval plus a KG-enhanced ranker**.
 
 ---
 
@@ -345,9 +384,9 @@ The retrieval evaluation includes additional slice families:
 - `impressions_with_clicked_category__...` slices
 - `impressions_with_clicked_subcategory__...` slices
 
-`eval_retrieval_sweep` evaluates the small hybrid grid defined in `retrieval.sweep`:
-- `hybrid_base_weights: [0.0625, 0.075, 0.0875]`
-- `hybrid_oversamples: [18, 20, 22]`
+`eval_retrieval_sweep` evaluates the hybrid grid defined in `retrieval.sweep`:
+- `hybrid_base_weights: [0.05, 0.0625, 0.075]`
+- `hybrid_oversamples: [18, 22, 26]`
 
 It writes `runs/<run_name>/retrieval/sweep.json` with all tested settings plus the best one by held-out `recall@K`.
 
@@ -437,11 +476,11 @@ The current reranker search reports three views of the tradeoff surface on valid
 - `pareto_frontier.md` is written from the full-pass shortlisted results, not from every sample-screened candidate.
 
 The current selected setting is:
-- `relevance_weight=0.89`
+- `relevance_weight=0.875`
 - `novelty_weight=0.05`
-- `coverage_weight=0.06`
+- `coverage_weight=0.075`
 - `novelty_sim=teacher_cosine`
-- `fairness.penalty_weight=0.20`
+- `fairness.penalty_weight=0.25`
 - `fairness.new_item_floor=0.20`
 
 The search writes its summary to `runs/<run_name>/eval/rerank_search.json`.
@@ -452,20 +491,26 @@ Training logs are written to `runs/<run_name>/teacher/epochs.json` and `runs/<ru
 ### 3.6 Last completed demo results (`runs/mind_small_demo`)
 
 Teacher retrieval:
-- current retrieval setup uses hybrid retrieval:
+- Current retrieval setup is text-only hybrid retrieval:
   - teacher retrieval from `item_teacher_emb.npy`
-  - raw sentence-transformer fallback from `item_base_emb.npy`
+  - text-only item-base fallback from `item_base_emb.npy`
+  - KG is not used by the teacher or retrieval indexes
   - `teacher.text.include_category_prefix = false`
   - `hybrid_base_weight = 0.075`
-  - `hybrid_oversample = 18`
-- Teacher retrieval validation `Recall@200 = 0.04575`
-- Teacher retrieval test `Recall@200 = 0.04270`
+  - `hybrid_oversample = 26`
+- Teacher retrieval validation `Recall@200 = 0.044892`
+- Teacher retrieval test `Recall@200 = 0.042396`
 - Early stopping monitor: `retrieval_recall@200`
 - Best teacher epoch: `2`
 - Rejected experiment: adding category/subcategory prefixes to the teacher text input improved Teacher retrieval validation `Recall@200`, but hurt downstream Student ranker quality, so the default remains `teacher.text.include_category_prefix = false`.
 
 Student ranker:
-- current semantic settings:
+- Current semantic input is `item_ranker_base_emb.npy`, a `484`-dimensional text-plus-KG vector:
+  - text dimension: `384`
+  - KG dimension: `100`
+  - `knowledge_graph.enabled = true`
+  - the teacher and retrieval indexes remain text-only
+- Current semantic settings:
   - `semantic_ff_mult=3`
   - `semantic_dropout=0.20`
   - `dropout=0.15`
@@ -475,30 +520,55 @@ Student ranker:
 - The `news_id_*_scale` settings control only the learned `news_id` embedding branch in the DLRM ranker.
   Warm items keep their ID embedding contribution, while **new/cold items get that branch zeroed out** and are scored relying on semantic, category/subcategory, user, and dense features instead.
   new/cold items are found during preprocessing from training (click counts under the `min_item_train_clicks_for_warm` limit).
-- Student ranker validation `nDCG@10 = 0.40992`
-- Student ranker validation `Recall@10 = 0.66987`
-- Student ranker validation `AUC = 0.65211`
-- Student ranker test `nDCG@10 = 0.38535`
-- Student ranker test `Recall@10 = 0.64013`
-- Student ranker test `AUC = 0.64154`
+- Best ranker epoch: `5`
+- Student ranker validation:
+  - `AUC = 0.662502`
+  - `MRR = 0.371160`
+  - `nDCG@5 = 0.356072`
+  - `nDCG@10 = 0.419516`
+  - `Recall@10 = 0.685537`
+- Student ranker test:
+  - `AUC = 0.661939`
+  - `MRR = 0.358905`
+  - `nDCG@5 = 0.346308`
+  - `nDCG@10 = 0.405037`
+  - `Recall@10 = 0.656618`
 - calibration on test changed:
-  - `Brier: 0.13650 -> 0.07296`
-  - `ECE@15: 0.31091 -> 0.17471`
+  - `Brier: 0.138993 -> 0.073153`
+  - `ECE@15: 0.314986 -> 0.174863`
 
 Search summary:
 - `best_feasible` is the setting that has the highest-utility and is also feasible
-- current validation baseline ranker before reranking:
-  - `nDCG@10 = 0.40992`
-  - `fairness_kl_pool = 0.45766`
-  - `new_item_exposure_frac = 0.63715`
-- current validation `best_feasible`:
-  - `nDCG@10 = 0.40154`
-  - `Recall@10 = 0.66261`
-  - `new_item_exposure_frac = 0.65345`
-  - `category_coverage@10 = 5.70720`
-  - `fairness_kl_pool = 0.36015`
-- `n_feasible = 15` under the current guardrails
+- Current validation baseline ranker before reranking:
+  - `nDCG@10 = 0.419516`
+  - `Recall@10 = 0.685537`
+  - `category_coverage@10 = 5.341723`
+  - `fairness_kl_pool = 0.418917`
+  - `new_item_exposure_frac = 0.560894`
+- Current validation `best_feasible`:
+  - `nDCG@10 = 0.411298`
+  - `Recall@10 = 0.674537`
+  - `category_coverage@10 = 6.059363`
+  - `fairness_kl_pool = 0.317624`
+  - `new_item_exposure_frac = 0.576442`
+  - relative `nDCG@10` drop: `1.959%`
+- `n_feasible = 16` under the current guardrails
 - `best_scalar_utility` is a more aggressive diversity/fairness point, but it is not feasible under the current guardrails
+
+Final reranker test report:
+- Baseline ranker:
+  - `nDCG@10 = 0.405037`
+  - `Recall@10 = 0.656618`
+  - `category_coverage@10 = 5.140319`
+  - `fairness_kl_pool = 0.421459`
+  - `new_item_exposure_frac = 0.774352`
+- Reranked output:
+  - `nDCG@10 = 0.396905`
+  - `Recall@10 = 0.646227`
+  - `category_coverage@10 = 5.999590`
+  - `fairness_kl_pool = 0.295704`
+  - `new_item_exposure_frac = 0.786196`
+- The reranker trades approximately `2.01%` relative `nDCG@10` for better category coverage, fairness KL, and new-item exposure.
 
 ---
 

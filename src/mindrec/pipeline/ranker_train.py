@@ -53,7 +53,13 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     runs_root = ensure_dir(Path("runs") / cfg["run_name"])
     art_root = ensure_dir(runs_root / "ranker")
 
-    item_base = np.load(runs_root / "teacher" / "item_base_emb.npy")
+    ranker_base_name = (
+        "item_ranker_base_emb.npy"
+        if bool(cfg.get("knowledge_graph", {}).get("enabled", False))
+        else "item_base_emb.npy"
+    )
+    ranker_base_path = runs_root / "teacher" / ranker_base_name
+    item_base = np.load(ranker_base_path)
     teacher_item = np.load(runs_root / "teacher" / "item_teacher_emb.npy")
     item_base_tensor = torch.tensor(item_base, dtype=torch.float32, device=device)
     teacher_item_tensor = torch.tensor(teacher_item, dtype=torch.float32, device=device)
