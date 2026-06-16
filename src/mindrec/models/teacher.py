@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -89,14 +88,3 @@ class TeacherTwoTower(nn.Module):
     def encode_user(self, history_emb: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         hist_z = self.encode_items(history_emb)
         return self.encode_user_from_item_vectors(hist_z, mask)
-
-
-def l2_normalize(x: np.ndarray, eps: float = 1e-12) -> np.ndarray:
-    n = np.linalg.norm(x, axis=-1, keepdims=True)
-    return x / (n + eps)
-
-
-def cosine_sim(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    a = l2_normalize(a)
-    b = l2_normalize(b)
-    return (a * b).sum(axis=-1)

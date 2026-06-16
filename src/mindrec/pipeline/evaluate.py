@@ -9,6 +9,7 @@ import torch
 from tqdm import tqdm
 
 from mindrec.config import ensure_dir
+from mindrec.data.datasets import RANKER_DENSE_COLUMNS, build_ranker_dense_matrix
 from mindrec.data.featurize import IdMaps
 from mindrec.metrics.benchmark import official_mind_benchmark_view
 from mindrec.metrics.calibration import brier_score, expected_calibration_error
@@ -21,6 +22,11 @@ from mindrec.metrics.ranking import (
 )
 from mindrec.models.calibration import TemperatureScaler
 from mindrec.models.dlrm import DLRMStudent
+from mindrec.pipeline.ranker_assets import (
+    load_ranker_item_features,
+    ranker_score_batch_size,
+    validate_ranker_feature_fingerprints,
+)
 from mindrec.utils import (
     behavior_artifact_path,
     impression_artifact_path,
@@ -31,8 +37,12 @@ from mindrec.utils import (
 
 
 def _load_model(
-    cfg: dict[str, Any], proc_root: Path, runs_root: Path, device: torch.device
-) -> tuple[DLRMStudent, np.ndarray, np.ndarray]:
+    cfg: dict[str, Any],
+    proc_root: Path,
+    runs_root: Path,
+    device: torch.device,
+    ranker_art_root: Path | None = None,
+) -> tuple[DLRMStudent, np.ndarray, np.ndarray, np.ndarray]:
     maps = IdMaps.load(proc_root / "id_maps.json")
     news = pd.read_parquet(proc_root / "news.parquet")
     n_users = max(maps.user2idx.values()) + 1
@@ -40,14 +50,9 @@ def _load_model(
     n_cats = int(news["cat_idx"].max()) + 1
     n_subcats = int(news["subcat_idx"].max()) + 1
 
-    ranker_base_name = (
-        "item_ranker_base_emb.npy"
-        if bool(cfg.get("knowledge_graph", {}).get("enabled", False))
-        else "item_base_emb.npy"
-    )
-    ranker_base_path = runs_root / "teacher" / ranker_base_name
-    item_base = np.load(ranker_base_path)
-    teacher_item = np.load(runs_root / "teacher" / "item_teacher_emb.npy")
+    teacher_root = runs_root / "teacher"
+    item_text_base, item_kg_base = load_ranker_item_features(cfg, teacher_root)
+    teacher_item = np.load(teacher_root / "item_teacher_emb.npy")
 
     dlrm_cfg = cfg["ranker"]["dlrm"]
     model = DLRMStudent(
@@ -55,38 +60,49 @@ def _load_model(
         n_news=n_news,
         n_cats=n_cats,
         n_subcats=n_subcats,
-        dense_dim=2,
-        item_base_dim=int(item_base.shape[1]),
+        dense_dim=len(RANKER_DENSE_COLUMNS),
+        item_text_dim=int(item_text_base.shape[1]),
+        item_kg_dim=int(item_kg_base.shape[-1]),
         emb_dim=int(dlrm_cfg["emb_dim"]),
         id_emb_dim=int(dlrm_cfg.get("id_emb_dim", dlrm_cfg["emb_dim"])),
         bottom_mlp=[int(x) for x in dlrm_cfg["bottom_mlp"]],
         top_mlp=[int(x) for x in dlrm_cfg["top_mlp"]],
         dropout=float(dlrm_cfg.get("dropout", 0.0)),
-        fusion_heads=4,
+        fusion_heads=int(dlrm_cfg.get("fusion_heads", 4)),
         semantic_ff_mult=int(dlrm_cfg.get("semantic_ff_mult", 1)),
         semantic_dropout=float(
             dlrm_cfg.get("semantic_dropout", dlrm_cfg.get("dropout", 0.0))
         ),
         news_id_warm_scale=float(dlrm_cfg.get("news_id_warm_scale", 1.0)),
         news_id_cold_scale=float(dlrm_cfg.get("news_id_cold_scale", 1.0)),
+        kg_gate_init=float(dlrm_cfg.get("kg_gate_init", 0.15)),
+        kg_gate_trainable=bool(dlrm_cfg.get("kg_gate_trainable", False)),
     ).to(device)
 
-    ckpt = torch.load(runs_root / "ranker" / "best.pt", map_location=device)
+    ranker_root = ranker_art_root or (runs_root / "ranker")
+    ckpt = torch.load(ranker_root / "best.pt", map_location=device)
+    validate_ranker_feature_fingerprints(
+        ckpt,
+        teacher_root,
+        kg_enabled=bool(cfg.get("knowledge_graph", {}).get("enabled", False)),
+    )
     model.load_state_dict(ckpt["model"])
     model.eval()
-    return model, item_base, teacher_item
+    return model, item_text_base, item_kg_base, teacher_item
 
 
-def _expand_history_base(
-    item_base: np.ndarray, hist_idx: list[int], batch_size: int, device: torch.device
+def _expand_history_matrix(
+    matrix: np.ndarray, hist_idx: list[int], batch_size: int, device: torch.device
 ) -> tuple[torch.Tensor, torch.Tensor]:
     if hist_idx:
-        hist_np = item_base[np.asarray(hist_idx, dtype=np.int64)]
+        hist_np = matrix[np.asarray(hist_idx, dtype=np.int64)]
         hist = torch.tensor(hist_np, dtype=torch.float32, device=device).unsqueeze(0)
-        hist = hist.repeat(batch_size, 1, 1)
+        hist = hist.expand(batch_size, *hist.shape[1:])
         mask = torch.ones((batch_size, len(hist_idx)), dtype=torch.bool, device=device)
         return hist, mask
-    hist = torch.zeros((batch_size, 1, item_base.shape[1]), dtype=torch.float32, device=device)
+    hist = torch.zeros(
+        (batch_size, 1, *matrix.shape[1:]), dtype=torch.float32, device=device
+    )
     mask = torch.zeros((batch_size, 1), dtype=torch.bool, device=device)
     return hist, mask
 
@@ -208,7 +224,8 @@ def _evaluate_split(
     device: torch.device,
     device_str: str,
     model: DLRMStudent,
-    item_base: np.ndarray,
+    item_text_base: np.ndarray,
+    item_kg_base: np.ndarray,
     scaler: TemperatureScaler | None,
 ) -> dict[str, Any]:
     news = pd.read_parquet(proc_root / "news.parquet")
@@ -268,12 +285,10 @@ def _evaluate_split(
             cand_clicks_log1p = np.array(r["cand_item_clicks_log1p"], dtype=np.float32)
 
             hlen = float(r["history_len"])
-            dense = np.stack(
-                [np.full_like(cand_clicks_log1p, hlen), cand_clicks_log1p], axis=1
-            )
+            dense = build_ranker_dense_matrix(hlen, cand_clicks_log1p)
 
             logits = []
-            bs = 2048
+            bs = ranker_score_batch_size(cfg)
             for i in range(0, len(cand_news_idx), bs):
                 sl = slice(i, i + bs)
                 batch_size = len(cand_news_idx[sl])
@@ -291,11 +306,20 @@ def _evaluate_split(
                     cand_is_new[sl], dtype=torch.long, device=device
                 )
                 b_dense = torch.tensor(dense[sl], dtype=torch.float32, device=device)
-                b_item_base = torch.tensor(
-                    item_base[cand_news_idx[sl]], dtype=torch.float32, device=device
+                b_item_text = torch.tensor(
+                    item_text_base[cand_news_idx[sl]], dtype=torch.float32, device=device
                 )
-                b_hist_base, b_hist_mask = _expand_history_base(
-                    item_base=item_base,
+                b_item_kg = torch.tensor(
+                    item_kg_base[cand_news_idx[sl]], dtype=torch.float32, device=device
+                )
+                b_hist_text, b_hist_mask = _expand_history_matrix(
+                    matrix=item_text_base,
+                    hist_idx=hist_news_idx,
+                    batch_size=batch_size,
+                    device=device,
+                )
+                b_hist_kg, _ = _expand_history_matrix(
+                    matrix=item_kg_base,
                     hist_idx=hist_news_idx,
                     batch_size=batch_size,
                     device=device,
@@ -306,8 +330,12 @@ def _evaluate_split(
                     cat_idx=b_cat,
                     subcat_idx=b_sub,
                     dense=b_dense,
-                    item_base=b_item_base,
-                    history_item_base=b_hist_base,
+                    item_text_base=b_item_text,
+                    history_item_text_base=b_hist_text,
+                    item_kg_base=b_item_kg,
+                    history_item_kg_base=b_hist_kg,
+                    item_kg_mask=b_item_kg.norm(dim=-1) > 0.0,
+                    history_item_kg_mask=b_hist_kg.norm(dim=-1) > 0.0,
                     history_mask=b_hist_mask,
                     is_new_item=b_is_new,
                 )
@@ -412,19 +440,26 @@ def _evaluate_split(
     return out
 
 
-def run_evaluate(cfg: dict[str, Any]) -> None:
+def run_evaluate(
+    cfg: dict[str, Any],
+    ranker_art_root: Path | None = None,
+    eval_out_root: Path | None = None,
+) -> dict[str, Any]:
     ds = cfg["data"]["dataset_name"]
     proc_root = Path(cfg["data"]["processed_root"]) / ds
     runs_root = ensure_dir(Path("runs") / cfg["run_name"])
-    out_root = ensure_dir(runs_root / "eval")
+    out_root = ensure_dir(eval_out_root or (runs_root / "eval"))
 
     device_str = cfg["ranker"].get("device", "cuda")
     if device_str == "cuda" and not torch.cuda.is_available():
         device_str = "cpu"
     device = torch.device(device_str)
 
-    model, item_base, _ = _load_model(cfg, proc_root, runs_root, device)
-    calib_path = runs_root / "ranker" / "calibration.json"
+    ranker_root = ranker_art_root or (runs_root / "ranker")
+    model, item_text_base, item_kg_base, _ = _load_model(
+        cfg, proc_root, runs_root, device, ranker_art_root=ranker_root
+    )
+    calib_path = ranker_root / "calibration.json"
     scaler = TemperatureScaler.load(calib_path) if calib_path.exists() else None
     split_results = {}
     for split_name in _resolve_eval_splits(cfg):
@@ -437,6 +472,8 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
             device=device,
             device_str=device_str,
             model=model,
-            item_base=item_base,
+            item_text_base=item_text_base,
+            item_kg_base=item_kg_base,
             scaler=scaler,
         )
+    return split_results

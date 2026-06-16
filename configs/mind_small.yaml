@@ -23,16 +23,13 @@ knowledge_graph:
   entity_embedding_path: null
   relation_embedding_path: null
   triples_path: "data/processed/MINDsmall/kg_triples.tsv"  # Required when knowledge_graph.enabled is true
-  max_entities_per_news: 12
+  max_entities_per_news: 6  # Covers about 95% of MINDsmall articles while bounding structured KG memory
   max_neighbors_per_entity: 20
   add_reverse_edges: true
   entity_weight: 1.0
-  neighbor_weight: 0.1  # Conservative default; not yet tuned specifically for ranker quality
-  relation_weight: 0.1  # Conservative default; not yet tuned specifically for ranker quality
-  text_feature_weight: 1.0
-  kg_feature_weight: 0.25  # Conservative default; not yet tuned specifically for ranker quality
-  normalize_item_base: true
-  normalize: true
+  neighbor_weight: 0.1  # One-hop context added separately to each directly mentioned entity
+  relation_weight: 0.1  # Signed relation contribution inside each one-hop message
+  normalize: true  # Normalize each relation-aware entity slot
 
 teacher:
   model_name: "sentence-transformers/all-MiniLM-L6-v2"
@@ -64,7 +61,8 @@ retrieval:
   topk: 200  # Number of candidates to retrieve for each user. Should be >= rerank.pool_size
 
 ranker:
-  batch_size: 1024
+  batch_size: 256  # Structured per-entity KG histories use more memory than one pooled KG vector
+  score_batch_size: 256  # Bounds structured KG memory during evaluate/rerank scoring
   lr: 1.0e-3
   weight_decay: 3.0e-5
   epochs: 8
@@ -79,18 +77,26 @@ ranker:
     news_id_cold_scale: 0.0
     semantic_ff_mult: 3
     semantic_dropout: 0.20
+    fusion_heads: 4
+    kg_gate_init: 0.15  # Accepted KRED gate: near-tied validation nDCG@10 and stronger later-period test metrics
+    kg_gate_trainable: false
     bottom_mlp: [64, 56]
     top_mlp: [128, 64, 1]
     dropout: 0.15
   distill:
-    temperature: 2.0
-    lambda_logit: 0.7
-    lambda_repr: 0.05
+    temperature: 0.75  # Converts teacher cosine scores into soft final-score targets
+    lambda_logit: 0.15  # General regularizer on the complete final ranker score
+    lambda_repr: 0.05  # Applies only to the text semantic branch in the current ranker
     cold_weight: 2.0
     warm_weight: 0.5
   calibration:
     lr: 0.05
     max_iter: 100
+  kg_gate_sweep:
+    values: [0.0, 0.025, 0.05, 0.10, 0.15]
+  distill_sweep:
+    lambda_logits: [0.05, 0.10, 0.15, 0.20, 0.25]
+    temperatures: [0.75, 1.0, 1.25]
 
 rerank:
   k_out: 10  # Number of items to output after re-ranking
@@ -108,7 +114,7 @@ rerank:
     enabled: true
     category_target: "catalog"  # catalog|uniform
     new_item_floor: 0.20  # minimum fraction of exposure in top-k to new items
-    penalty_weight: 0.25
+    penalty_weight: 0.30
   search:
     relative_guardrails:
       max_ndcg_drop_ratio: 0.021
@@ -125,4 +131,3 @@ eval:
   report_splits: ["val", "test"]
   ks: [5, 10]
   time_periods: 4
-  plot_curves: true

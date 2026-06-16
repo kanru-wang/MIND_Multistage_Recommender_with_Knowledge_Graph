@@ -1,9 +1,13 @@
 {
   "validation_split_name": "val",
-  "best_val_auc": 0.6698429072171406,
-  "best_epoch": 5,
+  "best_val_auc": 0.6683953229011237,
+  "best_epoch": 1,
+  "best_kg_gate": 0.15000000596046448,
+  "distill_temperature": 0.75,
+  "lambda_logit": 0.15,
+  "lambda_repr": 0.05,
   "early_stopping_patience": 2,
   "early_stopping_min_delta": 1e-05,
   "stop_reason": "early_stopping",
-  "stopped_epoch": 7
+  "stopped_epoch": 3
 }

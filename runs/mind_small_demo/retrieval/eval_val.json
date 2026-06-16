@@ -34,25 +34,25 @@
       "recall_at_k": 0.062307077825811054,
       "n_impressions": 22854
     },
-    "impressions_with_clicked_category__sports": {
-      "recall_at_k": 0.03180019713412531,
-      "n_impressions": 18994
-    },
     "impressions_with_clicked_category__video": {
       "recall_at_k": 0.03519151723051073,
       "n_impressions": 2055
+    },
+    "impressions_with_clicked_category__sports": {
+      "recall_at_k": 0.03180019713412531,
+      "n_impressions": 18994
     },
     "impressions_with_clicked_category__autos": {
       "recall_at_k": 0.030942804114025356,
       "n_impressions": 1639
     },
-    "impressions_with_clicked_subcategory__baseball_mlb": {
-      "recall_at_k": 0.0333755312181708,
-      "n_impressions": 591
-    },
     "impressions_with_clicked_subcategory__science": {
       "recall_at_k": 0.010580420736670737,
       "n_impressions": 288
+    },
+    "impressions_with_clicked_subcategory__baseball_mlb": {
+      "recall_at_k": 0.0333755312181708,
+      "n_impressions": 591
     },
     "impressions_with_clicked_subcategory__autosclassics": {
       "recall_at_k": 0.03532763532763533,
@@ -78,13 +78,13 @@
       "recall_at_k": 0.030044302692048042,
       "n_impressions": 14756
     },
-    "impressions_with_clicked_subcategory__newscrime": {
-      "recall_at_k": 0.03164870110995029,
-      "n_impressions": 3058
-    },
     "impressions_with_clicked_subcategory__lifestylecelebstyle": {
       "recall_at_k": 0.057427016032543673,
       "n_impressions": 398
+    },
+    "impressions_with_clicked_subcategory__newscrime": {
+      "recall_at_k": 0.03164870110995029,
+      "n_impressions": 3058
     },
     "impressions_with_clicked_category__entertainment": {
       "recall_at_k": 0.1077790135098423,
@@ -134,17 +134,9 @@
       "recall_at_k": 0.03297545459166111,
       "n_impressions": 28898
     },
-    "impressions_with_clicked_category__health": {
-      "recall_at_k": 0.04343506194323705,
-      "n_impressions": 3013
-    },
     "impressions_with_clicked_category__finance": {
       "recall_at_k": 0.03248670074457476,
       "n_impressions": 2540
-    },
-    "impressions_with_clicked_category__tv": {
-      "recall_at_k": 0.046460236533521,
-      "n_impressions": 4266
     },
     "impressions_with_clicked_category__foodanddrink": {
       "recall_at_k": 0.07975658064706304,
@@ -154,21 +146,33 @@
       "recall_at_k": 0.030773277234079136,
       "n_impressions": 1910
     },
-    "impressions_with_clicked_subcategory__entertainment_celebrity": {
-      "recall_at_k": 0.206513530547309,
-      "n_impressions": 670
+    "impressions_with_clicked_category__tv": {
+      "recall_at_k": 0.046460236533521,
+      "n_impressions": 4266
+    },
+    "impressions_with_clicked_category__health": {
+      "recall_at_k": 0.04343506194323705,
+      "n_impressions": 3013
     },
     "impressions_with_clicked_subcategory__health_news": {
       "recall_at_k": 0.03647764372136132,
       "n_impressions": 1531
     },
-    "impressions_with_clicked_subcategory__lifestylebuzz": {
-      "recall_at_k": 0.021239907139283906,
-      "n_impressions": 2677
+    "impressions_with_clicked_subcategory__foodnews": {
+      "recall_at_k": 0.04656307571501915,
+      "n_impressions": 566
+    },
+    "impressions_with_clicked_subcategory__traveltips": {
+      "recall_at_k": 0.014279644789123462,
+      "n_impressions": 211
     },
     "impressions_with_clicked_subcategory__video": {
       "recall_at_k": 0.037208359680269795,
       "n_impressions": 89
+    },
+    "impressions_with_clicked_subcategory__lifestyleroyals": {
+      "recall_at_k": 0.13122505555426106,
+      "n_impressions": 5661
     },
     "impressions_with_clicked_subcategory__finance_companies": {
       "recall_at_k": 0.026368005746748253,
@@ -178,21 +182,17 @@
       "recall_at_k": 0.03525984722912101,
       "n_impressions": 1790
     },
-    "impressions_with_clicked_subcategory__foodnews": {
-      "recall_at_k": 0.04656307571501915,
-      "n_impressions": 566
+    "impressions_with_clicked_subcategory__lifestylebuzz": {
+      "recall_at_k": 0.021239907139283906,
+      "n_impressions": 2677
+    },
+    "impressions_with_clicked_subcategory__entertainment_celebrity": {
+      "recall_at_k": 0.206513530547309,
+      "n_impressions": 670
     },
     "impressions_with_clicked_subcategory__travelarticle": {
       "recall_at_k": 0.026102146716181808,
       "n_impressions": 171
-    },
-    "impressions_with_clicked_subcategory__traveltips": {
-      "recall_at_k": 0.014279644789123462,
-      "n_impressions": 211
-    },
-    "impressions_with_clicked_subcategory__lifestyleroyals": {
-      "recall_at_k": 0.13122505555426106,
-      "n_impressions": 5661
     },
     "impressions_with_clicked_subcategory__humor": {
       "recall_at_k": 0.11851486450933961,
@@ -250,13 +250,13 @@
       "recall_at_k": 0.03115049713424846,
       "n_impressions": 1192
     },
-    "impressions_with_clicked_subcategory__news": {
-      "recall_at_k": 0.021468699839486356,
-      "n_impressions": 89
-    },
     "impressions_with_clicked_subcategory__elections_2020_us": {
       "recall_at_k": 0.020390070921985814,
       "n_impressions": 47
+    },
+    "impressions_with_clicked_subcategory__news": {
+      "recall_at_k": 0.021468699839486356,
+      "n_impressions": 89
     },
     "impressions_with_clicked_subcategory__basketball_nba": {
       "recall_at_k": 0.02858105472213356,
@@ -266,25 +266,25 @@
       "recall_at_k": 0.05168890249535411,
       "n_impressions": 31
     },
-    "impressions_with_clicked_subcategory__voices": {
-      "recall_at_k": 0.029704474557415737,
-      "n_impressions": 1258
-    },
     "impressions_with_clicked_subcategory__nutrition": {
       "recall_at_k": 0.038582518966182325,
       "n_impressions": 404
+    },
+    "impressions_with_clicked_subcategory__voices": {
+      "recall_at_k": 0.029704474557415737,
+      "n_impressions": 1258
     },
     "impressions_with_clicked_subcategory__cma_awards": {
       "recall_at_k": 0.08811088354099104,
       "n_impressions": 279
     },
-    "impressions_with_clicked_subcategory__tv_celebrity": {
-      "recall_at_k": 0.052646992329298044,
-      "n_impressions": 2321
-    },
     "impressions_with_clicked_subcategory__internationaltravel": {
       "recall_at_k": 0.0501082251082251,
       "n_impressions": 70
+    },
+    "impressions_with_clicked_subcategory__tv_celebrity": {
+      "recall_at_k": 0.052646992329298044,
+      "n_impressions": 2321
     },
     "impressions_with_clicked_subcategory__medical": {
       "recall_at_k": 0.04468802833407294,
@@ -410,17 +410,13 @@
       "recall_at_k": 0.028897977923951948,
       "n_impressions": 231
     },
-    "impressions_with_clicked_subcategory__soccer_epl": {
-      "recall_at_k": 0.0,
-      "n_impressions": 1
-    },
     "impressions_with_clicked_subcategory__basketball_ncaa": {
       "recall_at_k": 0.030303030303030307,
       "n_impressions": 88
     },
-    "impressions_with_clicked_subcategory__factcheck": {
-      "recall_at_k": 0.03968253968253968,
-      "n_impressions": 12
+    "impressions_with_clicked_subcategory__soccer_epl": {
+      "recall_at_k": 0.0,
+      "n_impressions": 1
     },
     "impressions_with_clicked_subcategory__lifestylefashion": {
       "recall_at_k": 0.041666666666666664,
@@ -429,6 +425,10 @@
     "impressions_with_clicked_subcategory__lifestylecleaningandorganizing": {
       "recall_at_k": 0.0,
       "n_impressions": 7
+    },
+    "impressions_with_clicked_subcategory__factcheck": {
+      "recall_at_k": 0.03968253968253968,
+      "n_impressions": 12
     },
     "impressions_with_clicked_subcategory__autossuvs": {
       "recall_at_k": 0.19472789115646255,
@@ -478,11 +478,11 @@
       "recall_at_k": 0.01839080459770115,
       "n_impressions": 29
     },
-    "impressions_with_clicked_subcategory__outdoors": {
+    "impressions_with_clicked_subcategory__autosbuying": {
       "recall_at_k": 0.08333333333333333,
       "n_impressions": 3
     },
-    "impressions_with_clicked_subcategory__autosbuying": {
+    "impressions_with_clicked_subcategory__outdoors": {
       "recall_at_k": 0.08333333333333333,
       "n_impressions": 3
     },
@@ -558,13 +558,13 @@
       "recall_at_k": 0.01830409356725146,
       "n_impressions": 95
     },
-    "impressions_with_clicked_subcategory__lifestyledecor": {
-      "recall_at_k": 0.3333333333333333,
-      "n_impressions": 1
-    },
     "impressions_with_clicked_subcategory__lifestylehoroscope": {
       "recall_at_k": 0.09722222222222221,
       "n_impressions": 6
+    },
+    "impressions_with_clicked_subcategory__lifestyledecor": {
+      "recall_at_k": 0.3333333333333333,
+      "n_impressions": 1
     },
     "impressions_with_clicked_subcategory__peopleandplaces": {
       "recall_at_k": 0.0,

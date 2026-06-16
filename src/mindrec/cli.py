@@ -4,8 +4,11 @@ import argparse
 from pathlib import Path
 
 from mindrec.config import load_config
+from mindrec.pipeline.build_ranker_kg import run_build_ranker_kg
 from mindrec.pipeline.evaluate import run_evaluate
 from mindrec.pipeline.preprocess import run_preprocess
+from mindrec.pipeline.ranker_distill_sweep import run_ranker_distill_sweep
+from mindrec.pipeline.ranker_gate_sweep import run_ranker_kg_gate_sweep
 from mindrec.pipeline.ranker_train import run_train_ranker
 from mindrec.pipeline.rerank_eval import run_rerank_eval
 from mindrec.pipeline.rerank_search import run_rerank_search
@@ -51,6 +54,21 @@ def main() -> None:
         "train_ranker", help="Train DLRM student ranker with distillation"
     )
     _add_config_arg(p)
+    p = sub.add_parser(
+        "build_ranker_kg",
+        help="Rebuild ranker-only KG item features without retraining the text teacher",
+    )
+    _add_config_arg(p)
+    p = sub.add_parser(
+        "ranker_kg_gate_sweep",
+        help="Train and evaluate fixed KG-gate rankers using the validation split for selection",
+    )
+    _add_config_arg(p)
+    p = sub.add_parser(
+        "ranker_distill_sweep",
+        help="Tune final-logit distillation using validation nDCG@10 for selection",
+    )
+    _add_config_arg(p)
 
     p = sub.add_parser(
         "evaluate",
@@ -88,6 +106,15 @@ def main() -> None:
         return
     if args.cmd == "train_ranker":
         run_train_ranker(cfg)
+        return
+    if args.cmd == "build_ranker_kg":
+        run_build_ranker_kg(cfg)
+        return
+    if args.cmd == "ranker_kg_gate_sweep":
+        run_ranker_kg_gate_sweep(cfg)
+        return
+    if args.cmd == "ranker_distill_sweep":
+        run_ranker_distill_sweep(cfg)
         return
     if args.cmd == "evaluate":
         run_evaluate(cfg)

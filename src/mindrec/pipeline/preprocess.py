@@ -46,7 +46,6 @@ def build_pairs(
             if h in maps.news2idx and maps.news2idx[h] != 0
         ]
         cold_u = 1 if is_cold_user(hist, min_user_hist_for_warm) else 0
-
         cand_ids = list(r["cand_news_id"])
         labels = list(r["cand_label"])
         if not cand_ids:
@@ -113,7 +112,6 @@ def build_impressions_for_eval(
             if h in maps.news2idx and maps.news2idx[h] != 0
         ]
         cold_u = 1 if is_cold_user(hist, min_user_hist_for_warm) else 0
-
         cand_ids = list(r["cand_news_id"])
         labels = list(r["cand_label"])
         if not cand_ids:

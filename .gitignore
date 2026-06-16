@@ -17,6 +17,9 @@ venv/
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
 *.index
 *.npy
 *.pt
+runs/mind_small_demo/tuning/
+tests

@@ -10,6 +10,7 @@ import torch
 from tqdm import tqdm
 
 from mindrec.config import ensure_dir
+from mindrec.data.datasets import build_ranker_dense_matrix
 from mindrec.metrics.diversity import category_coverage, entropy, ild_from_similarity
 from mindrec.metrics.fairness import (
     catalog_target,
@@ -20,7 +21,8 @@ from mindrec.metrics.fairness import (
     uniform_target,
 )
 from mindrec.metrics.ranking import ndcg_at_k, ndcg_from_order, recall_at_k, recall_from_order
-from mindrec.pipeline.evaluate import _expand_history_base, _load_model
+from mindrec.pipeline.evaluate import _expand_history_matrix, _load_model
+from mindrec.pipeline.ranker_assets import ranker_score_batch_size
 from mindrec.rerank.greedy import build_news_meta, cosine_sim_matrix, greedy_rerank
 from mindrec.utils import (
     impression_artifact_path,
@@ -90,7 +92,9 @@ def _score_impressions(
     device: torch.device,
     split_name: str,
 ) -> tuple[list[ImpressionScores], dict[str, Any]]:
-    model, item_base, teacher_item = _load_model(cfg, proc_root, runs_root, device)
+    model, item_text_base, item_kg_base, teacher_item = _load_model(
+        cfg, proc_root, runs_root, device
+    )
     impr = pd.read_parquet(impression_artifact_path(proc_root, split_name))
 
     scored: list[ImpressionScores] = []
@@ -110,12 +114,10 @@ def _score_impressions(
             cand_is_new_arr = np.array(cand_is_new, dtype=np.int64)
             cand_clicks_log1p = np.array(r["cand_item_clicks_log1p"], dtype=np.float32)
             hlen = float(r["history_len"])
-            dense = np.stack(
-                [np.full_like(cand_clicks_log1p, hlen), cand_clicks_log1p], axis=1
-            )
+            dense = build_ranker_dense_matrix(hlen, cand_clicks_log1p)
 
             logits = []
-            bs = 2048
+            bs = ranker_score_batch_size(cfg)
             for i in range(0, len(cand_news_idx), bs):
                 sl = slice(i, i + bs)
                 batch_size = len(cand_news_idx[sl])
@@ -133,11 +135,20 @@ def _score_impressions(
                     cand_is_new_arr[sl], dtype=torch.long, device=device
                 )
                 b_dense = torch.tensor(dense[sl], dtype=torch.float32, device=device)
-                b_item_base = torch.tensor(
-                    item_base[cand_news_idx[sl]], dtype=torch.float32, device=device
+                b_item_text = torch.tensor(
+                    item_text_base[cand_news_idx[sl]], dtype=torch.float32, device=device
                 )
-                b_hist_base, b_hist_mask = _expand_history_base(
-                    item_base=item_base,
+                b_item_kg = torch.tensor(
+                    item_kg_base[cand_news_idx[sl]], dtype=torch.float32, device=device
+                )
+                b_hist_text, b_hist_mask = _expand_history_matrix(
+                    matrix=item_text_base,
+                    hist_idx=hist_news_idx,
+                    batch_size=batch_size,
+                    device=device,
+                )
+                b_hist_kg, _ = _expand_history_matrix(
+                    matrix=item_kg_base,
                     hist_idx=hist_news_idx,
                     batch_size=batch_size,
                     device=device,
@@ -148,8 +159,12 @@ def _score_impressions(
                     cat_idx=b_cat,
                     subcat_idx=b_sub,
                     dense=b_dense,
-                    item_base=b_item_base,
-                    history_item_base=b_hist_base,
+                    item_text_base=b_item_text,
+                    history_item_text_base=b_hist_text,
+                    item_kg_base=b_item_kg,
+                    history_item_kg_base=b_hist_kg,
+                    item_kg_mask=b_item_kg.norm(dim=-1) > 0.0,
+                    history_item_kg_mask=b_hist_kg.norm(dim=-1) > 0.0,
                     history_mask=b_hist_mask,
                     is_new_item=b_is_new,
                 )

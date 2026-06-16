@@ -4,7 +4,7 @@ This project implements a realistic recommender stack on the **Microsoft News Da
 - Preprocessing: prepare train/val/test data, click-count features, cold/new flags, impression-level eval data, and map IDs to indices.
 - Train **Teacher retrieval encoders** (text-based item encoder + history-based user encoder).
 - Build two Faiss ANN retrieval indexes: (1) for item embeddings from teacher, and (2) for item-base features. These indexes are used for hybrid candidate retrieval.
-- Train **Student ranker**, a lean DLRM-style sparse+dense model that narrows **hybrid retrieval** returned `topk` items to more relevant `pool_size` items. Alongside the usual DLRM-style ID embeddings, category/subcategory embeddings, and dense features, this student uses semantic and **Knowledge Graph embeddings**: it encodes the candidate's text-plus-KG item-base embedding and pools the clicked-history text-plus-KG item-base embeddings. Teacher **distillation** (logit + representation) from the text/history-based teacher helps those semantic branches learn a stronger user/item matching space than click labels alone, **improving cold user/item behavior where ID memorization is weak**.
+- Train **Student ranker**, a lean DLRM-style sparse+dense model that narrows **hybrid retrieval** returned `topk` items to more relevant `pool_size` items. Alongside the usual DLRM-style ID embeddings, category/subcategory embeddings, and dense features, this student has separate text and **Knowledge Graph** semantic branches. Representation distillation targets only the text branch, while final-logit distillation regularizes the complete ranker score.
 - **Re-ranking** enforcing a certain degree of item diversity, category/named-entity coverage, and position-weighted exposure fairness for categories/new-items. It further narrows `pool_size` items to `k_out` items.
 - Find the best set of reranking weights/penalties given constraints on metrics.
 - Extensive **evaluation**: ranking metrics, calibration, diversity, exposure fairness, and cold/new slices.
@@ -19,7 +19,7 @@ MIND is widely used as a benchmark for news recommendation, with impression logs
 Production design note: if a fresh batch of news arrives, for example from the last 15 minutes, the system would need fresh item-side representations. For each new article:
 - Run the sentence-transformer over text/title/abstract to produce the text-only retrieval `item_base` embedding.
 - Pass the text-only `item_base` through the teacher item encoder to produce `item_teacher_emb`.
-- Parse linked Wikidata entities and aggregate entity/relation/one-hop context features to produce the KG-enhanced `item_ranker_base` embedding.
+- Parse linked Wikidata entities and build relation-aware, one-hop-enriched entity slots for the separate KG ranker branch.
 - Mark as cold/new with `is_new_item = 1`, `item_clicks_log1p = 0`.
 - Add to both Faiss retrieval indexes: the teacher index (`item_teacher_emb`) and the text-only fallback index (`item_base`).
 
@@ -52,13 +52,14 @@ The current repo/CLI does not implement online index updates; it builds and writ
 - The training objective pushes each user vector closer to its clicked positive item and farther from sampled in-impression negatives and other in-batch positives.
 - At the end of `train_teacher`, the pipeline writes:
   - `item_base_emb.npy`: frozen text-only sentence-transformer feature for every news item, used by teacher training and retrieval.
-  - `item_ranker_base_emb.npy`: separate `[sentence-transformer text embedding ; KG entity/context embedding]` feature used by the student ranker
+  - `item_kg_base_emb.npy`: structured `[news, entity_slot, KG_dim]` relation-aware entity features used by the student ranker
   - `item_teacher_emb.npy`: the final teacher embedding for every news item
   - `user_teacher_emb.npy`: the final teacher embedding for each training user history
 - These files are then reused by later stages:
   - `build_index` builds the Faiss retrieval index from `item_teacher_emb.npy`
   - `eval_retrieval` uses `item_teacher_emb.npy` and the saved teacher model to encode held-out histories and search that index
-  - `train_ranker` loads `item_ranker_base_emb.npy` as student semantic input and uses `item_teacher_emb.npy` / `user_teacher_emb.npy` only as teacher supervision targets
+  - `train_ranker` loads text features from `item_base_emb.npy` and KG features from `item_kg_base_emb.npy`
+  - representation distillation targets only the text semantic branch using `item_teacher_emb.npy` and teacher user vectors computed from each batch's history
 
 ## Hybrid retrieval scoring
 
@@ -93,16 +94,22 @@ The student keeps a lighter semantic core than the teacher, but combines it with
 
 #### DLRM-style semantic additions
 - A classic DLRM usually combines sparse ID/category embeddings, dense numerical features, pairwise feature interactions, and a final top MLP. It usually does not include item text embeddings or user-history semantic embeddings directly; those are project-specific additions here.
-- In `DLRMStudent`, the candidate item's `item_ranker_base_emb.npy` vector is formed by concatenating its sentence-transformer text embedding with a KG feature vector. That KG vector aggregates the article's linked entity embeddings together with relation-aware one-hop neighbor context from the configured triples file. The candidate item's vector is projected into `item_sem`, and the corresponding clicked-history vectors are pooled/projected into `user_sem`. Both are mapped to the same `emb_dim` length as the other DLRM feature vectors.
-- These semantic vectors, plus `sem_fused`, are added to the DLRM feature list as extra feature vectors. They are then included in the pairwise dot-product interaction layer and concatenated into the final top MLP input.
+- In `DLRMStudent`, the candidate item's sentence-transformer text vector is projected into `item_text_sem`, and the clicked-history text vectors are pooled/projected into `user_text_sem`.
+- Separately, each candidate article keeps multiple relation-aware entity slots from `item_kg_base_emb.npy`. A simplified KRED-style encoder projects those slots and uses the article's own text semantic vector as an attention query to select relevant entities before producing `item_kg_sem`.
+- The same text-conditioned entity attention is applied independently to every clicked-history article before its article-level KG vectors are pooled into `user_kg_sem`. Explicit entity-slot and article masks keep missing KG representations exactly zero.
+- A bounded gate, configured by `ranker.dlrm.kg_gate_init`, weakens the normalized KG vectors before they enter the DLRM feature interactions. The current setting fixes it at `0.15`.
+- Set `ranker.dlrm.kg_gate_trainable = false` to hold that gate fixed. A fixed gate of `0.0` gives a controlled text-only ranker baseline while preserving the same DLRM architecture and input dimensions.
+- `sem_fused` uses only the text user/item semantic states. The gated KG vectors participate only as ordinary DLRM feature vectors in the pairwise interaction layer and final top MLP.
 
 #### Distillation representation
-- In `DLRMStudent.forward()`, the student representation used for distillation is `rep = [user_sem, item_sem, sem_fused]`.
-- `user_sem`: student semantic user vector from pooled click-history KG-enhanced item-base features
-- `item_sem`: student semantic item vector from the candidate item's KG-enhanced item-base feature
-- `sem_fused`: a lightweight attention-fusion summary that mixes the semantic user/item states with the structured query context
-- The teacher target is `concat(teacher_user_emb, teacher_item_emb)`. A projection head maps the student representation into the teacher space for representation distillation.
-- The teacher is semantic/history-based rather than mostly `user_id`/`news_id` memorization. Representation distillation therefore **encourages the student's semantic branch to learn a useful user/item space, especially when ID signals are weak for cold users or new items**.
+- In `DLRMStudent.forward()`, the student representation used for distillation is `rep = [user_text_sem, item_text_sem]`.
+- `user_text_sem`: student semantic user vector from pooled click-history text features
+- `item_text_sem`: student semantic item vector from the candidate item's text feature
+- `user_kg_sem` / `item_kg_sem`: KG semantic vectors used by the ranker, but not included in representation distillation
+- `sem_fused`: a lightweight attention-fusion summary that mixes only the text user/item semantic states with the structured query context
+- The teacher target is `concat(teacher_user_emb, teacher_item_emb)`. A projection head maps only the text-branch student representation into the teacher space for representation distillation.
+- The teacher is semantic/history-based rather than mostly `user_id`/`news_id` memorization. Representation distillation therefore encourages the text branch to learn a useful user/item space.
+- Separately, final-logit distillation compares the teacher's soft semantic user-item score with the student's complete final score. Because that student score includes text, KG, IDs, categories, and dense features, this acts as a general scorer regularizer rather than requiring the KG representation itself to imitate the text-only teacher.
 - If the ranker were trained without distillation, its loss would reduce to the supervised click-label objective:
 ```python
 loss = binary_cross_entropy_with_logits(student_logits, click_label)
@@ -117,14 +124,16 @@ loss = binary_cross_entropy_with_logits(student_logits, click_label)
 
 | Teacher block | What it does | Student replacement | Key difference |
 |---|---|---|---|
-| Frozen text-only item-base input | Base text semantics for each news item | KG-enhanced `item_ranker_base_emb.npy` input | Retrieval stays text-only; the ranker receives extra entity/relation/neighbor context |
+| Frozen text-only item-base input | Base text semantics for each news item | Text branch from `item_base_emb.npy` plus separate KG branch from `item_kg_base_emb.npy` | Retrieval stays text-only; KG is a separate ranker feature group |
 | Teacher semantic item encoder | Refines each item into the teacher semantic space | Smaller student semantic item encoder | Student semantic dimension is much smaller than the teacher space |
 | Teacher sequence-aware user encoder | Contextualizes clicked history items with attention before pooling | Cheaper history aggregation path | Student uses a lighter history refinement and aggregation path |
 | Teacher attention pooling over history | Builds one semantic user vector from clicked history | Mean-style pooled semantic user path | Student pooling is cheaper and less sequence-aware |
-| Teacher item embedding | Semantic representation of the candidate item | `item_sem` | Student item representation is trained to approximate teacher behavior |
-| Teacher user embedding | Semantic representation of the current user history | `user_sem` | Student user representation is cheaper to compute |
+| Teacher item embedding | Semantic representation of the candidate item | `item_text_sem` | Text item representation is trained to approximate teacher behavior |
+| Teacher user embedding | Semantic representation of the current user history | `user_text_sem` | Text user representation is cheaper to compute |
 | Teacher cosine-style user-item scorer | Measures semantic compatibility between user and item | Student top MLP ranker | Student scoring uses richer ranking signals beyond pure semantic similarity |
-| Teacher representation target | Provides a semantic supervision target for distillation | `rep = [user_sem, item_sem, sem_fused]` plus projection head | Student and teacher representations have different shapes and meanings |
+| Teacher soft score | Provides general final-score regularization | Complete student final logit | The gradient reaches the complete scorer, but no individual KG representation is forced to match a teacher representation |
+| Teacher representation target | Provides a semantic supervision target for distillation | `rep = [user_text_sem, item_text_sem]` plus projection head | KG semantic vectors are not representation-distilled |
+| No direct teacher counterpart | None | gated `user_kg_sem` / `item_kg_sem` | Available KG is learned through click labels and general final-score distillation; it is not representation-distilled |
 | No direct teacher counterpart | None | `sem_fused` | Student adds an attention-fusion summary conditioned on query context |
 | No direct teacher counterpart | None | `user_id` / `news_id` branches | Student adds collaborative-style memorization signals |
 | No direct teacher counterpart | None | category / subcategory embeddings | Student adds structured metadata signals |
@@ -260,12 +269,21 @@ When `knowledge_graph.enabled: true`, the model also needs to use `entity_embedd
 - `WikidataId` is the bridge between `news.tsv` and `entity_embedding.vec`. During the `train_teacher` command, if an article's title or abstract entity annotation contains a `WikidataId`, the KG feature builder looks up the row with that ID in `entity_embedding.vec`.
 - A **knowledge-graph triple** is a directed fact written as `(head entity, relation, tail entity)`. For example, `(Q76, P31, Q5)` means that entity `Q76` has relation `P31` to entity `Q5`. In a one-hop lookup, an entity mentioned by an article is the head or tail of a triple, and the entity at the other end is its neighbor.
 
-The implemented approach follows the classic KG recommendation pattern:
+The implemented approach is a simplified KRED-style KG encoder:
 - Parse linked `WikidataId` values from each article's title/abstract entity columns.
 - Fetch those entity vectors from `entity_embedding.vec`.
-- Fetch one-hop neighbors from the required triples file using triples `(entity, relation, entity)`, combine neighbor entity vectors with the relation vector from `relation_embedding.vec`, and aggregate the messages into a context vector.
-- Concatenate the final KG vector with the sentence-transformer text vector to form `item_ranker_base_emb.npy`.
-- Feed this KG-enhanced item base into the student ranker.
+- Fetch one-hop neighbors from the required triples file using triples `(head, relation, tail)`. Each one-hop message combines the neighbor embedding with a signed relation embedding so incoming and outgoing uses of the same relation remain distinguishable.
+- For each directly mentioned entity, aggregate its relation-aware one-hop messages into that entity's own enriched slot instead of immediately averaging the whole article's graph context.
+- Save the structured entity-slot tensor as `item_kg_base_emb.npy`.
+- In the ranker, use the article text representation to attend over its enriched entity slots. The resulting article-level KG representation is trained through click labels and general final-score distillation as a separate DLRM feature group, but it is not representation-distilled.
+
+After changing only KG feature construction, rebuild the ranker KG matrix without retraining the text-only teacher or retrieval indexes:
+
+```powershell
+python -m mindrec.cli build_ranker_kg --config configs/mind_small.yaml
+```
+
+The ranker validates the KG artifact metadata against the active KG configuration. If entity limits, neighbor limits, reverse-edge behavior, weights, or normalization change, rebuild the KG artifact before training.
 
 #### Building a triples file
 
@@ -392,10 +410,36 @@ It writes `runs/<run_name>/retrieval/sweep.json` with all tested settings plus t
 
 ### 3.3 Train student DLRM ranker with distillation
 ```bash
+python -m mindrec.cli preprocess --config configs/mind_small.yaml
 python -m mindrec.cli train_ranker --config configs/mind_small.yaml
 ```
 
-After training the ranker on `train_pairs.parquet`, train_ranker fits a temperature scaler on `val_pairs.parquet`. It tunes a single positive scalar `T` in `sigmoid(logit / T)` against held-out labels, improving probability **calibration** without changing ranking order.
+After training the ranker on `train_pairs.parquet`, `train_ranker` fits a temperature scaler on the sampled `val_pairs.parquet`. It tunes a single positive scalar `T` in `sigmoid(logit / T)` without changing ranking order. Because full-impression evaluation has a different candidate/label distribution, always check the reported raw and calibrated Brier/ECE values; calibration fitted on sampled pairs is not guaranteed to improve full-impression calibration.
+
+`ranker.score_batch_size` independently bounds memory use during ranker evaluation and reranker scoring. Structured entity-slot histories are substantially larger than the previous pooled KG vectors, so this should usually remain close to the training batch size.
+
+To compare controlled fixed KG strengths:
+
+```powershell
+python -m mindrec.cli ranker_kg_gate_sweep --config configs/mind_small.yaml
+```
+
+The command trains and evaluates every value in `ranker.kg_gate_sweep.values`, keeps each run under `runs/<run_name>/tuning/kg_gate_fixed/gate_<value>/`, and writes `sweep.json`. The best gate is selected using validation `nDCG@10`; test metrics are reported but are not used for selection.
+
+To tune the strength and softness of general final-logit distillation while
+keeping the accepted KG architecture and gate fixed:
+
+```powershell
+python -m mindrec.cli ranker_distill_sweep --config configs/mind_small.yaml
+```
+
+The command evaluates the Cartesian product of
+`ranker.distill_sweep.lambda_logits` and
+`ranker.distill_sweep.temperatures`, while holding
+`ranker.distill.lambda_repr` fixed. Each trial is stored under
+`runs/<run_name>/tuning/distill_final_logit/`. The best setting is selected
+strictly by validation `nDCG@10`; test metrics are included only as a
+generalization diagnostic.
 
 ### 3.4 Evaluate ranker + reranker (metrics + slices)
 ```bash
@@ -480,7 +524,7 @@ The current selected setting is:
 - `novelty_weight=0.05`
 - `coverage_weight=0.075`
 - `novelty_sim=teacher_cosine`
-- `fairness.penalty_weight=0.25`
+- `fairness.penalty_weight=0.30`
 - `fairness.new_item_floor=0.20`
 
 The search writes its summary to `runs/<run_name>/eval/rerank_search.json`.
@@ -489,6 +533,8 @@ Artifacts go to `runs/<run_name>/`.
 Training logs are written to `runs/<run_name>/teacher/epochs.json` and `runs/<run_name>/ranker/epochs.json`.
 
 ### 3.6 Last completed demo results (`runs/mind_small_demo`)
+
+The numbers below are from the current text-only retrieval plus KRED-style KG ranker pipeline.
 
 Teacher retrieval:
 - Current retrieval setup is text-only hybrid retrieval:
@@ -505,9 +551,9 @@ Teacher retrieval:
 - Rejected experiment: adding category/subcategory prefixes to the teacher text input improved Teacher retrieval validation `Recall@200`, but hurt downstream Student ranker quality, so the default remains `teacher.text.include_category_prefix = false`.
 
 Student ranker:
-- Current semantic input is `item_ranker_base_emb.npy`, a `484`-dimensional text-plus-KG vector:
-  - text dimension: `384`
-  - KG dimension: `100`
+- Current semantic input uses two separate matrices:
+  - `item_base_emb.npy`: `384`-dimensional sentence-transformer text input for the distilled text branch
+  - `item_kg_base_emb.npy`: `[max_entities_per_news, 100]` relation-aware entity slots for each article; text-conditioned attention produces the article KG vector used by the complete ranker scorer
   - `knowledge_graph.enabled = true`
   - the teacher and retrieval indexes remain text-only
 - Current semantic settings:
@@ -515,60 +561,63 @@ Student ranker:
   - `semantic_dropout=0.20`
   - `dropout=0.15`
   - `weight_decay=3.0e-5`
+  - `kg_gate_init=0.15`
+  - `distill.temperature=0.75`
+  - `distill.lambda_logit=0.15`
+  - `distill.lambda_repr=0.05`
   - `news_id_warm_scale=1.0`
   - `news_id_cold_scale=0.0`
 - The `news_id_*_scale` settings control only the learned `news_id` embedding branch in the DLRM ranker.
   Warm items keep their ID embedding contribution, while **new/cold items get that branch zeroed out** and are scored relying on semantic, category/subcategory, user, and dense features instead.
   new/cold items are found during preprocessing from training (click counts under the `min_item_train_clicks_for_warm` limit).
-- Best ranker epoch: `5`
+- Best ranker epoch: `1`
 - Student ranker validation:
-  - `AUC = 0.662502`
-  - `MRR = 0.371160`
-  - `nDCG@5 = 0.356072`
-  - `nDCG@10 = 0.419516`
-  - `Recall@10 = 0.685537`
+  - `AUC = 0.661867`
+  - `MRR = 0.370356`
+  - `nDCG@5 = 0.353482`
+  - `nDCG@10 = 0.415184`
+  - `Recall@10 = 0.674316`
 - Student ranker test:
-  - `AUC = 0.661939`
-  - `MRR = 0.358905`
-  - `nDCG@5 = 0.346308`
-  - `nDCG@10 = 0.405037`
-  - `Recall@10 = 0.656618`
+  - `AUC = 0.654816`
+  - `MRR = 0.348304`
+  - `nDCG@5 = 0.332940`
+  - `nDCG@10 = 0.392341`
+  - `Recall@10 = 0.640532`
 - calibration on test changed:
-  - `Brier: 0.138993 -> 0.073153`
-  - `ECE@15: 0.314986 -> 0.174863`
+  - `Brier: 0.075886 -> 0.062743`
+  - `ECE@15: 0.184654 -> 0.142282`
 
 Search summary:
 - `best_feasible` is the setting that has the highest-utility and is also feasible
 - Current validation baseline ranker before reranking:
-  - `nDCG@10 = 0.419516`
-  - `Recall@10 = 0.685537`
-  - `category_coverage@10 = 5.341723`
-  - `fairness_kl_pool = 0.418917`
-  - `new_item_exposure_frac = 0.560894`
+  - `nDCG@10 = 0.415184`
+  - `Recall@10 = 0.674316`
+  - `category_coverage@10 = 4.989030`
+  - `fairness_kl_pool = 0.442832`
+  - `new_item_exposure_frac = 0.567963`
 - Current validation `best_feasible`:
-  - `nDCG@10 = 0.411298`
-  - `Recall@10 = 0.674537`
-  - `category_coverage@10 = 6.059363`
-  - `fairness_kl_pool = 0.317624`
-  - `new_item_exposure_frac = 0.576442`
-  - relative `nDCG@10` drop: `1.959%`
-- `n_feasible = 16` under the current guardrails
-- `best_scalar_utility` is a more aggressive diversity/fairness point, but it is not feasible under the current guardrails
+  - `nDCG@10 = 0.411044`
+  - `Recall@10 = 0.671606`
+  - `category_coverage@10 = 5.388322`
+  - `fairness_kl_pool = 0.378925`
+  - `new_item_exposure_frac = 0.580714`
+  - relative `nDCG@10` drop: `0.997%`
+- `n_feasible = 23` under the current guardrails
 
 Final reranker test report:
 - Baseline ranker:
-  - `nDCG@10 = 0.405037`
-  - `Recall@10 = 0.656618`
-  - `category_coverage@10 = 5.140319`
-  - `fairness_kl_pool = 0.421459`
-  - `new_item_exposure_frac = 0.774352`
+  - `nDCG@10 = 0.392341`
+  - `Recall@10 = 0.640532`
+  - `category_coverage@10 = 4.857563`
+  - `fairness_kl_pool = 0.441752`
+  - `new_item_exposure_frac = 0.774823`
 - Reranked output:
-  - `nDCG@10 = 0.396905`
-  - `Recall@10 = 0.646227`
-  - `category_coverage@10 = 5.999590`
-  - `fairness_kl_pool = 0.295704`
-  - `new_item_exposure_frac = 0.786196`
-- The reranker trades approximately `2.01%` relative `nDCG@10` for better category coverage, fairness KL, and new-item exposure.
+  - `nDCG@10 = 0.390285`
+  - `Recall@10 = 0.637306`
+  - `category_coverage@10 = 5.275784`
+  - `fairness_kl_pool = 0.369262`
+  - `new_item_exposure_frac = 0.783522`
+- The reranker trades approximately `0.52%` relative `nDCG@10` for better category coverage, fairness KL, and new-item exposure.
 
 ---
 

@@ -12,11 +12,15 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from mindrec.config import ensure_dir
-from mindrec.data.datasets import PairDataset, collate_batch
+from mindrec.data.datasets import RANKER_DENSE_COLUMNS, PairDataset, collate_batch
 from mindrec.data.featurize import IdMaps
 from mindrec.models.calibration import fit_temperature_scaler
 from mindrec.models.dlrm import DLRMStudent
 from mindrec.models.teacher import TeacherTwoTower
+from mindrec.pipeline.ranker_assets import (
+    load_ranker_item_features,
+    ranker_feature_fingerprints,
+)
 from mindrec.utils import pair_artifact_path, save_json, set_seed, to_device, validation_split_name
 
 
@@ -29,7 +33,24 @@ class StudentProjHead(nn.Module):
         return self.proj(x)
 
 
-def run_train_ranker(cfg: dict[str, Any]) -> None:
+def final_logit_distillation_loss(
+    student_logits: torch.Tensor,
+    teacher_user: torch.Tensor,
+    teacher_item: torch.Tensor,
+    temperature: float,
+) -> torch.Tensor:
+    if temperature <= 0.0:
+        raise ValueError("distillation temperature must be positive")
+    teacher_logit = (teacher_user * teacher_item).sum(dim=1)
+    teacher_target = torch.sigmoid(teacher_logit / temperature).detach()
+    return nn.functional.binary_cross_entropy_with_logits(
+        student_logits, teacher_target, reduction="none"
+    )
+
+
+def run_train_ranker(
+    cfg: dict[str, Any], ranker_art_root: Path | None = None
+) -> None:
     seed = int(cfg["data"].get("sub_sample", {}).get("seed", 13))
     set_seed(seed)
 
@@ -41,7 +62,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     val_split = validation_split_name(cfg)
     pairs_val = pd.read_parquet(pair_artifact_path(proc_root, val_split))
 
-    dense_cols = ["history_len", "item_clicks_log1p"]
+    dense_cols = list(RANKER_DENSE_COLUMNS)
     train_ds = PairDataset(pairs_train, dense_cols=dense_cols)
     val_ds = PairDataset(pairs_val, dense_cols=dense_cols)
 
@@ -51,20 +72,23 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     device = torch.device(device_str)
 
     runs_root = ensure_dir(Path("runs") / cfg["run_name"])
-    art_root = ensure_dir(runs_root / "ranker")
+    art_root = ensure_dir(ranker_art_root or (runs_root / "ranker"))
 
-    ranker_base_name = (
-        "item_ranker_base_emb.npy"
-        if bool(cfg.get("knowledge_graph", {}).get("enabled", False))
-        else "item_base_emb.npy"
+    teacher_root = runs_root / "teacher"
+    item_text_base, item_kg_base = load_ranker_item_features(cfg, teacher_root)
+    feature_fingerprints = ranker_feature_fingerprints(
+        teacher_root,
+        kg_enabled=bool(cfg.get("knowledge_graph", {}).get("enabled", False)),
     )
-    ranker_base_path = runs_root / "teacher" / ranker_base_name
-    item_base = np.load(ranker_base_path)
-    teacher_item = np.load(runs_root / "teacher" / "item_teacher_emb.npy")
-    item_base_tensor = torch.tensor(item_base, dtype=torch.float32, device=device)
+    teacher_item = np.load(teacher_root / "item_teacher_emb.npy")
+    item_text_tensor = torch.tensor(item_text_base, dtype=torch.float32, device=device)
+    item_kg_tensor = torch.tensor(item_kg_base, dtype=torch.float32, device=device)
+    item_kg_mask_tensor = torch.tensor(
+        np.linalg.norm(item_kg_base, axis=-1) > 0.0, dtype=torch.bool, device=device
+    )
     teacher_item_tensor = torch.tensor(teacher_item, dtype=torch.float32, device=device)
     teacher_dim = int(teacher_item.shape[1])
-    teacher_ckpt = torch.load(runs_root / "teacher" / "model.pt", map_location=device)
+    teacher_ckpt = torch.load(teacher_root / "model.pt", map_location=device)
     teacher_model = TeacherTwoTower(
         item_dim=int(teacher_ckpt["item_dim"]),
         hidden_dim=int(teacher_ckpt["hidden_dim"]),
@@ -87,23 +111,26 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         n_cats=n_cats,
         n_subcats=n_subcats,
         dense_dim=len(dense_cols),
-        item_base_dim=int(item_base.shape[1]),
+        item_text_dim=int(item_text_base.shape[1]),
+        item_kg_dim=int(item_kg_base.shape[-1]),
         emb_dim=int(dlrm_cfg["emb_dim"]),
         id_emb_dim=int(dlrm_cfg.get("id_emb_dim", dlrm_cfg["emb_dim"])),
         bottom_mlp=[int(x) for x in dlrm_cfg["bottom_mlp"]],
         top_mlp=[int(x) for x in dlrm_cfg["top_mlp"]],
         dropout=float(dlrm_cfg.get("dropout", 0.0)),
-        fusion_heads=4,
+        fusion_heads=int(dlrm_cfg.get("fusion_heads", 4)),
         semantic_ff_mult=int(dlrm_cfg.get("semantic_ff_mult", 1)),
         semantic_dropout=float(
             dlrm_cfg.get("semantic_dropout", dlrm_cfg.get("dropout", 0.0))
         ),
         news_id_warm_scale=float(dlrm_cfg.get("news_id_warm_scale", 1.0)),
         news_id_cold_scale=float(dlrm_cfg.get("news_id_cold_scale", 1.0)),
+        kg_gate_init=float(dlrm_cfg.get("kg_gate_init", 0.15)),
+        kg_gate_trainable=bool(dlrm_cfg.get("kg_gate_trainable", False)),
     ).to(device)
 
     emb_dim = int(dlrm_cfg["emb_dim"])
-    student_repr_dim = 3 * emb_dim
+    student_repr_dim = 2 * emb_dim
     teacher_repr_dim = 2 * teacher_dim
     proj = StudentProjHead(student_repr_dim, teacher_repr_dim).to(device)
 
@@ -122,11 +149,15 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     )
 
     dist_cfg = cfg["ranker"]["distill"]
-    temp = float(dist_cfg.get("temperature", 2.0))
-    lam_logit = float(dist_cfg.get("lambda_logit", 1.0))
-    lam_repr = float(dist_cfg.get("lambda_repr", 0.1))
+    distill_temperature = float(dist_cfg.get("temperature", 2.0))
+    lam_logit = float(dist_cfg.get("lambda_logit", 0.7))
+    lam_repr = float(dist_cfg.get("lambda_repr", 0.05))
+    if distill_temperature <= 0.0:
+        raise ValueError("ranker.distill.temperature must be positive")
+    if lam_logit < 0.0 or lam_repr < 0.0:
+        raise ValueError("ranker distillation weights must be non-negative")
     w_cold = float(dist_cfg.get("cold_weight", 2.0))
-    w_warm = float(dist_cfg.get("warm_weight", 0.3))
+    w_warm = float(dist_cfg.get("warm_weight", 0.5))
     es_cfg = dict(cfg["ranker"].get("early_stopping", {}))
     es_patience = int(es_cfg.get("patience", 2))
     es_min_delta = float(es_cfg.get("min_delta", 1.0e-4))
@@ -135,6 +166,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
 
     best_auc = -1.0
     best_epoch = 0
+    best_kg_gate = 0.0
     epochs_without_improvement = 0
     stop_reason = "max_epochs"
     epoch_metrics: list[dict[str, float | int]] = []
@@ -142,10 +174,16 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         model.train()
         proj.train()
         losses = []
+        rank_losses = []
+        logit_losses = []
+        repr_losses = []
+        distill_losses = []
         for batch in tqdm(train_loader, desc=f"Train ep {ep}"):
             batch = to_device(batch, device)
-            item_base_batch = item_base_tensor[batch["news_idx"]]
-            hist_base_batch = item_base_tensor[batch["hist_news_idx"]]
+            item_text_batch = item_text_tensor[batch["news_idx"]]
+            hist_text_batch = item_text_tensor[batch["hist_news_idx"]]
+            item_kg_batch = item_kg_tensor[batch["news_idx"]]
+            hist_kg_batch = item_kg_tensor[batch["hist_news_idx"]]
             has_hist = batch["hist_mask"].any(dim=1)
             with torch.no_grad():
                 tu = torch.zeros(
@@ -166,8 +204,12 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                 cat_idx=batch["cat_idx"],
                 subcat_idx=batch["subcat_idx"],
                 dense=batch["dense"],
-                item_base=item_base_batch,
-                history_item_base=hist_base_batch,
+                item_text_base=item_text_batch,
+                history_item_text_base=hist_text_batch,
+                item_kg_base=item_kg_batch,
+                history_item_kg_base=hist_kg_batch,
+                item_kg_mask=item_kg_mask_tensor[batch["news_idx"]],
+                history_item_kg_mask=item_kg_mask_tensor[batch["hist_news_idx"]],
                 history_mask=batch["hist_mask"],
                 is_new_item=batch["is_new_item"],
                 return_repr=True,
@@ -175,11 +217,14 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             y = batch["label"]
             loss_rank = nn.functional.binary_cross_entropy_with_logits(logits, y)
 
-            # teacher logit as cosine / inner product (embeddings are normalized)
-            tlogit = (tu * ti).sum(dim=1)
-            target = torch.sigmoid(tlogit / temp)
-            loss_logit = nn.functional.binary_cross_entropy_with_logits(
-                logits, target, reduction="none"
+            # This soft target regularizes the complete final scorer. It does
+            # not require any individual student feature branch to imitate a
+            # teacher representation.
+            loss_logit = final_logit_distillation_loss(
+                student_logits=logits,
+                teacher_user=tu,
+                teacher_item=ti,
+                temperature=distill_temperature,
             )
 
             t_repr = torch.cat([tu, ti], dim=1)
@@ -193,7 +238,12 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             w = w * has_hist.float()
             w = w.detach()
 
-            distill_loss = (w * (lam_logit * loss_logit + lam_repr * loss_repr)).mean()
+            weighted_logit_loss = (w * loss_logit).mean()
+            weighted_repr_loss = (w * loss_repr).mean()
+            distill_loss = (
+                lam_logit * weighted_logit_loss
+                + lam_repr * weighted_repr_loss
+            )
             loss = loss_rank + distill_loss
 
             opt.zero_grad()
@@ -203,6 +253,10 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             )
             opt.step()
             losses.append(float(loss.item()))
+            rank_losses.append(float(loss_rank.item()))
+            logit_losses.append(float(weighted_logit_loss.item()))
+            repr_losses.append(float(weighted_repr_loss.item()))
+            distill_losses.append(float(distill_loss.item()))
 
         # Validation AUC on the split returned by validation_split_name(cfg).
         model.eval()
@@ -218,8 +272,12 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                     cat_idx=batch["cat_idx"],
                     subcat_idx=batch["subcat_idx"],
                     dense=batch["dense"],
-                    item_base=item_base_tensor[batch["news_idx"]],
-                    history_item_base=item_base_tensor[batch["hist_news_idx"]],
+                    item_text_base=item_text_tensor[batch["news_idx"]],
+                    history_item_text_base=item_text_tensor[batch["hist_news_idx"]],
+                    item_kg_base=item_kg_tensor[batch["news_idx"]],
+                    history_item_kg_base=item_kg_tensor[batch["hist_news_idx"]],
+                    item_kg_mask=item_kg_mask_tensor[batch["news_idx"]],
+                    history_item_kg_mask=item_kg_mask_tensor[batch["hist_news_idx"]],
                     history_mask=batch["hist_mask"],
                     is_new_item=batch["is_new_item"],
                     return_repr=False,
@@ -235,7 +293,24 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             {
                 "epoch": ep,
                 "train_loss_mean": float(np.mean(losses) if losses else 0.0),
+                "train_rank_loss_mean": float(
+                    np.mean(rank_losses) if rank_losses else 0.0
+                ),
+                "train_logit_distill_loss_mean": float(
+                    np.mean(logit_losses) if logit_losses else 0.0
+                ),
+                "train_repr_distill_loss_mean": float(
+                    np.mean(repr_losses) if repr_losses else 0.0
+                ),
+                "train_distill_loss_mean": float(
+                    np.mean(distill_losses) if distill_losses else 0.0
+                ),
                 "val_auc": auc,
+                "kg_gate": (
+                    float(model.kg_gate().detach().cpu().item())
+                    if model.has_kg
+                    else 0.0
+                ),
             }
         )
         save_json(art_root / "epochs.json", epoch_metrics)
@@ -245,6 +320,11 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         if improved:
             best_auc = auc
             best_epoch = ep
+            best_kg_gate = (
+                float(model.kg_gate().detach().cpu().item())
+                if model.has_kg
+                else 0.0
+            )
             torch.save(
                 {
                     "model": model.state_dict(),
@@ -252,6 +332,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                     "cfg": cfg,
                     "epoch": ep,
                     "val_auc": auc,
+                    "feature_fingerprints": feature_fingerprints,
                 },
                 art_root / "best.pt",
             )
@@ -270,6 +351,10 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             "validation_split_name": val_split,
             "best_val_auc": best_auc,
             "best_epoch": best_epoch,
+            "best_kg_gate": best_kg_gate,
+            "distill_temperature": distill_temperature,
+            "lambda_logit": lam_logit,
+            "lambda_repr": lam_repr,
             "early_stopping_patience": es_patience,
             "early_stopping_min_delta": es_min_delta,
             "stop_reason": stop_reason,
@@ -293,8 +378,12 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                 cat_idx=batch["cat_idx"],
                 subcat_idx=batch["subcat_idx"],
                 dense=batch["dense"],
-                item_base=item_base_tensor[batch["news_idx"]],
-                history_item_base=item_base_tensor[batch["hist_news_idx"]],
+                item_text_base=item_text_tensor[batch["news_idx"]],
+                history_item_text_base=item_text_tensor[batch["hist_news_idx"]],
+                item_kg_base=item_kg_tensor[batch["news_idx"]],
+                history_item_kg_base=item_kg_tensor[batch["hist_news_idx"]],
+                item_kg_mask=item_kg_mask_tensor[batch["news_idx"]],
+                history_item_kg_mask=item_kg_mask_tensor[batch["hist_news_idx"]],
                 history_mask=batch["hist_mask"],
                 is_new_item=batch["is_new_item"],
                 return_repr=False,

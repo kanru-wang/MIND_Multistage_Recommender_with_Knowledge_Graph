@@ -127,7 +127,7 @@ def _format_paths(paths: list[Path]) -> str | list[str] | None:
     return [str(path) for path in paths]
 
 
-def build_news_kg_feature_matrix(
+def build_news_kg_entity_matrix(
     news: pd.DataFrame,
     entity_embeddings: dict[str, np.ndarray],
     relation_embeddings: dict[str, np.ndarray] | None = None,
@@ -140,10 +140,12 @@ def build_news_kg_feature_matrix(
 ) -> tuple[np.ndarray, dict[str, Any]]:
     if not entity_embeddings:
         raise ValueError("entity_embeddings must not be empty")
+    if max_entities_per_news <= 0:
+        raise ValueError("max_entities_per_news must be positive")
 
     dim = int(next(iter(entity_embeddings.values())).shape[0])
     n_items = int(news["news_idx"].max()) + 1
-    features = np.zeros((n_items, dim), dtype=np.float32)
+    features = np.zeros((n_items, max_entities_per_news, dim), dtype=np.float32)
     relation_embeddings = relation_embeddings or {}
     adjacency = adjacency or {}
 
@@ -159,22 +161,22 @@ def build_news_kg_feature_matrix(
         entity_ids = parse_wikidata_ids(
             getattr(row, "title_entities", ""),
             getattr(row, "abstract_entities", ""),
-        )[:max_entities_per_news]
+        )
         if entity_ids:
             n_with_entities += 1
             n_entity_mentions += len(entity_ids)
 
-        entity_vecs = [
-            entity_embeddings[entity_id]
-            for entity_id in entity_ids
-            if entity_id in entity_embeddings
-        ]
-        if entity_vecs:
+        usable_entity_ids = [
+            entity_id for entity_id in entity_ids if entity_id in entity_embeddings
+        ][:max_entities_per_news]
+        if usable_entity_ids:
             n_with_entity_vectors += 1
-            n_entity_vectors += len(entity_vecs)
+            n_entity_vectors += len(usable_entity_ids)
 
-        neighbor_messages: list[np.ndarray] = []
-        for entity_id in entity_ids:
+        item_has_neighbors = False
+        for slot_idx, entity_id in enumerate(usable_entity_ids):
+            entity_vec = entity_embeddings[entity_id]
+            neighbor_messages: list[np.ndarray] = []
             for edge in adjacency.get(entity_id, []):
                 neighbor_vec = entity_embeddings.get(edge.neighbor_id)
                 if neighbor_vec is None:
@@ -183,28 +185,30 @@ def build_news_kg_feature_matrix(
                 if relation_vec is None:
                     msg = neighbor_vec
                 else:
+                    # Keep relation direction in the one-hop message instead
+                    # of collapsing all neighbors into one article-level mean.
                     msg = neighbor_vec + (
                         edge.direction * relation_weight * relation_vec
                     )
                 neighbor_messages.append(msg.astype(np.float32, copy=False))
 
-        parts: list[np.ndarray] = []
-        if entity_vecs:
-            parts.append(entity_weight * np.mean(entity_vecs, axis=0))
-        if neighbor_messages:
-            n_with_neighbors += 1
-            n_neighbor_vectors += len(neighbor_messages)
-            parts.append(neighbor_weight * np.mean(neighbor_messages, axis=0))
-        if parts:
-            vec = np.sum(parts, axis=0).astype(np.float32, copy=False)
+            vec = entity_weight * entity_vec
+            if neighbor_messages:
+                item_has_neighbors = True
+                n_neighbor_vectors += len(neighbor_messages)
+                vec = vec + neighbor_weight * np.mean(neighbor_messages, axis=0)
+            vec = vec.astype(np.float32, copy=False)
             if normalize:
                 norm = float(np.linalg.norm(vec))
                 if norm > 0.0:
                     vec = vec / norm
-            features[news_idx] = vec
+            features[news_idx, slot_idx] = vec
+        if item_has_neighbors:
+            n_with_neighbors += 1
 
     meta = {
         "dim": dim,
+        "mode": "relation_aware_entity_slots",
         "n_items": n_items,
         "n_items_with_linked_entities": n_with_entities,
         "n_items_with_entity_vectors": n_with_entity_vectors,
@@ -221,7 +225,7 @@ def build_news_kg_feature_matrix(
     return features, meta
 
 
-def build_news_kg_feature_matrix_from_config(
+def build_news_kg_entity_matrix_from_config(
     cfg: dict[str, Any],
     news: pd.DataFrame,
 ) -> tuple[np.ndarray | None, dict[str, Any]]:
@@ -279,7 +283,7 @@ def build_news_kg_feature_matrix_from_config(
         add_reverse_edges=bool(kg_cfg.get("add_reverse_edges", True)),
     )
 
-    features, meta = build_news_kg_feature_matrix(
+    features, meta = build_news_kg_entity_matrix(
         news=news,
         entity_embeddings=entity_embeddings,
         relation_embeddings=relation_embeddings,
@@ -293,6 +297,10 @@ def build_news_kg_feature_matrix_from_config(
     meta.update(
         {
             "enabled": True,
+            "max_neighbors_per_entity": int(
+                kg_cfg.get("max_neighbors_per_entity", 20)
+            ),
+            "add_reverse_edges": bool(kg_cfg.get("add_reverse_edges", True)),
             "entity_embedding_path": _format_paths(entity_paths),
             "relation_embedding_path": _format_paths(relation_paths),
             "triples_path": str(triples),

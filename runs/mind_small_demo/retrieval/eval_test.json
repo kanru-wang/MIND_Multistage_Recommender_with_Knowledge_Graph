@@ -54,13 +54,13 @@
       "recall_at_k": 0.014063781262812625,
       "n_impressions": 2168
     },
-    "impressions_with_clicked_subcategory__newspolitics": {
-      "recall_at_k": 0.10614097031368816,
-      "n_impressions": 1928
-    },
     "impressions_with_clicked_subcategory__newsus": {
       "recall_at_k": 0.019550343073009013,
       "n_impressions": 1853
+    },
+    "impressions_with_clicked_subcategory__newspolitics": {
+      "recall_at_k": 0.10614097031368816,
+      "n_impressions": 1928
     },
     "impressions_with_clicked_category__lifestyle": {
       "recall_at_k": 0.04582775284720364,
@@ -134,21 +134,17 @@
       "recall_at_k": 0.026839842901730696,
       "n_impressions": 1123
     },
-    "impressions_with_clicked_subcategory__finance_insurance": {
-      "recall_at_k": 0.0,
-      "n_impressions": 2
-    },
     "impressions_with_clicked_subcategory__foodnews": {
       "recall_at_k": 0.028205128205128206,
       "n_impressions": 65
     },
+    "impressions_with_clicked_subcategory__finance_insurance": {
+      "recall_at_k": 0.0,
+      "n_impressions": 2
+    },
     "impressions_with_clicked_popularity_bucket__5_19": {
       "recall_at_k": 0.019769909733413384,
       "n_impressions": 411
-    },
-    "impressions_with_clicked_subcategory__newsopinion": {
-      "recall_at_k": 0.15976786818623556,
-      "n_impressions": 98
     },
     "impressions_with_clicked_subcategory__factcheck": {
       "recall_at_k": 0.017857142857142856,
@@ -157,6 +153,10 @@
     "impressions_with_clicked_subcategory__beverages": {
       "recall_at_k": 0.025,
       "n_impressions": 5
+    },
+    "impressions_with_clicked_subcategory__newsopinion": {
+      "recall_at_k": 0.15976786818623556,
+      "n_impressions": 98
     },
     "impressions_with_clicked_category__music": {
       "recall_at_k": 0.02381919191919192,
@@ -174,13 +174,13 @@
       "recall_at_k": 0.02401800987990504,
       "n_impressions": 496
     },
-    "impressions_with_clicked_subcategory__movienews": {
-      "recall_at_k": 0.014067869415807562,
-      "n_impressions": 194
-    },
     "impressions_with_clicked_subcategory__nutrition": {
       "recall_at_k": 0.009193301170913111,
       "n_impressions": 201
+    },
+    "impressions_with_clicked_subcategory__movienews": {
+      "recall_at_k": 0.014067869415807562,
+      "n_impressions": 194
     },
     "impressions_with_clicked_subcategory__more_sports": {
       "recall_at_k": 0.013298534798534798,

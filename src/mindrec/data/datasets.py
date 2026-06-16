@@ -1,27 +1,24 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Iterator
+from typing import Any
 
 import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset
 
-from mindrec.data.featurize import IdMaps
+RANKER_DENSE_COLUMNS = ("history_len", "item_clicks_log1p")
 
 
-@dataclass
-class PairSample:
-    user_idx: int
-    news_idx: int
-    cat_idx: int
-    subcat_idx: int
-    hist_news_idx: np.ndarray
-    dense: np.ndarray
-    label: int
-    is_cold_user: int
-    is_new_item: int
+def build_ranker_dense_matrix(
+    history_len: float, item_clicks_log1p: np.ndarray
+) -> np.ndarray:
+    clicks = np.asarray(item_clicks_log1p, dtype=np.float32)
+    values = {
+        "history_len": np.full(clicks.shape, float(history_len), dtype=np.float32),
+        "item_clicks_log1p": clicks,
+    }
+    return np.stack([values[name] for name in RANKER_DENSE_COLUMNS], axis=1)
 
 
 class PairDataset(Dataset):
