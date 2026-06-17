@@ -12,16 +12,30 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from mindrec.config import ensure_dir
-from mindrec.data.datasets import RANKER_DENSE_COLUMNS, PairDataset, collate_batch
+from mindrec.data.datasets import (
+    RANKER_DENSE_COLUMNS,
+    PairDataset,
+    build_ranker_dense_matrix,
+    collate_batch,
+)
 from mindrec.data.featurize import IdMaps
+from mindrec.metrics.ranking import auc as impression_auc
 from mindrec.models.calibration import fit_temperature_scaler
 from mindrec.models.dlrm import DLRMStudent
 from mindrec.models.teacher import TeacherTwoTower
 from mindrec.pipeline.ranker_assets import (
     load_ranker_item_features,
     ranker_feature_fingerprints,
+    ranker_score_batch_size,
 )
-from mindrec.utils import pair_artifact_path, save_json, set_seed, to_device, validation_split_name
+from mindrec.utils import (
+    impression_artifact_path,
+    pair_artifact_path,
+    save_json,
+    set_seed,
+    to_device,
+    validation_split_name,
+)
 
 
 class StudentProjHead(nn.Module):
@@ -46,6 +60,112 @@ def final_logit_distillation_loss(
     return nn.functional.binary_cross_entropy_with_logits(
         student_logits, teacher_target, reduction="none"
     )
+
+
+def _expand_history_tensor(
+    matrix: torch.Tensor,
+    hist_idx: list[int],
+    batch_size: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    device = matrix.device
+    if hist_idx:
+        idx = torch.tensor(hist_idx, dtype=torch.long, device=device)
+        hist = matrix[idx].unsqueeze(0)
+        hist = hist.expand(batch_size, *hist.shape[1:])
+        mask = torch.ones((batch_size, len(hist_idx)), dtype=torch.bool, device=device)
+        return hist, mask
+    hist = torch.zeros(
+        (batch_size, 1, *matrix.shape[1:]), dtype=matrix.dtype, device=device
+    )
+    mask = torch.zeros((batch_size, 1), dtype=torch.bool, device=device)
+    return hist, mask
+
+
+def _validate_impression_auc(
+    cfg: dict[str, Any],
+    proc_root: Path,
+    split_name: str,
+    model: DLRMStudent,
+    item_text_tensor: torch.Tensor,
+    item_kg_tensor: torch.Tensor,
+    item_kg_mask_tensor: torch.Tensor,
+) -> float:
+    impr = pd.read_parquet(impression_artifact_path(proc_root, split_name))
+    values: list[float] = []
+    bs = ranker_score_batch_size(cfg)
+
+    model.eval()
+    with torch.no_grad():
+        for _, r in tqdm(
+            impr.iterrows(),
+            total=len(impr),
+            desc=f"Val impressions ({split_name})",
+        ):
+            labels = np.array(r["cand_label"], dtype=np.int32)
+            if labels.sum() <= 0:
+                continue
+            cand_news_idx = np.array(r["cand_news_idx"], dtype=np.int64)
+            if len(cand_news_idx) <= 0:
+                continue
+
+            user_idx = int(r["user_idx"])
+            hist_news_idx = [int(x) for x in list(r["hist_news_idx"])]
+            cand_cat_idx = np.array(r["cand_cat_idx"], dtype=np.int64)
+            cand_subcat_idx = np.array(r["cand_subcat_idx"], dtype=np.int64)
+            cand_is_new = np.array(r["cand_is_new_item"], dtype=np.int64)
+            cand_clicks_log1p = np.array(
+                r["cand_item_clicks_log1p"], dtype=np.float32
+            )
+            dense = build_ranker_dense_matrix(float(r["history_len"]), cand_clicks_log1p)
+
+            scores: list[np.ndarray] = []
+            for i in range(0, len(cand_news_idx), bs):
+                sl = slice(i, i + bs)
+                batch_size = len(cand_news_idx[sl])
+                device = item_text_tensor.device
+                b_news = torch.tensor(
+                    cand_news_idx[sl], dtype=torch.long, device=device
+                )
+                b_user = torch.full(
+                    (batch_size,), user_idx, dtype=torch.long, device=device
+                )
+                b_cat = torch.tensor(cand_cat_idx[sl], dtype=torch.long, device=device)
+                b_sub = torch.tensor(
+                    cand_subcat_idx[sl], dtype=torch.long, device=device
+                )
+                b_is_new = torch.tensor(
+                    cand_is_new[sl], dtype=torch.long, device=device
+                )
+                b_dense = torch.tensor(dense[sl], dtype=torch.float32, device=device)
+                b_hist_text, b_hist_mask = _expand_history_tensor(
+                    item_text_tensor, hist_news_idx, batch_size
+                )
+                b_hist_kg, _ = _expand_history_tensor(
+                    item_kg_tensor, hist_news_idx, batch_size
+                )
+                b_hist_kg_mask, _ = _expand_history_tensor(
+                    item_kg_mask_tensor, hist_news_idx, batch_size
+                )
+                logits, _ = model(
+                    user_idx=b_user,
+                    news_idx=b_news,
+                    cat_idx=b_cat,
+                    subcat_idx=b_sub,
+                    dense=b_dense,
+                    item_text_base=item_text_tensor[b_news],
+                    history_item_text_base=b_hist_text,
+                    item_kg_base=item_kg_tensor[b_news],
+                    history_item_kg_base=b_hist_kg,
+                    item_kg_mask=item_kg_mask_tensor[b_news],
+                    history_item_kg_mask=b_hist_kg_mask,
+                    history_mask=b_hist_mask,
+                    is_new_item=b_is_new,
+                    return_repr=False,
+                )
+                scores.append(logits.detach().cpu().numpy())
+            values.append(impression_auc(labels, np.concatenate(scores, axis=0)))
+
+    return float(np.mean(values) if values else 0.0)
 
 
 def run_train_ranker(
@@ -147,6 +267,27 @@ def run_train_ranker(
     val_loader = DataLoader(
         val_ds, batch_size=bsz, shuffle=False, num_workers=0, collate_fn=collate_batch
     )
+    epochs = int(cfg["ranker"]["epochs"])
+
+    max_grad_norm = float(cfg["ranker"].get("max_grad_norm", 5.0))
+    if max_grad_norm <= 0.0:
+        raise ValueError("ranker.max_grad_norm must be positive")
+
+    sched_cfg = dict(cfg["ranker"].get("lr_scheduler", {}))
+    scheduler = None
+    if bool(sched_cfg.get("enabled", False)):
+        sched_type = str(sched_cfg.get("type", "cosine")).lower()
+        if sched_type != "cosine":
+            raise ValueError("Only ranker.lr_scheduler.type='cosine' is supported")
+        min_lr_ratio = float(sched_cfg.get("min_lr_ratio", 0.1))
+        if min_lr_ratio < 0.0 or min_lr_ratio > 1.0:
+            raise ValueError("ranker.lr_scheduler.min_lr_ratio must be in [0, 1]")
+        total_steps = max(1, epochs * len(train_loader))
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            opt,
+            T_max=total_steps,
+            eta_min=float(cfg["ranker"]["lr"]) * min_lr_ratio,
+        )
 
     dist_cfg = cfg["ranker"]["distill"]
     distill_temperature = float(dist_cfg.get("temperature", 2.0))
@@ -161,10 +302,15 @@ def run_train_ranker(
     es_cfg = dict(cfg["ranker"].get("early_stopping", {}))
     es_patience = int(es_cfg.get("patience", 2))
     es_min_delta = float(es_cfg.get("min_delta", 1.0e-4))
+    monitor = str(es_cfg.get("monitor", "impression_auc")).lower()
+    if monitor not in {"impression_auc", "pair_auc"}:
+        raise ValueError(
+            "ranker.early_stopping.monitor must be 'impression_auc' or 'pair_auc'"
+        )
 
-    epochs = int(cfg["ranker"]["epochs"])
-
-    best_auc = -1.0
+    best_monitor_value = -1.0
+    best_pair_auc = -1.0
+    best_impression_auc = -1.0
     best_epoch = 0
     best_kg_gate = 0.0
     epochs_without_improvement = 0
@@ -249,9 +395,11 @@ def run_train_ranker(
             opt.zero_grad()
             loss.backward()
             nn.utils.clip_grad_norm_(
-                list(model.parameters()) + list(proj.parameters()), max_norm=5.0
+                list(model.parameters()) + list(proj.parameters()), max_norm=max_grad_norm
             )
             opt.step()
+            if scheduler is not None:
+                scheduler.step()
             losses.append(float(loss.item()))
             rank_losses.append(float(loss_rank.item()))
             logit_losses.append(float(weighted_logit_loss.item()))
@@ -285,9 +433,21 @@ def run_train_ranker(
                 ys.extend(batch["label"].detach().cpu().numpy().tolist())
                 ps.extend(torch.sigmoid(logits).detach().cpu().numpy().tolist())
         try:
-            auc = float(roc_auc_score(ys, ps))
+            pair_auc = float(roc_auc_score(ys, ps))
         except ValueError:
-            auc = 0.0
+            pair_auc = 0.0
+        val_impression_auc = _validate_impression_auc(
+            cfg=cfg,
+            proc_root=proc_root,
+            split_name=val_split,
+            model=model,
+            item_text_tensor=item_text_tensor,
+            item_kg_tensor=item_kg_tensor,
+            item_kg_mask_tensor=item_kg_mask_tensor,
+        )
+        monitor_value = (
+            val_impression_auc if monitor == "impression_auc" else pair_auc
+        )
 
         epoch_metrics.append(
             {
@@ -305,7 +465,12 @@ def run_train_ranker(
                 "train_distill_loss_mean": float(
                     np.mean(distill_losses) if distill_losses else 0.0
                 ),
-                "val_auc": auc,
+                "val_pair_auc": pair_auc,
+                "val_impression_auc": val_impression_auc,
+                "val_auc": val_impression_auc,
+                "monitor": monitor,
+                "monitor_value": monitor_value,
+                "lr": float(opt.param_groups[0]["lr"]),
                 "kg_gate": (
                     float(model.kg_gate().detach().cpu().item())
                     if model.has_kg
@@ -315,10 +480,12 @@ def run_train_ranker(
         )
         save_json(art_root / "epochs.json", epoch_metrics)
 
-        improved = auc > best_auc
-        significant_improvement = (auc - best_auc) > es_min_delta
+        improved = monitor_value > best_monitor_value
+        significant_improvement = (monitor_value - best_monitor_value) > es_min_delta
         if improved:
-            best_auc = auc
+            best_monitor_value = monitor_value
+            best_pair_auc = pair_auc
+            best_impression_auc = val_impression_auc
             best_epoch = ep
             best_kg_gate = (
                 float(model.kg_gate().detach().cpu().item())
@@ -331,7 +498,11 @@ def run_train_ranker(
                     "proj": proj.state_dict(),
                     "cfg": cfg,
                     "epoch": ep,
-                    "val_auc": auc,
+                    "val_auc": val_impression_auc,
+                    "val_pair_auc": pair_auc,
+                    "val_impression_auc": val_impression_auc,
+                    "monitor": monitor,
+                    "monitor_value": monitor_value,
                     "feature_fingerprints": feature_fingerprints,
                 },
                 art_root / "best.pt",
@@ -349,12 +520,18 @@ def run_train_ranker(
         art_root / "train_summary.json",
         {
             "validation_split_name": val_split,
-            "best_val_auc": best_auc,
+            "selection_monitor": monitor,
+            "best_monitor_value": best_monitor_value,
+            "best_val_auc": best_impression_auc,
+            "best_val_impression_auc": best_impression_auc,
+            "best_val_pair_auc": best_pair_auc,
             "best_epoch": best_epoch,
             "best_kg_gate": best_kg_gate,
             "distill_temperature": distill_temperature,
             "lambda_logit": lam_logit,
             "lambda_repr": lam_repr,
+            "max_grad_norm": max_grad_norm,
+            "lr_scheduler": sched_cfg,
             "early_stopping_patience": es_patience,
             "early_stopping_min_delta": es_min_delta,
             "stop_reason": stop_reason,

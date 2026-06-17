@@ -1,11 +1,21 @@
 {
   "validation_split_name": "val",
-  "best_val_auc": 0.6683953229011237,
+  "selection_monitor": "impression_auc",
+  "best_monitor_value": 0.6618669247755052,
+  "best_val_auc": 0.6618669247755052,
+  "best_val_impression_auc": 0.6618669247755052,
+  "best_val_pair_auc": 0.6683953229011237,
   "best_epoch": 1,
   "best_kg_gate": 0.15000000596046448,
   "distill_temperature": 0.75,
   "lambda_logit": 0.15,
   "lambda_repr": 0.05,
+  "max_grad_norm": 5.0,
+  "lr_scheduler": {
+    "enabled": false,
+    "type": "cosine",
+    "min_lr_ratio": 0.2
+  },
   "early_stopping_patience": 2,
   "early_stopping_min_delta": 1e-05,
   "stop_reason": "early_stopping",

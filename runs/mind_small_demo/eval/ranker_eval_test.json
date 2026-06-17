@@ -142,17 +142,6 @@
       "auc": 0.7844210433440338,
       "n_impressions": 1680
     },
-    "impressions_with_clicked_category__weather": {
-      "ndcg@5": 0.12403356181055229,
-      "ndcg@10": 0.23067867525456554,
-      "recall@5": 0.1838845598845599,
-      "recall@10": 0.48128715728715726,
-      "map@5": 0.07873333333333332,
-      "map@10": 0.12485683364254793,
-      "mrr": 0.21298976214562607,
-      "auc": 0.6261683148830339,
-      "n_impressions": 275
-    },
     "impressions_with_clicked_category__tv": {
       "ndcg@5": 0.2381991417006053,
       "ndcg@10": 0.3199505974059583,
@@ -164,7 +153,7 @@
       "auc": 0.6083802099173012,
       "n_impressions": 985
     },
-    "impressions_with_clicked_subcategory__weathertopstories": {
+    "impressions_with_clicked_category__weather": {
       "ndcg@5": 0.12403356181055229,
       "ndcg@10": 0.23067867525456554,
       "recall@5": 0.1838845598845599,
@@ -185,6 +174,17 @@
       "mrr": 0.2947947233626936,
       "auc": 0.5966592453725781,
       "n_impressions": 909
+    },
+    "impressions_with_clicked_subcategory__weathertopstories": {
+      "ndcg@5": 0.12403356181055229,
+      "ndcg@10": 0.23067867525456554,
+      "recall@5": 0.1838845598845599,
+      "recall@10": 0.48128715728715726,
+      "map@5": 0.07873333333333332,
+      "map@10": 0.12485683364254793,
+      "mrr": 0.21298976214562607,
+      "auc": 0.6261683148830339,
+      "n_impressions": 275
     },
     "impressions_with_clicked_category__news": {
       "ndcg@5": 0.38455664979378207,
@@ -362,17 +362,6 @@
       "auc": 0.7783664907885114,
       "n_impressions": 339
     },
-    "impressions_with_clicked_subcategory__newsworld": {
-      "ndcg@5": 0.33792999150442254,
-      "ndcg@10": 0.3951151286925886,
-      "recall@5": 0.444429844314385,
-      "recall@10": 0.5994804575140016,
-      "map@5": 0.26653045607591064,
-      "map@10": 0.2925646422480838,
-      "mrr": 0.39584130480971214,
-      "auc": 0.7158615240888023,
-      "n_impressions": 726
-    },
     "impressions_with_clicked_subcategory__shop_holidays": {
       "ndcg@5": 0.3797093656687708,
       "ndcg@10": 0.42549497211031984,
@@ -383,6 +372,17 @@
       "mrr": 0.34452831798595757,
       "auc": 0.19345827515219116,
       "n_impressions": 459
+    },
+    "impressions_with_clicked_subcategory__newsworld": {
+      "ndcg@5": 0.33792999150442254,
+      "ndcg@10": 0.3951151286925886,
+      "recall@5": 0.444429844314385,
+      "recall@10": 0.5994804575140016,
+      "map@5": 0.26653045607591064,
+      "map@10": 0.2925646422480838,
+      "mrr": 0.39584130480971214,
+      "auc": 0.7158615240888023,
+      "n_impressions": 726
     },
     "impressions_with_clicked_category__entertainment": {
       "ndcg@5": 0.12291784584542238,
@@ -450,17 +450,6 @@
       "auc": 0.5639598310495741,
       "n_impressions": 1166
     },
-    "impressions_with_clicked_subcategory__foodnews": {
-      "ndcg@5": 0.13226009976802666,
-      "ndcg@10": 0.17468614536502358,
-      "recall@5": 0.15203823953823953,
-      "recall@10": 0.27350288600288597,
-      "map@5": 0.08141835016835015,
-      "map@10": 0.10101972101972101,
-      "mrr": 0.23573770251212675,
-      "auc": 0.5694622789594835,
-      "n_impressions": 66
-    },
     "impressions_with_clicked_subcategory__finance_insurance": {
       "ndcg@5": 0.10699313236726378,
       "ndcg@10": 0.09546043308946735,
@@ -471,6 +460,17 @@
       "mrr": 0.2635135135135135,
       "auc": 0.48007662835249043,
       "n_impressions": 2
+    },
+    "impressions_with_clicked_subcategory__foodnews": {
+      "ndcg@5": 0.13226009976802666,
+      "ndcg@10": 0.17468614536502358,
+      "recall@5": 0.15203823953823953,
+      "recall@10": 0.27350288600288597,
+      "map@5": 0.08141835016835015,
+      "map@10": 0.10101972101972101,
+      "mrr": 0.23573770251212675,
+      "auc": 0.5694622789594835,
+      "n_impressions": 66
     },
     "impressions_with_clicked_popularity_bucket__5_19": {
       "ndcg@5": 0.19807308114276603,
@@ -560,17 +560,6 @@
       "auc": 0.5987639715277722,
       "n_impressions": 512
     },
-    "impressions_with_clicked_subcategory__nutrition": {
-      "ndcg@5": 0.1182950666783563,
-      "ndcg@10": 0.17790846330939006,
-      "recall@5": 0.14875233376418212,
-      "recall@10": 0.3147026288613966,
-      "map@5": 0.07928909952606636,
-      "map@10": 0.10234047726515566,
-      "mrr": 0.2118001569966777,
-      "auc": 0.5917964106166115,
-      "n_impressions": 211
-    },
     "impressions_with_clicked_subcategory__movienews": {
       "ndcg@5": 0.14168990647445293,
       "ndcg@10": 0.24964820600958973,
@@ -581,6 +570,17 @@
       "mrr": 0.21329510770159532,
       "auc": 0.6036375512336528,
       "n_impressions": 199
+    },
+    "impressions_with_clicked_subcategory__nutrition": {
+      "ndcg@5": 0.1182950666783563,
+      "ndcg@10": 0.17790846330939006,
+      "recall@5": 0.14875233376418212,
+      "recall@10": 0.3147026288613966,
+      "map@5": 0.07928909952606636,
+      "map@10": 0.10234047726515566,
+      "mrr": 0.2118001569966777,
+      "auc": 0.5917964106166115,
+      "n_impressions": 211
     },
     "impressions_with_clicked_subcategory__more_sports": {
       "ndcg@5": 0.21921323578958987,
@@ -692,17 +692,6 @@
       "auc": 0.5430102880015807,
       "n_impressions": 439
     },
-    "impressions_with_clicked_subcategory__medical": {
-      "ndcg@5": 0.0836782467386229,
-      "ndcg@10": 0.13172177277509253,
-      "recall@5": 0.0943352823222953,
-      "recall@10": 0.22711512153070595,
-      "map@5": 0.05364430014430014,
-      "map@10": 0.0707305145723513,
-      "mrr": 0.18139971553126955,
-      "auc": 0.6658488322351831,
-      "n_impressions": 385
-    },
     "impressions_with_clicked_subcategory__autosmotorcycles": {
       "ndcg@5": 0.08005112557174585,
       "ndcg@10": 0.13809980974540292,
@@ -713,6 +702,17 @@
       "mrr": 0.16546062593588823,
       "auc": 0.666320063119649,
       "n_impressions": 46
+    },
+    "impressions_with_clicked_subcategory__medical": {
+      "ndcg@5": 0.0836782467386229,
+      "ndcg@10": 0.13172177277509253,
+      "recall@5": 0.0943352823222953,
+      "recall@10": 0.22711512153070595,
+      "map@5": 0.05364430014430014,
+      "map@10": 0.0707305145723513,
+      "mrr": 0.18139971553126955,
+      "auc": 0.6658488322351831,
+      "n_impressions": 385
     },
     "impressions_with_clicked_subcategory__movies_gallery": {
       "ndcg@5": 0.1442041570455009,

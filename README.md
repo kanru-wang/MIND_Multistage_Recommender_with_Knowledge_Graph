@@ -414,7 +414,9 @@ python -m mindrec.cli preprocess --config configs/mind_small.yaml
 python -m mindrec.cli train_ranker --config configs/mind_small.yaml
 ```
 
-After training the ranker on `train_pairs.parquet`, `train_ranker` fits a temperature scaler on the sampled `val_pairs.parquet`. It tunes a single positive scalar `T` in `sigmoid(logit / T)` without changing ranking order. Because full-impression evaluation has a different candidate/label distribution, always check the reported raw and calibrated Brier/ECE values; calibration fitted on sampled pairs is not guaranteed to improve full-impression calibration.
+After each epoch, `train_ranker` evaluates the ranker on the full validation impressions and selects `best.pt` using mean per-impression validation AUC. This matches the official MIND evaluator's primary metric more closely than sampled pair-level AUC. The sampled pair AUC is still logged as a diagnostic because it is cheaper and useful for spotting training collapse.
+
+After selecting the best ranker checkpoint, `train_ranker` fits a temperature scaler on the sampled `val_pairs.parquet`. It tunes a single positive scalar `T` in `sigmoid(logit / T)` without changing ranking order. Because full-impression evaluation has a different candidate/label distribution, always check the reported raw and calibrated Brier/ECE values; calibration fitted on sampled pairs is not guaranteed to improve full-impression calibration.
 
 `ranker.score_batch_size` independently bounds memory use during ranker evaluation and reranker scoring. Structured entity-slot histories are substantially larger than the previous pooled KG vectors, so this should usually remain close to the training batch size.
 
@@ -497,7 +499,7 @@ with coefficients:
 - `1.5 * category_coverage_gain_units`
 - `1.5 * fairness_kl_pool_improvement_units`
 
-The search uses baseline-relative guardrails. We need guardrails because guardrails define what “acceptable” means, and then we can choose the setting with the highest utility among acceptable tradeoffs. Also, if the coefficients underweight relevance or overweight coverage/fairness, then a setting can look “best” by utility while still being a bad product choice; guardrails can prevent that. Current guardrails:
+The search uses baseline-relative guardrails. We need guardrails because guardrails define what "acceptable" means, and then we can choose the setting with the highest utility among acceptable tradeoffs. Also, if the coefficients underweight relevance or overweight coverage/fairness, then a setting can look "best" by utility while still being a bad product choice; guardrails can prevent that. Current guardrails:
 - `nDCG@10` drop must be at most `2.1%` relative to the baseline ranker (initially 2%; changed to 2.1% to allow a good hyperparameter set).
 - `new_item_exposure_frac` must not decrease relative to baseline.
 - `category_coverage@10` must improve by at least `0.25`.
@@ -567,10 +569,16 @@ Student ranker:
   - `distill.lambda_repr=0.05`
   - `news_id_warm_scale=1.0`
   - `news_id_cold_scale=0.0`
+- Current ranker training/selection settings:
+  - `lr=1.0e-3`
+  - `max_grad_norm=5.0`
+  - `ranker.early_stopping.monitor=impression_auc`
+  - `ranker.lr_scheduler.enabled=false`
 - The `news_id_*_scale` settings control only the learned `news_id` embedding branch in the DLRM ranker.
   Warm items keep their ID embedding contribution, while **new/cold items get that branch zeroed out** and are scored relying on semantic, category/subcategory, user, and dense features instead.
   new/cold items are found during preprocessing from training (click counts under the `min_item_train_clicks_for_warm` limit).
 - Best ranker epoch: `1`
+- Best validation impression AUC: `0.661867`
 - Student ranker validation:
   - `AUC = 0.661867`
   - `MRR = 0.370356`

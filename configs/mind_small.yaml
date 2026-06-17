@@ -65,10 +65,16 @@ ranker:
   score_batch_size: 256  # Bounds structured KG memory during evaluate/rerank scoring
   lr: 1.0e-3
   weight_decay: 3.0e-5
+  max_grad_norm: 5.0
   epochs: 8
   early_stopping:
     patience: 2
     min_delta: 1.0e-5
+    monitor: "impression_auc"  # Match the official MIND evaluator's primary metric more closely than sampled pair AUC
+  lr_scheduler:
+    enabled: false
+    type: "cosine"
+    min_lr_ratio: 0.20
   device: "cuda"
   dlrm:
     emb_dim: 56

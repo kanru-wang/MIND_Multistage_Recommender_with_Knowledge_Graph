@@ -6,7 +6,12 @@
     "train_logit_distill_loss_mean": 0.7378464054026491,
     "train_repr_distill_loss_mean": 0.0003122911613440853,
     "train_distill_loss_mean": 0.11069257987795446,
-    "val_auc": 0.6683953229011237,
+    "val_pair_auc": 0.6683953229011237,
+    "val_impression_auc": 0.6618669247755052,
+    "val_auc": 0.6618669247755052,
+    "monitor": "impression_auc",
+    "monitor_value": 0.6618669247755052,
+    "lr": 0.001,
     "kg_gate": 0.15000000596046448
   },
   {
@@ -16,7 +21,12 @@
     "train_logit_distill_loss_mean": 0.7501278429181896,
     "train_repr_distill_loss_mean": 0.0002134996814108081,
     "train_distill_loss_mean": 0.11252985592960908,
-    "val_auc": 0.6377632760187117,
+    "val_pair_auc": 0.6377632760187117,
+    "val_impression_auc": 0.6411842486896698,
+    "val_auc": 0.6411842486896698,
+    "monitor": "impression_auc",
+    "monitor_value": 0.6411842486896698,
+    "lr": 0.001,
     "kg_gate": 0.15000000596046448
   },
   {
@@ -26,7 +36,12 @@
     "train_logit_distill_loss_mean": 0.7534679524928096,
     "train_repr_distill_loss_mean": 0.00019641735066600426,
     "train_distill_loss_mean": 0.11303001826181756,
-    "val_auc": 0.6341111035972312,
+    "val_pair_auc": 0.6341111035972312,
+    "val_impression_auc": 0.6306918781410047,
+    "val_auc": 0.6306918781410047,
+    "monitor": "impression_auc",
+    "monitor_value": 0.6306918781410047,
+    "lr": 0.001,
     "kg_gate": 0.15000000596046448
   }
 ]
