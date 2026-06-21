@@ -102,12 +102,11 @@ def resolve_mind_side_files(
     train_dir: str,
     dev_dir: str,
     filename: str,
+    extra_dirs: list[str] | None = None,
 ) -> list[Path]:
     raw_root = Path(raw_root)
-    candidates = [
-        raw_root / train_dir / filename,
-        raw_root / dev_dir / filename,
-    ]
+    side_dirs = [train_dir, dev_dir] + list(extra_dirs or [])
+    candidates = [raw_root / side_dir / filename for side_dir in side_dirs]
     return [path for path in candidates if path.exists()]
 
 
@@ -230,6 +229,9 @@ def build_news_kg_feature_matrix_from_config(
         return None, {"enabled": False}
 
     raw_cfg = cfg["data"]
+    extra_side_dirs = []
+    if raw_cfg.get("test_dir") and raw_cfg.get("mode") == "leaderboard_submission":
+        extra_side_dirs.append(str(raw_cfg["test_dir"]))
     entity_paths = _configured_paths(kg_cfg.get("entity_embedding_path"))
     if not entity_paths:
         entity_paths = resolve_mind_side_files(
@@ -237,6 +239,7 @@ def build_news_kg_feature_matrix_from_config(
             train_dir=raw_cfg["train_dir"],
             dev_dir=raw_cfg["dev_dir"],
             filename="entity_embedding.vec",
+            extra_dirs=extra_side_dirs,
         )
     relation_paths = _configured_paths(kg_cfg.get("relation_embedding_path"))
     if not relation_paths:
@@ -245,6 +248,7 @@ def build_news_kg_feature_matrix_from_config(
             train_dir=raw_cfg["train_dir"],
             dev_dir=raw_cfg["dev_dir"],
             filename="relation_embedding.vec",
+            extra_dirs=extra_side_dirs,
         )
     triples_path = kg_cfg.get("triples_path")
     if not triples_path:

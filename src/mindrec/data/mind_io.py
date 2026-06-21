@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Iterator
 
 import pandas as pd
 
@@ -73,6 +74,29 @@ def read_behaviors_tsv(path: str | Path) -> pd.DataFrame:
     df["cand_news_id"] = parsed.apply(lambda x: x[0])
     df["cand_label"] = parsed.apply(lambda x: x[1])
     return df
+
+
+def iter_behaviors_tsv(path: str | Path) -> Iterator[dict[str, object]]:
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) < 5:
+                continue
+            impression_id, user_id, time, history, impressions = parts[:5]
+            cand_news_id, cand_label = parse_impressions(impressions)
+            yield {
+                "impression_id": impression_id,
+                "user_id": user_id,
+                "time": time,
+                "history": history.split() if history else [],
+                "cand_news_id": cand_news_id,
+                "cand_label": cand_label,
+            }
+
+
+def count_behavior_rows(path: str | Path) -> int:
+    with open(path, "r", encoding="utf-8") as f:
+        return sum(1 for _ in f)
 
 
 def sub_sample_behaviors(df: pd.DataFrame, n: int, seed: int) -> pd.DataFrame:

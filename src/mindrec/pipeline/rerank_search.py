@@ -24,7 +24,9 @@ from mindrec.pipeline.evaluate import _expand_history_base, _load_model
 from mindrec.rerank.greedy import build_news_meta, cosine_sim_matrix, greedy_rerank
 from mindrec.utils import (
     impression_artifact_path,
+    log_device,
     position_bias_weights,
+    resolve_device as resolve_torch_device,
     save_json,
     validation_split_name,
 )
@@ -77,10 +79,7 @@ def _category_target_dist(
 
 
 def _resolve_device(cfg: dict[str, Any]) -> torch.device:
-    device_str = cfg["ranker"].get("device", "cuda")
-    if device_str == "cuda" and not torch.cuda.is_available():
-        device_str = "cpu"
-    return torch.device(device_str)
+    return resolve_torch_device(cfg["ranker"].get("device", "cuda"))
 
 
 def _score_impressions(
@@ -687,6 +686,7 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
     rr_cfg = cfg["rerank"]
 
     device = _resolve_device(cfg)
+    log_device(device, "Rerank search")
     news = pd.read_parquet(proc_root / "news.parquet")
     news_meta = build_news_meta(news)
     search_split = validation_split_name(cfg)

@@ -23,10 +23,12 @@ def ndcg_at_k(labels: np.ndarray, scores: np.ndarray, k: int) -> float:
 
 def mrr(labels: np.ndarray, scores: np.ndarray) -> float:
     order = np.argsort(-scores)
-    for rank, idx in enumerate(order, start=1):
-        if labels[idx] == 1:
-            return 1.0 / rank
-    return 0.0
+    ordered_labels = labels[order]
+    positives = float(ordered_labels.sum())
+    if positives <= 0:
+        return 0.0
+    reciprocal_ranks = ordered_labels / (np.arange(len(ordered_labels)) + 1)
+    return float(reciprocal_ranks.sum() / positives)
 
 
 def average_precision_at_k(labels: np.ndarray, scores: np.ndarray, k: int) -> float:

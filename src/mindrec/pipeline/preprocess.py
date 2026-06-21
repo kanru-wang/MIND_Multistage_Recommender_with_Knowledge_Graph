@@ -9,7 +9,12 @@ from tqdm import tqdm
 
 from mindrec.config import ensure_dir
 from mindrec.data.featurize import IdMaps, add_indices, build_id_maps, is_cold_user
-from mindrec.data.mind_io import read_behaviors_tsv, read_news_tsv, sub_sample_behaviors
+from mindrec.data.mind_io import (
+    count_behavior_rows,
+    read_behaviors_tsv,
+    read_news_tsv,
+    sub_sample_behaviors,
+)
 from mindrec.utils import (
     behavior_artifact_path,
     impression_artifact_path,
@@ -30,7 +35,7 @@ def build_pairs(
     neg_per_pos: int = 4,
     seed: int = 13,
 ) -> pd.DataFrame:
-    set_seed(seed)
+    set_seed(seed, seed_cuda=False)
     news_lookup = news_idx_df.set_index("news_id")[
         ["news_idx", "cat_idx", "subcat_idx"]
     ].to_dict(orient="index")
@@ -98,6 +103,7 @@ def build_impressions_for_eval(
     min_user_hist_for_warm: int,
     min_item_train_clicks_for_warm: int,
     max_history: int,
+    require_positive_label: bool = True,
 ) -> pd.DataFrame:
     news_lookup = news_idx_df.set_index("news_id")[
         ["news_idx", "cat_idx", "subcat_idx"]
@@ -118,7 +124,7 @@ def build_impressions_for_eval(
         labels = list(r["cand_label"])
         if not cand_ids:
             continue
-        if sum(labels) == 0:
+        if require_positive_label and sum(labels) == 0:
             continue
 
         cand_news_idx = []
@@ -154,6 +160,15 @@ def build_impressions_for_eval(
             }
         )
     return pd.DataFrame(rows)
+
+
+def _compute_click_counts(beh: pd.DataFrame) -> dict[str, int]:
+    click_counts: dict[str, int] = {}
+    for ids, labs in zip(beh["cand_news_id"], beh["cand_label"]):
+        for nid, lab in zip(ids, labs):
+            if lab == 1:
+                click_counts[nid] = click_counts.get(nid, 0) + 1
+    return click_counts
 
 
 def _split_holdout_behaviors(
@@ -203,9 +218,14 @@ def _split_holdout_behaviors(
     return val.reset_index(drop=True), test.reset_index(drop=True), meta
 
 
-def run_preprocess(cfg: dict[str, Any]) -> None:
+def _remove_if_exists(path: Path) -> None:
+    if path.exists():
+        path.unlink()
+
+
+def _run_standard_preprocess(cfg: dict[str, Any]) -> None:
     seed = int(cfg["data"].get("sub_sample", {}).get("seed", 13))
-    set_seed(seed)
+    set_seed(seed, seed_cuda=False)
 
     raw_root = Path(cfg["data"]["raw_root"])
     ds = cfg["data"]["dataset_name"]
@@ -238,12 +258,7 @@ def run_preprocess(cfg: dict[str, Any]) -> None:
     news_idx_df = add_indices(news_all, maps)
     news_idx_df.to_parquet(proc_root / "news.parquet", index=False)
 
-    # Item clicks in train from impressions
-    click_counts = {}
-    for ids, labs in zip(beh_train["cand_news_id"], beh_train["cand_label"]):
-        for nid, lab in zip(ids, labs):
-            if lab == 1:
-                click_counts[nid] = click_counts.get(nid, 0) + 1
+    click_counts = _compute_click_counts(beh_train)
     save_json(proc_root / "item_click_counts.json", click_counts)
 
     holdout_cfg = dict(cfg["data"].get("holdout", {}))
@@ -323,11 +338,13 @@ def run_preprocess(cfg: dict[str, Any]) -> None:
     )
     impr_val.to_parquet(impression_artifact_path(proc_root, val_name), index=False)
     impr_test.to_parquet(impression_artifact_path(proc_root, test_name), index=False)
+    beh_train.to_parquet(behavior_artifact_path(proc_root, "train"), index=False)
     val_beh.to_parquet(behavior_artifact_path(proc_root, val_name), index=False)
     test_beh.to_parquet(behavior_artifact_path(proc_root, test_name), index=False)
 
     meta = {
         "dataset": ds,
+        "mode": "standard",
         "n_news": int(len(news_idx_df)),
         "n_train_impressions": int(len(beh_train)),
         "n_holdout_source_impressions": int(len(beh_dev)),
@@ -344,3 +361,152 @@ def run_preprocess(cfg: dict[str, Any]) -> None:
         "holdout": holdout_meta,
     }
     save_json(proc_root / "preprocess_meta.json", meta)
+
+
+def _run_leaderboard_preprocess(cfg: dict[str, Any]) -> None:
+    seed = int(cfg["data"].get("sub_sample", {}).get("seed", 13))
+    set_seed(seed, seed_cuda=False)
+
+    raw_root = Path(cfg["data"]["raw_root"])
+    ds = cfg["data"]["dataset_name"]
+    train_dir = raw_root / cfg["data"]["train_dir"]
+    dev_dir = raw_root / cfg["data"]["dev_dir"]
+    test_dir = raw_root / cfg["data"]["test_dir"]
+
+    news_train = read_news_tsv(train_dir / "news.tsv")
+    beh_train = read_behaviors_tsv(train_dir / "behaviors.tsv")
+    news_dev = read_news_tsv(dev_dir / "news.tsv")
+    beh_dev = read_behaviors_tsv(dev_dir / "behaviors.tsv")
+
+    ss = cfg["data"].get("sub_sample", {})
+    if ss.get("enabled", False):
+        beh_train = sub_sample_behaviors(beh_train, int(ss["train_impressions"]), seed)
+        beh_dev = sub_sample_behaviors(beh_dev, int(ss["dev_impressions"]), seed)
+
+    mode = str(cfg["data"].get("mode", "leaderboard_submission"))
+    news_parts = [news_train, news_dev]
+    n_submission_impressions = 0
+    if mode == "leaderboard_tune":
+        fit_beh = beh_train.reset_index(drop=True)
+        val_beh = beh_dev.reset_index(drop=True)
+        holdout_meta = {
+            "strategy": "leaderboard_model_selection",
+            "train_source": cfg["data"]["train_dir"],
+            "validation_source": cfg["data"]["dev_dir"],
+            "test_source": None,
+        }
+    elif mode == "leaderboard_submission":
+        news_test = read_news_tsv(test_dir / "news.tsv")
+        n_submission_impressions = count_behavior_rows(test_dir / "behaviors.tsv")
+        news_parts.append(news_test)
+        fit_beh = pd.concat([beh_train, beh_dev], axis=0).reset_index(drop=True)
+        val_beh = None
+        holdout_meta = {
+            "strategy": "leaderboard_final_fit",
+            "train_sources": [cfg["data"]["train_dir"], cfg["data"]["dev_dir"]],
+            "validation_source": None,
+            "test_source": cfg["data"]["test_dir"],
+        }
+    else:
+        raise ValueError(f"Unsupported leaderboard mode: {mode}")
+
+    news_all = (
+        pd.concat(news_parts, axis=0)
+        .drop_duplicates("news_id")
+        .reset_index(drop=True)
+    )
+
+    maps = build_id_maps(news_all, fit_beh)
+    proc_root = ensure_dir(Path(cfg["data"]["processed_root"]) / ds)
+    submission_split = str(cfg.get("submission", {}).get("split_name", "submission_test"))
+    for split_name in ["val", submission_split]:
+        _remove_if_exists(pair_artifact_path(proc_root, split_name))
+        _remove_if_exists(impression_artifact_path(proc_root, split_name))
+        _remove_if_exists(behavior_artifact_path(proc_root, split_name))
+    maps.save(proc_root / "id_maps.json")
+
+    news_idx_df = add_indices(news_all, maps)
+    news_idx_df.to_parquet(proc_root / "news.parquet", index=False)
+
+    click_counts = _compute_click_counts(fit_beh)
+    save_json(proc_root / "item_click_counts.json", click_counts)
+
+    ranker_neg_per_pos = int(cfg["data"].get("ranker_negatives_per_positive", 4))
+    pairs_train = build_pairs(
+        beh=fit_beh,
+        news_idx_df=news_idx_df,
+        maps=maps,
+        item_clicks_train=click_counts,
+        min_user_hist_for_warm=int(cfg["data"]["min_user_hist_for_warm"]),
+        min_item_train_clicks_for_warm=int(
+            cfg["data"]["min_item_train_clicks_for_warm"]
+        ),
+        max_history=int(cfg["data"]["max_history"]),
+        neg_per_pos=ranker_neg_per_pos,
+        seed=seed,
+    )
+    pairs_train.to_parquet(pair_artifact_path(proc_root, "train"), index=False)
+
+    pairs_val = None
+    impr_val = None
+    if val_beh is not None:
+        pairs_val = build_pairs(
+            beh=val_beh,
+            news_idx_df=news_idx_df,
+            maps=maps,
+            item_clicks_train=click_counts,
+            min_user_hist_for_warm=int(cfg["data"]["min_user_hist_for_warm"]),
+            min_item_train_clicks_for_warm=int(
+                cfg["data"]["min_item_train_clicks_for_warm"]
+            ),
+            max_history=int(cfg["data"]["max_history"]),
+            neg_per_pos=ranker_neg_per_pos,
+            seed=seed + 1,
+        )
+        pairs_val.to_parquet(pair_artifact_path(proc_root, "val"), index=False)
+        impr_val = build_impressions_for_eval(
+            beh=val_beh,
+            news_idx_df=news_idx_df,
+            maps=maps,
+            item_clicks_train=click_counts,
+            min_user_hist_for_warm=int(cfg["data"]["min_user_hist_for_warm"]),
+            min_item_train_clicks_for_warm=int(
+                cfg["data"]["min_item_train_clicks_for_warm"]
+            ),
+            max_history=int(cfg["data"]["max_history"]),
+        )
+        impr_val.to_parquet(impression_artifact_path(proc_root, "val"), index=False)
+        val_beh.to_parquet(behavior_artifact_path(proc_root, "val"), index=False)
+
+    fit_beh.to_parquet(behavior_artifact_path(proc_root, "train"), index=False)
+
+    meta = {
+        "dataset": ds,
+        "mode": mode,
+        "n_news": int(len(news_idx_df)),
+        "n_original_train_impressions": int(len(beh_train)),
+        "n_original_dev_impressions": int(len(beh_dev)),
+        "n_train_impressions": int(len(fit_beh)),
+        "validation_split_name": "val" if val_beh is not None else None,
+        "submission_split_name": submission_split,
+        "n_validation_impressions": int(len(val_beh)) if val_beh is not None else 0,
+        "n_submission_impressions": int(n_submission_impressions),
+        "n_train_pairs": int(len(pairs_train)),
+        "n_validation_pairs": int(len(pairs_val)) if pairs_val is not None else 0,
+        "ranker_negatives_per_positive": ranker_neg_per_pos,
+        "n_validation_eval_impressions": int(len(impr_val)) if impr_val is not None else 0,
+        "n_submission_eval_impressions": 0,
+        "submission_eval_mode": "stream_raw_behaviors",
+        "holdout": holdout_meta,
+    }
+    save_json(proc_root / "preprocess_meta.json", meta)
+
+
+def run_preprocess(cfg: dict[str, Any]) -> None:
+    mode = str(cfg["data"].get("mode", "standard"))
+    if mode in {"leaderboard_tune", "leaderboard_submission"}:
+        _run_leaderboard_preprocess(cfg)
+        return
+    if mode != "standard":
+        raise ValueError(f"Unknown data.mode: {mode}")
+    _run_standard_preprocess(cfg)

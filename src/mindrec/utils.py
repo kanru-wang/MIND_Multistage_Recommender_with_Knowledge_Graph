@@ -10,11 +10,59 @@ import numpy as np
 import torch
 
 
-def set_seed(seed: int) -> None:
+def resolve_device(requested: str | None = "cuda") -> torch.device:
+    requested_str = str(requested or "cuda").strip().lower()
+    if requested_str == "auto":
+        requested_str = "cuda" if torch.cuda.is_available() else "cpu"
+
+    device = torch.device(requested_str)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA was requested, but PyTorch cannot see a CUDA GPU. "
+            "Install a CUDA-enabled PyTorch build and confirm the NVIDIA driver is active, "
+            "or set the config device to 'cpu' or 'auto'."
+        )
+    return device
+
+
+def device_info(device: torch.device) -> dict[str, Any]:
+    info: dict[str, Any] = {
+        "requested_device": str(device),
+        "device_type": device.type,
+        "torch_version": torch.__version__,
+        "cuda_available": bool(torch.cuda.is_available()),
+        "cuda_version": torch.version.cuda,
+        "cudnn_version": torch.backends.cudnn.version(),
+    }
+    if device.type == "cuda":
+        index = device.index if device.index is not None else torch.cuda.current_device()
+        props = torch.cuda.get_device_properties(index)
+        info.update(
+            {
+                "cuda_device_index": int(index),
+                "cuda_device_name": torch.cuda.get_device_name(index),
+                "cuda_total_memory_gb": round(props.total_memory / (1024**3), 3),
+            }
+        )
+    return info
+
+
+def log_device(device: torch.device, label: str) -> None:
+    info = device_info(device)
+    if device.type == "cuda":
+        print(
+            f"{label} device: {device} "
+            f"({info['cuda_device_name']}, {info['cuda_total_memory_gb']} GB)"
+        )
+    else:
+        print(f"{label} device: {device}")
+
+
+def set_seed(seed: int, seed_cuda: bool = True) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
+    if seed_cuda and torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
 

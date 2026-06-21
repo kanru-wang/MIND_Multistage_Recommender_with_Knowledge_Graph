@@ -15,8 +15,15 @@ venv/
 
 # Ignore Python cache/bytecode files
 __pycache__/
+.pytest_tmp/
 *.pyc
 *.pyo
 *.index
 *.npy
 *.pt
+
+# Ignore generated full MIND-large training/submission runs.
+runs/mind_large_*/
+
+# Ignore tests
+tests/

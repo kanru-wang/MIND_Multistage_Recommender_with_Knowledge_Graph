@@ -31,6 +31,7 @@ src/mindrec/pipeline/ranker_train.py
 src/mindrec/pipeline/rerank_eval.py
 src/mindrec/pipeline/rerank_search.py
 src/mindrec/pipeline/retrieval.py
+src/mindrec/pipeline/submission.py
 src/mindrec/pipeline/teacher_train.py
 src/mindrec/rerank/__init__.py
 src/mindrec/rerank/greedy.py

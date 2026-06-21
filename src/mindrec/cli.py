@@ -14,6 +14,7 @@ from mindrec.pipeline.retrieval import (
     run_eval_retrieval,
     run_eval_retrieval_sweep,
 )
+from mindrec.pipeline.submission import run_write_submission
 from mindrec.pipeline.teacher_train import run_train_teacher
 
 
@@ -68,6 +69,12 @@ def main() -> None:
     )
     _add_config_arg(p)
 
+    p = sub.add_parser(
+        "write_submission",
+        help="Score the hidden MIND test split and write leaderboard prediction.txt",
+    )
+    _add_config_arg(p)
+
     args = parser.parse_args()
     cfg = load_config(args.config)
 
@@ -97,6 +104,9 @@ def main() -> None:
         return
     if args.cmd == "rerank_search":
         run_rerank_search(cfg)
+        return
+    if args.cmd == "write_submission":
+        run_write_submission(cfg)
         return
 
     raise RuntimeError(f"Unknown command: {args.cmd}")

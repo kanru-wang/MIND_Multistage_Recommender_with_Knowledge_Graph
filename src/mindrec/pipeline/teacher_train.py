@@ -20,6 +20,9 @@ from mindrec.data.mind_io import read_behaviors_tsv
 from mindrec.models.teacher import TeacherTwoTower
 from mindrec.utils import (
     behavior_artifact_path,
+    device_info,
+    log_device,
+    resolve_device,
     save_json,
     set_seed,
     validation_split_name,
@@ -384,10 +387,9 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
     dropout = float(teacher_cfg.get("dropout", 0.1))
     temperature = float(teacher_cfg.get("temperature", 0.07))
     negatives_per_positive = int(teacher_cfg.get("negatives_per_positive", 8))
-    device_str = str(teacher_cfg.get("device", "cuda"))
-    if device_str == "cuda" and not torch.cuda.is_available():
-        device_str = "cpu"
-    device = torch.device(device_str)
+    device = resolve_device(teacher_cfg.get("device", "cuda"))
+    device_str = str(device)
+    log_device(device, "Teacher")
     es_cfg = dict(teacher_cfg.get("early_stopping", {}))
     es_enabled = bool(es_cfg.get("enabled", True))
     es_patience = int(es_cfg.get("patience", 2))
@@ -412,10 +414,18 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
     if hidden_dim <= 0:
         hidden_dim = item_base_dim
 
-    raw_root = Path(cfg["data"]["raw_root"]) / cfg["data"]["train_dir"]
-    beh_train = read_behaviors_tsv(raw_root / "behaviors.tsv")
+    train_beh_path = behavior_artifact_path(proc_root, "train")
+    if train_beh_path.exists():
+        beh_train = pd.read_parquet(train_beh_path)
+    else:
+        raw_root = Path(cfg["data"]["raw_root"]) / cfg["data"]["train_dir"]
+        beh_train = read_behaviors_tsv(raw_root / "behaviors.tsv")
     val_split = validation_split_name(cfg)
-    beh_val = pd.read_parquet(behavior_artifact_path(proc_root, val_split))
+    val_beh_path = behavior_artifact_path(proc_root, val_split)
+    data_mode = str(cfg["data"].get("mode", "standard"))
+    validation_allowed = data_mode != "leaderboard_submission"
+    has_validation = validation_allowed and val_beh_path.exists()
+    beh_val = pd.read_parquet(val_beh_path) if has_validation else None
     max_hist = int(cfg["data"]["max_history"])
     topk = int(cfg["retrieval"]["topk"])
     samples, histories_by_user = _build_teacher_samples(
@@ -427,13 +437,15 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
     )
     if not samples:
         raise ValueError("No teacher training samples were built from train behaviors.")
-    val_samples, _ = _build_teacher_samples(
-        beh_val,
-        maps,
-        max_hist=max_hist,
-        negatives_per_positive=negatives_per_positive,
-        seed=seed + 1,
-    )
+    val_samples: list[TeacherSample] = []
+    if beh_val is not None:
+        val_samples, _ = _build_teacher_samples(
+            beh_val,
+            maps,
+            max_hist=max_hist,
+            negatives_per_positive=negatives_per_positive,
+            seed=seed + 1,
+        )
 
     train_ds = TeacherDataset(samples)
     train_loader = DataLoader(
@@ -505,15 +517,18 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
                     )
                     val_losses.append(float(loss.item()))
             val_loss_mean = float(np.mean(val_losses) if val_losses else train_loss_mean)
-        recall_at_k, n_eval = _eval_teacher_recall_at_k(
-            model=model,
-            item_base_tensor=item_base_tensor,
-            beh_eval=beh_val,
-            maps=maps,
-            max_hist=max_hist,
-            topk=topk,
-            device=device,
-        )
+        recall_at_k: float | None = None
+        n_eval = 0
+        if beh_val is not None:
+            recall_at_k, n_eval = _eval_teacher_recall_at_k(
+                model=model,
+                item_base_tensor=item_base_tensor,
+                beh_eval=beh_val,
+                maps=maps,
+                max_hist=max_hist,
+                topk=topk,
+                device=device,
+            )
 
         epoch_metrics.append(
             {
@@ -527,10 +542,19 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
         )
         save_json(art_root / "epochs.json", epoch_metrics)
 
-        improved = recall_at_k > best_metric
-        significant_improvement = (recall_at_k - best_metric) > es_min_delta
+        improved = (
+            True
+            if not has_validation
+            else recall_at_k is not None and recall_at_k > best_metric
+        )
+        significant_improvement = (
+            has_validation
+            and recall_at_k is not None
+            and (recall_at_k - best_metric) > es_min_delta
+        )
         if improved:
-            best_metric = recall_at_k
+            if has_validation and recall_at_k is not None:
+                best_metric = recall_at_k
             best_epoch = epoch
             best_val_loss_mean = val_loss_mean
             best_eval_count = n_eval
@@ -547,15 +571,20 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
                     "val_recall_at_k": recall_at_k,
                     "val_recall_k": topk,
                     "n_eval": n_eval,
+                    "selection_mode": (
+                        "validation_recall" if has_validation else "fixed_epoch"
+                    ),
                 },
                 art_root / "best.pt",
             )
-        if significant_improvement:
+        if not has_validation:
+            epochs_without_improvement = 0
+        elif significant_improvement:
             epochs_without_improvement = 0
         else:
             epochs_without_improvement += 1
 
-        if es_enabled and epochs_without_improvement >= es_patience:
+        if es_enabled and has_validation and epochs_without_improvement >= es_patience:
             stop_reason = "early_stopping"
             break
 
@@ -564,7 +593,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
         model.load_state_dict(best_ckpt["state_dict"])
     else:
         best_epoch = epochs
-        best_metric = recall_at_k
+        best_metric = recall_at_k if recall_at_k is not None else float("nan")
         best_val_loss_mean = val_loss_mean
         best_eval_count = n_eval
 
@@ -592,7 +621,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
             "state_dict": model.state_dict(),
             "best_epoch": best_epoch,
             "best_val_loss_mean": best_val_loss_mean,
-            "best_val_recall_at_k": best_metric,
+            "best_val_recall_at_k": best_metric if has_validation else None,
             "best_val_recall_k": topk,
         },
         art_root / "model.pt",
@@ -601,6 +630,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
     meta = {
         "model_name": teacher_cfg["model_name"],
         "device": device_str,
+        "device_info": device_info(device),
         "item_base_dim": int(item_base.shape[1]),
         "teacher_dim": int(item_teacher_emb.shape[1]),
         "hidden_dim": hidden_dim,
@@ -616,18 +646,20 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
         "train_samples": int(len(samples)),
         "train_users": int(len(histories_by_user)),
         "validation_split_name": val_split,
+        "has_validation": has_validation,
         "val_samples": int(len(val_samples)),
         "epochs": epochs,
-        "early_stopping_enabled": es_enabled,
+        "early_stopping_enabled": es_enabled and has_validation,
         "early_stopping_monitor": monitor_name,
         "early_stopping_patience": es_patience,
         "early_stopping_min_delta": es_min_delta,
         "stopped_epoch": epoch,
         "best_epoch": best_epoch,
         "best_val_loss_mean": best_val_loss_mean,
-        "best_val_recall_at_k": best_metric,
+        "best_val_recall_at_k": best_metric if has_validation else None,
         "best_val_recall_k": topk,
         "best_val_recall_n_eval": best_eval_count,
+        "selection_mode": "validation_recall" if has_validation else "fixed_epoch",
         "stop_reason": stop_reason,
         "lr": lr,
         "train_loss_mean": train_loss_mean,

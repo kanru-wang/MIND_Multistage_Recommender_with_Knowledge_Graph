@@ -24,6 +24,8 @@ from mindrec.models.dlrm import DLRMStudent
 from mindrec.utils import (
     behavior_artifact_path,
     impression_artifact_path,
+    log_device,
+    resolve_device,
     save_json,
     test_split_name,
     validation_split_name,
@@ -418,10 +420,9 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
     runs_root = ensure_dir(Path("runs") / cfg["run_name"])
     out_root = ensure_dir(runs_root / "eval")
 
-    device_str = cfg["ranker"].get("device", "cuda")
-    if device_str == "cuda" and not torch.cuda.is_available():
-        device_str = "cpu"
-    device = torch.device(device_str)
+    device = resolve_device(cfg["ranker"].get("device", "cuda"))
+    device_str = str(device)
+    log_device(device, "Evaluate")
 
     model, item_base, _ = _load_model(cfg, proc_root, runs_root, device)
     calib_path = runs_root / "ranker" / "calibration.json"

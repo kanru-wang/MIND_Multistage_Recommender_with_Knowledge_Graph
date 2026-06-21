@@ -237,6 +237,18 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
+### GPU check
+
+The checked-in configs use `device: "cuda"` for teacher and ranker training. CUDA is now strict: if PyTorch cannot see the NVIDIA GPU, training and scoring fail instead of silently falling back to CPU. Use `device: "auto"` only when you explicitly want CPU fallback.
+
+Verify GPU execution before a long run:
+
+```bash
+python scripts/check_gpu.py --config configs/mind_small.yaml --component ranker
+```
+
+The output should show `cuda_available: True`, `result_device: cuda:0`, and a non-zero `cuda_peak_memory_mb`.
+
 ---
 
 ## 2) Get the dataset (MIND)
@@ -417,7 +429,55 @@ The ranker evaluation includes additional slice families:
 
 For new/cold item ranking evaluation, each impression contains many candidate items, and ranking metrics are calculated for the whole impression. Therefore `impressions_with_clicked_new_item` means: evaluate whole impressions where at least one clicked positive item is new. It does not mean evaluating only the new candidate items inside all impressions.
 
-### 3.5 Search reranker hyperparameters under a product constraint
+### 3.5 Build a MIND-large leaderboard submission
+Use two MIND-large configs:
+- `configs/mind_large_tune.yaml`: model-selection run, with `MINDlarge_train` for training and `MINDlarge_dev` for validation/early stopping/calibration.
+- `configs/mind_large_submission.yaml`: final submission run, with `MINDlarge_train + MINDlarge_dev` for fixed-epoch training and `MINDlarge_test` for hidden-test scoring.
+
+If `knowledge_graph.enabled: true`, first build the Large KG triples file:
+```bash
+python scripts/build_mind_wikidata5m_triples.py ^
+  --kg-path data/raw/wikidata5m/wikidata5m_transductive_train.txt ^
+  --entity-embedding data/raw/MINDlarge_train/entity_embedding.vec ^
+  --entity-embedding data/raw/MINDlarge_dev/entity_embedding.vec ^
+  --entity-embedding data/raw/MINDlarge_test/entity_embedding.vec ^
+  --output data/processed/MINDlarge/kg_triples.tsv
+```
+
+First select hyperparameters/epochs on Large train -> Large dev:
+```bash
+python -m mindrec.cli preprocess --config configs/mind_large_tune.yaml
+python -m mindrec.cli train_teacher --config configs/mind_large_tune.yaml
+python -m mindrec.cli train_ranker --config configs/mind_large_tune.yaml
+python -m mindrec.cli evaluate --config configs/mind_large_tune.yaml
+```
+
+Inspect:
+- `runs/mind_large_tune/teacher/meta.json`
+- `runs/mind_large_tune/ranker/train_summary.json`
+- `runs/mind_large_tune/eval/ranker_eval_val.json`
+
+Then copy the selected fixed epoch counts into `configs/mind_large_submission.yaml`:
+- `teacher.epochs`: selected teacher `best_epoch`
+- `ranker.epochs`: selected ranker `best_epoch`
+
+The final submission config disables early stopping and calibration because no labeled validation split is held out in the final fit. Then run:
+```bash
+python -m mindrec.cli preprocess --config configs/mind_large_submission.yaml
+python -m mindrec.cli train_teacher --config configs/mind_large_submission.yaml
+python -m mindrec.cli train_ranker --config configs/mind_large_submission.yaml
+python -m mindrec.cli write_submission --config configs/mind_large_submission.yaml
+```
+
+The submission command does not use the reranker. It writes:
+- `runs/mind_large_submission/submission/prediction.txt`
+- `runs/mind_large_submission/submission/prediction.zip`
+
+By default, it streams the hidden test file and does not write a large scores parquet. Set `submission.save_scores: true` only if you explicitly want `runs/mind_large_submission/submission/submission_test_scores.parquet` for debugging.
+
+The official MIND evaluator reads `prediction.txt` lines as `impression_id [rank,...]`, where rank `1` is the highest-scored candidate. Local MIND metrics report AUC, MRR, nDCG@5, and nDCG@10 using the same per-impression ranking definitions as the official evaluator; leaderboard rank is primarily by AUC.
+
+### 3.6 Search reranker hyperparameters under a product constraint
 ```bash
 python -m mindrec.cli rerank_search --config configs/mind_small.yaml
 ```

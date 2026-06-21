@@ -17,7 +17,16 @@ from mindrec.data.featurize import IdMaps
 from mindrec.models.calibration import fit_temperature_scaler
 from mindrec.models.dlrm import DLRMStudent
 from mindrec.models.teacher import TeacherTwoTower
-from mindrec.utils import pair_artifact_path, save_json, set_seed, to_device, validation_split_name
+from mindrec.utils import (
+    device_info,
+    log_device,
+    pair_artifact_path,
+    resolve_device,
+    save_json,
+    set_seed,
+    to_device,
+    validation_split_name,
+)
 
 
 class StudentProjHead(nn.Module):
@@ -39,16 +48,19 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
 
     pairs_train = pd.read_parquet(proc_root / "train_pairs.parquet")
     val_split = validation_split_name(cfg)
-    pairs_val = pd.read_parquet(pair_artifact_path(proc_root, val_split))
+    val_pairs_path = pair_artifact_path(proc_root, val_split)
+    data_mode = str(cfg["data"].get("mode", "standard"))
+    validation_allowed = data_mode != "leaderboard_submission"
+    has_validation = validation_allowed and val_pairs_path.exists()
+    pairs_val = pd.read_parquet(val_pairs_path) if has_validation else None
 
     dense_cols = ["history_len", "item_clicks_log1p"]
     train_ds = PairDataset(pairs_train, dense_cols=dense_cols)
-    val_ds = PairDataset(pairs_val, dense_cols=dense_cols)
+    val_ds = PairDataset(pairs_val, dense_cols=dense_cols) if pairs_val is not None else None
 
-    device_str = cfg["ranker"].get("device", "cuda")
-    if device_str == "cuda" and not torch.cuda.is_available():
-        device_str = "cpu"
-    device = torch.device(device_str)
+    device = resolve_device(cfg["ranker"].get("device", "cuda"))
+    device_str = str(device)
+    log_device(device, "Ranker")
 
     runs_root = ensure_dir(Path("runs") / cfg["run_name"])
     art_root = ensure_dir(runs_root / "ranker")
@@ -117,8 +129,16 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     train_loader = DataLoader(
         train_ds, batch_size=bsz, shuffle=True, num_workers=0, collate_fn=collate_batch
     )
-    val_loader = DataLoader(
-        val_ds, batch_size=bsz, shuffle=False, num_workers=0, collate_fn=collate_batch
+    val_loader = (
+        DataLoader(
+            val_ds,
+            batch_size=bsz,
+            shuffle=False,
+            num_workers=0,
+            collate_fn=collate_batch,
+        )
+        if val_ds is not None
+        else None
     )
 
     dist_cfg = cfg["ranker"]["distill"]
@@ -128,6 +148,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     w_cold = float(dist_cfg.get("cold_weight", 2.0))
     w_warm = float(dist_cfg.get("warm_weight", 0.3))
     es_cfg = dict(cfg["ranker"].get("early_stopping", {}))
+    es_enabled = bool(es_cfg.get("enabled", True)) and has_validation
     es_patience = int(es_cfg.get("patience", 2))
     es_min_delta = float(es_cfg.get("min_delta", 1.0e-4))
 
@@ -207,29 +228,31 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         # Validation AUC on the split returned by validation_split_name(cfg).
         model.eval()
         proj.eval()
-        ys = []
-        ps = []
-        with torch.no_grad():
-            for batch in tqdm(val_loader, desc=f"Val ep {ep}"):
-                batch = to_device(batch, device)
-                logits, _ = model(
-                    user_idx=batch["user_idx"],
-                    news_idx=batch["news_idx"],
-                    cat_idx=batch["cat_idx"],
-                    subcat_idx=batch["subcat_idx"],
-                    dense=batch["dense"],
-                    item_base=item_base_tensor[batch["news_idx"]],
-                    history_item_base=item_base_tensor[batch["hist_news_idx"]],
-                    history_mask=batch["hist_mask"],
-                    is_new_item=batch["is_new_item"],
-                    return_repr=False,
-                )
-                ys.extend(batch["label"].detach().cpu().numpy().tolist())
-                ps.extend(torch.sigmoid(logits).detach().cpu().numpy().tolist())
-        try:
-            auc = float(roc_auc_score(ys, ps))
-        except ValueError:
-            auc = 0.0
+        auc: float | None = None
+        if val_loader is not None:
+            ys = []
+            ps = []
+            with torch.no_grad():
+                for batch in tqdm(val_loader, desc=f"Val ep {ep}"):
+                    batch = to_device(batch, device)
+                    logits, _ = model(
+                        user_idx=batch["user_idx"],
+                        news_idx=batch["news_idx"],
+                        cat_idx=batch["cat_idx"],
+                        subcat_idx=batch["subcat_idx"],
+                        dense=batch["dense"],
+                        item_base=item_base_tensor[batch["news_idx"]],
+                        history_item_base=item_base_tensor[batch["hist_news_idx"]],
+                        history_mask=batch["hist_mask"],
+                        is_new_item=batch["is_new_item"],
+                        return_repr=False,
+                    )
+                    ys.extend(batch["label"].detach().cpu().numpy().tolist())
+                    ps.extend(torch.sigmoid(logits).detach().cpu().numpy().tolist())
+            try:
+                auc = float(roc_auc_score(ys, ps))
+            except ValueError:
+                auc = 0.0
 
         epoch_metrics.append(
             {
@@ -240,10 +263,13 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         )
         save_json(art_root / "epochs.json", epoch_metrics)
 
-        improved = auc > best_auc
-        significant_improvement = (auc - best_auc) > es_min_delta
+        improved = True if not has_validation else auc is not None and auc > best_auc
+        significant_improvement = (
+            has_validation and auc is not None and (auc - best_auc) > es_min_delta
+        )
         if improved:
-            best_auc = auc
+            if has_validation and auc is not None:
+                best_auc = auc
             best_epoch = ep
             torch.save(
                 {
@@ -252,15 +278,18 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                     "cfg": cfg,
                     "epoch": ep,
                     "val_auc": auc,
+                    "selection_mode": "validation_auc" if has_validation else "fixed_epoch",
                 },
                 art_root / "best.pt",
             )
-        if significant_improvement:
+        if not has_validation:
+            epochs_without_improvement = 0
+        elif significant_improvement:
             epochs_without_improvement = 0
         else:
             epochs_without_improvement += 1
 
-        if epochs_without_improvement >= es_patience:
+        if es_enabled and epochs_without_improvement >= es_patience:
             stop_reason = "early_stopping"
             break
 
@@ -268,12 +297,17 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         art_root / "train_summary.json",
         {
             "validation_split_name": val_split,
-            "best_val_auc": best_auc,
+            "has_validation": has_validation,
+            "best_val_auc": best_auc if has_validation else None,
             "best_epoch": best_epoch,
+            "selection_mode": "validation_auc" if has_validation else "fixed_epoch",
+            "early_stopping_enabled": es_enabled,
             "early_stopping_patience": es_patience,
             "early_stopping_min_delta": es_min_delta,
             "stop_reason": stop_reason,
             "stopped_epoch": ep,
+            "device": device_str,
+            "device_info": device_info(device),
         },
     )
 
@@ -281,6 +315,20 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     ckpt = torch.load(art_root / "best.pt", map_location=device)
     model.load_state_dict(ckpt["model"])
     model.eval()
+
+    calibration_enabled = bool(cal_cfg.get("enabled", True)) and val_loader is not None
+    if not calibration_enabled:
+        calib_path = art_root / "calibration.json"
+        if calib_path.exists():
+            calib_path.unlink()
+        save_json(
+            art_root / "calibration_stats.json",
+            {
+                "enabled": False,
+                "reason": "disabled_final_fit_or_no_validation_split",
+            },
+        )
+        return
 
     logits_all = []
     labels_all = []

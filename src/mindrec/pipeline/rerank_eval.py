@@ -28,7 +28,9 @@ from mindrec.pipeline.evaluate import _expand_history_base, _load_model
 from mindrec.rerank.greedy import build_news_meta, cosine_sim_matrix, greedy_rerank
 from mindrec.utils import (
     impression_artifact_path,
+    log_device,
     position_bias_weights,
+    resolve_device,
     save_json,
     test_split_name,
 )
@@ -67,10 +69,9 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
     runs_root = ensure_dir(Path("runs") / cfg["run_name"])
     out_root = ensure_dir(runs_root / "eval")
 
-    device_str = cfg["ranker"].get("device", "cuda")
-    if device_str == "cuda" and not torch.cuda.is_available():
-        device_str = "cpu"
-    device = torch.device(device_str)
+    device = resolve_device(cfg["ranker"].get("device", "cuda"))
+    device_str = str(device)
+    log_device(device, "Rerank eval")
 
     model, item_base, teacher_item = _load_model(cfg, proc_root, runs_root, device)
 
