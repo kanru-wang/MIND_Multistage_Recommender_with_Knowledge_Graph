@@ -1,0 +1,26 @@
+[
+  {
+    "epoch": 1,
+    "train_loss_mean": 6.504652876896605,
+    "val_loss_mean": 6.659138055216345,
+    "val_recall_at_k": 0.03578407226056109,
+    "val_recall_k": 200,
+    "n_eval": 100436
+  },
+  {
+    "epoch": 2,
+    "train_loss_mean": 6.357316999048179,
+    "val_loss_mean": 6.58673083455188,
+    "val_recall_at_k": 0.027386743484961368,
+    "val_recall_k": 200,
+    "n_eval": 100436
+  },
+  {
+    "epoch": 3,
+    "train_loss_mean": 6.29598804317666,
+    "val_loss_mean": 6.568232318706941,
+    "val_recall_at_k": 0.0340809481124578,
+    "val_recall_k": 200,
+    "n_eval": 100436
+  }
+]

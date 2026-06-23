@@ -1,4 +1,4 @@
-# MIND Multi-Stage News Recommender (Retrieval → DLRM+Knowledge_Graph Ranker → Diversity+Coverage+Fairness Re-ranker)
+# MIND Multi-Stage News Recommender (Retrieval -> DLRM+Knowledge_Graph Ranker -> Diversity+Coverage+Fairness Re-ranker)
 
 This project implements a realistic recommender stack on the **Microsoft News Dataset (MIND)**:
 - Preprocessing: prepare train/val/test data, click-count features, cold/new flags, impression-level eval data, and map IDs to indices.
@@ -212,7 +212,9 @@ Category and clicked-item-popularity slices help check whether the model is robu
 - **Diversity**: intra-list diversity (ILD), category coverage@K, category entropy@K
 - **Exposure fairness**: position-weighted exposure, disparity vs target distribution (KL / L1 / Gini), new-item exposure floor
 
-The official MIND leaderboard reports `AUC`, `MRR`, `nDCG@5`, and `nDCG@10` (see each `ranker_eval_*.json`). The official leaderboard uses the full/large hidden test set. These metrics are not directly comparable to this repo's metrics (from `MINDsmall_dev`'s time-based val-test splits).
+The official MIND leaderboard reports `AUC`, `MRR`, `nDCG@5`, and `nDCG@10` (see each `ranker_eval_*.json`). The official leaderboard uses the full/large hidden test set. Local metrics are split-dependent, so compare runs only when they use the same validation protocol.
+
+The split protocols and current result locations are tracked in [docs/experiment_registry.md](docs/experiment_registry.md). Check that registry before comparing metrics across runs.
 
 <br>
 <br>
@@ -244,7 +246,7 @@ The checked-in configs use `device: "cuda"` for teacher and ranker training. CUD
 Verify GPU execution before a long run:
 
 ```bash
-python scripts/check_gpu.py --config configs/mind_small.yaml --component ranker
+python scripts/check_gpu.py --config configs/mind_small_temporal_tune.yaml --component ranker
 ```
 
 The output should show `cuda_available: True`, `result_device: cuda:0`, and a non-zero `cuda_peak_memory_mb`.
@@ -288,16 +290,16 @@ Download one of the Wikidata5M KG files from:
 
 Then filter it down to MIND-mentioned entities:
 
-```
-python scripts/build_mind_wikidata5m_triples.py
-  --kg-path path/to/wikidata5m_transductive_train.txt
-  --raw-root data/raw
-  --train-dir MINDsmall_train
-  --dev-dir MINDsmall_dev
-  --entity-embedding data/raw/MINDsmall_train/entity_embedding.vec
-  --entity-embedding data/raw/MINDsmall_dev/entity_embedding.vec
-  --relation-embedding data/raw/MINDsmall_train/relation_embedding.vec
-  --relation-embedding data/raw/MINDsmall_dev/relation_embedding.vec
+```powershell
+python scripts/build_mind_wikidata5m_triples.py `
+  --kg-path path/to/wikidata5m_transductive_train.txt `
+  --raw-root data/raw `
+  --train-dir MINDsmall_train `
+  --dev-dir MINDsmall_dev `
+  --entity-embedding data/raw/MINDsmall_train/entity_embedding.vec `
+  --entity-embedding data/raw/MINDsmall_dev/entity_embedding.vec `
+  --relation-embedding data/raw/MINDsmall_train/relation_embedding.vec `
+  --relation-embedding data/raw/MINDsmall_dev/relation_embedding.vec `
   --output data/processed/MINDsmall/kg_triples.tsv
 ```
 
@@ -323,13 +325,12 @@ The accepted design is therefore **text-only retrieval plus a KG-enhanced ranker
 
 `run_preprocess()` converts raw MIND TSV files into model-ready parquet/json files.
 
-Main steps:
+Main steps for temporal-tune configs such as `configs/mind_small_temporal_tune.yaml`:
 - Read `news.tsv` and `behaviors.tsv` from train/dev.
 - Build ID mappings (`user_id/news_id/category/subcategory -> integer index`).
-- Keep `train_dir` as training data. Split `dev_dir` into validation and test, by timestamp.
-- The current config uses an `80% / 20%` time split inside `MINDsmall_dev`: the earlier window becomes `val`, the later window becomes `test`.
-- Build pairwise rows for training and held-out evaluation (`train_pairs.parquet`, `val_pairs.parquet`, `test_pairs.parquet`).
-- Build impression-level validation/test data (`val_impressions.parquet`, `test_impressions.parquet`).
+- Move the final day of `train_dir` into validation, then append all of `dev_dir` to that same validation split.
+- Build pairwise rows for training and held-out validation (`train_pairs.parquet`, `val_pairs.parquet`).
+- Build impression-level validation data (`val_impressions.parquet`).
 
 How pairs are created:
 - For an impression with `P` positives and `N` negatives, `P * (1 + min(data.ranker_negatives_per_positive, N))` pairs are generated.
@@ -345,13 +346,13 @@ What about the negative sampling for teacher?
 
 Why there is no `train_impressions.parquet`:
 - Training uses pairwise rows (`train_pairs.parquet`), not full impression-grouped rows.
-- Impression-grouped data is mainly needed for ranking evaluation, so only generated for val and test.
+- Impression-grouped data is mainly needed for ranking evaluation, so temporal-tune configs only generate it for `val`.
 
-Validation/test split note:
+Validation split note:
 - Training, early stopping, and calibration use `val`.
-- `eval_retrieval` and `evaluate` evaluate on both `val` and `test` data and report every split listed in `eval.report_splits`.
-- Reranker search only uses `val` so the chosen operating point can still be reported fairly on `test`.
-- `rerank_eval` is the final reranker report and only uses `test`.
+- `eval_retrieval` and `evaluate` report every split listed in `eval.report_splits`; temporal-tune configs report only `val`.
+- Large hidden test scoring is handled by `configs/mind_large_submission.yaml` and `write_submission`.
+- The older `configs/mind_small.yaml` still supports the previous Small `val`/`test` demo flow, but architecture experiments should use the temporal config.
 
 The evaluation JSONs also split each evaluated holdout window into chronological `time_period__...` slices, so regressions can be checked against the actual temporal order of impressions:
 
@@ -359,35 +360,31 @@ The evaluation JSONs also split each evaluated holdout window into chronological
 
 ![nDCG@10 over time](images/nDCG_over_time.png)
 
-Current MINDsmall split sizes in this repo:
-- Training source (`MINDsmall_train`): `156,965` impressions
-- Raw holdout source (`MINDsmall_dev`, split into `val` and `test` during preprocessing): `73,152` impressions
-- Validation split: `58,521` impressions
-- Test split: `14,631` impressions
-- Training pairs: `1,135,225`
-- Validation pairs: `436,424`
-- Test pairs: `105,355`
+Temporal MINDsmall raw split sizes:
+- Training before Nov 14 from `MINDsmall_train`: `126,695` impressions
+- Nov 14 tail moved from `MINDsmall_train` to validation: `30,270` impressions
+- Official `MINDsmall_dev` appended to validation: `73,152` impressions
+- Combined validation: `103,422` impressions
 
 ---
 
 ## 3) End-to-end
 
-### 3.1 Preprocess TSV → Parquet + feature maps
-```bash
-python -m mindrec.cli preprocess --config configs/mind_small.yaml
+### 3.1 Preprocess TSV -> Parquet + feature maps
+```powershell
+python -m mindrec.cli preprocess --config configs/mind_small_temporal_tune.yaml
 ```
 
 ### 3.2 Train teacher retriever + build ANN index
-```bash
-python -m mindrec.cli train_teacher --config configs/mind_small.yaml
-python -m mindrec.cli build_index --config configs/mind_small.yaml
-python -m mindrec.cli eval_retrieval --config configs/mind_small.yaml
-python -m mindrec.cli eval_retrieval_sweep --config configs/mind_small.yaml
+```powershell
+python -m mindrec.cli train_teacher --config configs/mind_small_temporal_tune.yaml
+python -m mindrec.cli build_index --config configs/mind_small_temporal_tune.yaml
+python -m mindrec.cli eval_retrieval --config configs/mind_small_temporal_tune.yaml
+python -m mindrec.cli eval_retrieval_sweep --config configs/mind_small_temporal_tune.yaml
 ```
 
-With the current config, `eval_retrieval` writes:
+With the temporal Small config, `eval_retrieval` writes:
 - `runs/<run_name>/retrieval/eval_val.json`
-- `runs/<run_name>/retrieval/eval_test.json`
 
 The retrieval evaluation includes additional slice families:
 - chronological `time_period__...` slices within each evaluated split
@@ -403,21 +400,19 @@ The retrieval evaluation includes additional slice families:
 It writes `runs/<run_name>/retrieval/sweep.json` with all tested settings plus the best one by held-out `recall@K`.
 
 ### 3.3 Train student DLRM ranker with distillation
-```bash
-python -m mindrec.cli train_ranker --config configs/mind_small.yaml
+```powershell
+python -m mindrec.cli train_ranker --config configs/mind_small_temporal_tune.yaml
 ```
 
 After training the ranker on `train_pairs.parquet`, train_ranker fits a temperature scaler on `val_pairs.parquet`. It tunes a single positive scalar `T` in `sigmoid(logit / T)` against held-out labels, improving probability **calibration** without changing ranking order.
 
 ### 3.4 Evaluate ranker + reranker (metrics + slices)
-```bash
-python -m mindrec.cli evaluate --config configs/mind_small.yaml
-python -m mindrec.cli rerank_eval --config configs/mind_small.yaml
+```powershell
+python -m mindrec.cli evaluate --config configs/mind_small_temporal_tune.yaml
 ```
 
-With the current config, `evaluate` writes:
+With the temporal Small config, `evaluate` writes:
 - `runs/<run_name>/eval/ranker_eval_val.json`
-- `runs/<run_name>/eval/ranker_eval_test.json`
 
 The ranker evaluation includes additional slice families:
 - chronological `time_period__...` slices within each evaluated split
@@ -430,39 +425,45 @@ The ranker evaluation includes additional slice families:
 For new/cold item ranking evaluation, each impression contains many candidate items, and ranking metrics are calculated for the whole impression. Therefore `impressions_with_clicked_new_item` means: evaluate whole impressions where at least one clicked positive item is new. It does not mean evaluating only the new candidate items inside all impressions.
 
 ### 3.5 Build a MIND-large leaderboard submission
-Use two MIND-large configs:
-- `configs/mind_large_tune.yaml`: model-selection run, with `MINDlarge_train` for training and `MINDlarge_dev` for validation/early stopping/calibration.
+Use three MIND-large configs:
+- `configs/mind_large_temporal_tune.yaml`: recommended experiment baseline. It trains on `MINDlarge_train` before Nov 14, then validates on Nov 14 from `MINDlarge_train` plus all of `MINDlarge_dev`.
+- `configs/mind_large_tune.yaml`: official train-to-dev model-selection run, with all `MINDlarge_train` for training and `MINDlarge_dev` for validation.
 - `configs/mind_large_submission.yaml`: final submission run, with `MINDlarge_train + MINDlarge_dev` for fixed-epoch training and `MINDlarge_test` for hidden-test scoring.
 
 If `knowledge_graph.enabled: true`, first build the Large KG triples file:
-```bash
-python scripts/build_mind_wikidata5m_triples.py ^
-  --kg-path data/raw/wikidata5m/wikidata5m_transductive_train.txt ^
-  --entity-embedding data/raw/MINDlarge_train/entity_embedding.vec ^
-  --entity-embedding data/raw/MINDlarge_dev/entity_embedding.vec ^
-  --entity-embedding data/raw/MINDlarge_test/entity_embedding.vec ^
+```powershell
+python scripts/build_mind_wikidata5m_triples.py `
+  --kg-path data/raw/wikidata5m/wikidata5m_transductive_train.txt `
+  --entity-embedding data/raw/MINDlarge_train/entity_embedding.vec `
+  --entity-embedding data/raw/MINDlarge_dev/entity_embedding.vec `
+  --entity-embedding data/raw/MINDlarge_test/entity_embedding.vec `
   --output data/processed/MINDlarge/kg_triples.tsv
 ```
 
-First select hyperparameters/epochs on Large train -> Large dev:
-```bash
-python -m mindrec.cli preprocess --config configs/mind_large_tune.yaml
-python -m mindrec.cli train_teacher --config configs/mind_large_tune.yaml
-python -m mindrec.cli train_ranker --config configs/mind_large_tune.yaml
-python -m mindrec.cli evaluate --config configs/mind_large_tune.yaml
+First build the temporal baseline for future experiments:
+```powershell
+python -m mindrec.cli preprocess --config configs/mind_large_temporal_tune.yaml
+python -m mindrec.cli train_teacher --config configs/mind_large_temporal_tune.yaml
+python -m mindrec.cli train_ranker --config configs/mind_large_temporal_tune.yaml
+python -m mindrec.cli evaluate --config configs/mind_large_temporal_tune.yaml
 ```
 
 Inspect:
-- `runs/mind_large_tune/teacher/meta.json`
-- `runs/mind_large_tune/ranker/train_summary.json`
-- `runs/mind_large_tune/eval/ranker_eval_val.json`
+- `data/processed/MINDlarge_temporal_tune/preprocess_meta.json`
+- `runs/mind_large_temporal_tune/teacher/meta.json`
+- `runs/mind_large_temporal_tune/ranker/train_summary.json`
+- `runs/mind_large_temporal_tune/eval/ranker_eval_val.json`
+
+For temporal configs, the evaluation row count in `ranker_eval_val.json` should match `n_validation_eval_impressions` in `preprocess_meta.json`. If it does not, rerun `evaluate` with the current code before using the metrics as a baseline.
+
+Current baseline metrics are recorded in [docs/experiment_registry.md](docs/experiment_registry.md).
 
 Then copy the selected fixed epoch counts into `configs/mind_large_submission.yaml`:
 - `teacher.epochs`: selected teacher `best_epoch`
 - `ranker.epochs`: selected ranker `best_epoch`
 
 The final submission config disables early stopping and calibration because no labeled validation split is held out in the final fit. Then run:
-```bash
+```powershell
 python -m mindrec.cli preprocess --config configs/mind_large_submission.yaml
 python -m mindrec.cli train_teacher --config configs/mind_large_submission.yaml
 python -m mindrec.cli train_ranker --config configs/mind_large_submission.yaml
@@ -478,8 +479,9 @@ By default, it streams the hidden test file and does not write a large scores pa
 The official MIND evaluator reads `prediction.txt` lines as `impression_id [rank,...]`, where rank `1` is the highest-scored candidate. Local MIND metrics report AUC, MRR, nDCG@5, and nDCG@10 using the same per-impression ranking definitions as the official evaluator; leaderboard rank is primarily by AUC.
 
 ### 3.6 Search reranker hyperparameters under a product constraint
-```bash
-python -m mindrec.cli rerank_search --config configs/mind_small.yaml
+Reranking is not used by the leaderboard submission path, but the search workflow is still available for product-style ranking experiments:
+```powershell
+python -m mindrec.cli rerank_search --config configs/mind_small_temporal_tune.yaml
 ```
 
 The reranking score and scalar utility are used at different levels:
@@ -513,7 +515,7 @@ with coefficients:
 - `1.5 * category_coverage_gain_units`
 - `1.5 * fairness_kl_pool_improvement_units`
 
-The search uses baseline-relative guardrails. We need guardrails because guardrails define what “acceptable” means, and then we can choose the setting with the highest utility among acceptable tradeoffs. Also, if the coefficients underweight relevance or overweight coverage/fairness, then a setting can look “best” by utility while still being a bad product choice; guardrails can prevent that. Current guardrails:
+The search uses baseline-relative guardrails. We need guardrails because guardrails define what "acceptable" means, and then we can choose the setting with the highest utility among acceptable tradeoffs. Also, if the coefficients underweight relevance or overweight coverage/fairness, then a setting can look "best" by utility while still being a bad product choice; guardrails can prevent that. Current guardrails:
 - `nDCG@10` drop must be at most `2.1%` relative to the baseline ranker (initially 2%; changed to 2.1% to allow a good hyperparameter set).
 - `new_item_exposure_frac` must not decrease relative to baseline.
 - `category_coverage@10` must improve by at least `0.25`.
@@ -522,8 +524,8 @@ The search uses baseline-relative guardrails. We need guardrails because guardra
 Typical workflow:
 - run `rerank_search`
 - inspect `best_feasible` or another chosen operating point in `rerank_search.json`
-- update `configs/mind_small.yaml` with the selected rerank parameters
-- run `rerank_eval` again to evaluate that chosen setting as the new default reranker
+- update the active experiment config with the selected rerank parameters
+- rerun `rerank_search` or a dedicated reranker report on the same temporal validation split
 
 The current reranker search reports three views of the tradeoff surface on validation:
 - `best_feasible`: maximize scalar utility among settings that satisfy the guardrails
@@ -548,10 +550,10 @@ The search writes its summary to `runs/<run_name>/eval/rerank_search.json`.
 Artifacts go to `runs/<run_name>/`.
 Training logs are written to `runs/<run_name>/teacher/epochs.json` and `runs/<run_name>/ranker/epochs.json`.
 
-### 3.6 Last completed demo results (`runs/mind_small_demo`)
+### 3.7 Historical demo results (`runs/mind_small_demo`)
 
 Teacher retrieval:
-- Current retrieval setup is text-only hybrid retrieval:
+- Historical retrieval setup was text-only hybrid retrieval:
   - teacher retrieval from `item_teacher_emb.npy`
   - text-only item-base fallback from `item_base_emb.npy`
   - KG is not used by the teacher or retrieval indexes
@@ -565,12 +567,12 @@ Teacher retrieval:
 - Rejected experiment: adding category/subcategory prefixes to the teacher text input improved Teacher retrieval validation `Recall@200`, but hurt downstream Student ranker quality, so the default remains `teacher.text.include_category_prefix = false`.
 
 Student ranker:
-- Current semantic input is `item_ranker_base_emb.npy`, a `484`-dimensional text-plus-KG vector:
+- Historical semantic input was `item_ranker_base_emb.npy`, a `484`-dimensional text-plus-KG vector:
   - text dimension: `384`
   - KG dimension: `100`
   - `knowledge_graph.enabled = true`
   - the teacher and retrieval indexes remain text-only
-- Current semantic settings:
+- Historical semantic settings:
   - `semantic_ff_mult=3`
   - `semantic_dropout=0.20`
   - `dropout=0.15`
@@ -599,13 +601,13 @@ Student ranker:
 
 Search summary:
 - `best_feasible` is the setting that has the highest-utility and is also feasible
-- Current validation baseline ranker before reranking:
+- Historical validation baseline ranker before reranking:
   - `nDCG@10 = 0.419516`
   - `Recall@10 = 0.685537`
   - `category_coverage@10 = 5.341723`
   - `fairness_kl_pool = 0.418917`
   - `new_item_exposure_frac = 0.560894`
-- Current validation `best_feasible`:
+- Historical validation `best_feasible`:
   - `nDCG@10 = 0.411298`
   - `Recall@10 = 0.674537`
   - `category_coverage@10 = 6.059363`

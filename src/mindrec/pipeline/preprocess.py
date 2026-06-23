@@ -142,23 +142,24 @@ def build_impressions_for_eval(
             cand_is_new.append(is_new)
             cand_clicks_log1p.append(float(np.log1p(clicks)))
 
-        rows.append(
-            {
-                "impression_id": str(r["impression_id"]),
-                "user_id": user_id,
-                "user_idx": user_idx,
-                "hist_news_idx": hist_news_idx,
-                "history_len": float(len(hist_news_idx)),
-                "is_cold_user": cold_u,
-                "cand_news_id": cand_ids,
-                "cand_label": labels,
-                "cand_news_idx": cand_news_idx,
-                "cand_cat_idx": cand_cat_idx,
-                "cand_subcat_idx": cand_subcat_idx,
-                "cand_is_new_item": cand_is_new,
-                "cand_item_clicks_log1p": cand_clicks_log1p,
-            }
-        )
+        row = {
+            "impression_id": str(r["impression_id"]),
+            "user_id": user_id,
+            "user_idx": user_idx,
+            "hist_news_idx": hist_news_idx,
+            "history_len": float(len(hist_news_idx)),
+            "is_cold_user": cold_u,
+            "cand_news_id": cand_ids,
+            "cand_label": labels,
+            "cand_news_idx": cand_news_idx,
+            "cand_cat_idx": cand_cat_idx,
+            "cand_subcat_idx": cand_subcat_idx,
+            "cand_is_new_item": cand_is_new,
+            "cand_item_clicks_log1p": cand_clicks_log1p,
+        }
+        if "time" in r.index:
+            row["time"] = r["time"]
+        rows.append(row)
     return pd.DataFrame(rows)
 
 
@@ -221,6 +222,45 @@ def _split_holdout_behaviors(
 def _remove_if_exists(path: Path) -> None:
     if path.exists():
         path.unlink()
+
+
+def _split_behaviors_from_time(
+    beh: pd.DataFrame,
+    validation_start: str,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    parsed = pd.to_datetime(
+        beh["time"], format="%m/%d/%Y %I:%M:%S %p", errors="coerce"
+    )
+    if parsed.isna().any():
+        raise ValueError("Temporal split found unparseable behavior timestamps.")
+
+    validation_start_ts = pd.Timestamp(validation_start)
+    if validation_start_ts.tzinfo is not None:
+        validation_start_ts = validation_start_ts.tz_convert(None)
+
+    train_mask = parsed < validation_start_ts
+    val_mask = parsed >= validation_start_ts
+    train = beh.loc[train_mask].reset_index(drop=True)
+    val = beh.loc[val_mask].reset_index(drop=True)
+    if train.empty or val.empty:
+        raise ValueError(
+            "Temporal split produced an empty train or validation set. "
+            f"validation_start={validation_start!r}, "
+            f"n_train={len(train)}, n_val={len(val)}"
+        )
+
+    meta = {
+        "strategy": "train_tail_time_split",
+        "validation_start": str(validation_start_ts),
+        "n_source_impressions": int(len(beh)),
+        "n_train_impressions": int(len(train)),
+        "n_validation_impressions": int(len(val)),
+        "train_time_min": str(train["time"].iloc[0]),
+        "train_time_max": str(train["time"].iloc[-1]),
+        "val_time_min": str(val["time"].iloc[0]),
+        "val_time_max": str(val["time"].iloc[-1]),
+    }
+    return train, val, meta
 
 
 def _run_standard_preprocess(cfg: dict[str, Any]) -> None:
@@ -363,7 +403,7 @@ def _run_standard_preprocess(cfg: dict[str, Any]) -> None:
     save_json(proc_root / "preprocess_meta.json", meta)
 
 
-def _run_leaderboard_preprocess(cfg: dict[str, Any]) -> None:
+def _run_multi_source_preprocess(cfg: dict[str, Any]) -> None:
     seed = int(cfg["data"].get("sub_sample", {}).get("seed", 13))
     set_seed(seed, seed_cuda=False)
 
@@ -371,22 +411,36 @@ def _run_leaderboard_preprocess(cfg: dict[str, Any]) -> None:
     ds = cfg["data"]["dataset_name"]
     train_dir = raw_root / cfg["data"]["train_dir"]
     dev_dir = raw_root / cfg["data"]["dev_dir"]
-    test_dir = raw_root / cfg["data"]["test_dir"]
+    mode = str(cfg["data"].get("mode", "leaderboard_submission"))
+    test_dir = (
+        raw_root / cfg["data"]["test_dir"]
+        if "test_dir" in cfg["data"]
+        else None
+    )
 
     news_train = read_news_tsv(train_dir / "news.tsv")
     beh_train = read_behaviors_tsv(train_dir / "behaviors.tsv")
-    news_dev = read_news_tsv(dev_dir / "news.tsv")
-    beh_dev = read_behaviors_tsv(dev_dir / "behaviors.tsv")
+    news_dev = None
+    beh_dev = None
+    if mode in {
+        "leaderboard_tune",
+        "temporal_tune",
+        "leaderboard_submission",
+    }:
+        news_dev = read_news_tsv(dev_dir / "news.tsv")
+        beh_dev = read_behaviors_tsv(dev_dir / "behaviors.tsv")
 
     ss = cfg["data"].get("sub_sample", {})
     if ss.get("enabled", False):
         beh_train = sub_sample_behaviors(beh_train, int(ss["train_impressions"]), seed)
-        beh_dev = sub_sample_behaviors(beh_dev, int(ss["dev_impressions"]), seed)
+        if beh_dev is not None:
+            beh_dev = sub_sample_behaviors(beh_dev, int(ss["dev_impressions"]), seed)
 
-    mode = str(cfg["data"].get("mode", "leaderboard_submission"))
-    news_parts = [news_train, news_dev]
+    news_parts = [news_train]
     n_submission_impressions = 0
     if mode == "leaderboard_tune":
+        assert news_dev is not None and beh_dev is not None
+        news_parts.append(news_dev)
         fit_beh = beh_train.reset_index(drop=True)
         val_beh = beh_dev.reset_index(drop=True)
         holdout_meta = {
@@ -395,9 +449,39 @@ def _run_leaderboard_preprocess(cfg: dict[str, Any]) -> None:
             "validation_source": cfg["data"]["dev_dir"],
             "test_source": None,
         }
+    elif mode == "temporal_tune":
+        assert news_dev is not None and beh_dev is not None
+        news_parts.append(news_dev)
+        temporal_cfg = dict(cfg["data"].get("temporal_validation", {}))
+        validation_start = str(
+            temporal_cfg.get("validation_start", "2019-11-14 00:00:00")
+        )
+        fit_beh, train_tail_val, holdout_meta = _split_behaviors_from_time(
+            beh=beh_train,
+            validation_start=validation_start,
+        )
+        val_beh = pd.concat([train_tail_val, beh_dev], axis=0).reset_index(drop=True)
+        holdout_meta.update(
+            {
+                "strategy": "temporal_model_selection",
+                "train_source": cfg["data"]["train_dir"],
+                "validation_sources": [
+                    f"{cfg['data']['train_dir']} tail",
+                    cfg["data"]["dev_dir"],
+                ],
+                "n_train_tail_validation_impressions": int(len(train_tail_val)),
+                "n_dev_validation_impressions": int(len(beh_dev)),
+                "n_validation_impressions": int(len(val_beh)),
+                "test_source": None,
+            }
+        )
     elif mode == "leaderboard_submission":
+        if test_dir is None:
+            raise ValueError("leaderboard_submission mode requires data.test_dir.")
+        assert news_dev is not None and beh_dev is not None
         news_test = read_news_tsv(test_dir / "news.tsv")
         n_submission_impressions = count_behavior_rows(test_dir / "behaviors.tsv")
+        news_parts.append(news_dev)
         news_parts.append(news_test)
         fit_beh = pd.concat([beh_train, beh_dev], axis=0).reset_index(drop=True)
         val_beh = None
@@ -408,7 +492,7 @@ def _run_leaderboard_preprocess(cfg: dict[str, Any]) -> None:
             "test_source": cfg["data"]["test_dir"],
         }
     else:
-        raise ValueError(f"Unsupported leaderboard mode: {mode}")
+        raise ValueError(f"Unsupported multi-source mode: {mode}")
 
     news_all = (
         pd.concat(news_parts, axis=0)
@@ -504,8 +588,12 @@ def _run_leaderboard_preprocess(cfg: dict[str, Any]) -> None:
 
 def run_preprocess(cfg: dict[str, Any]) -> None:
     mode = str(cfg["data"].get("mode", "standard"))
-    if mode in {"leaderboard_tune", "leaderboard_submission"}:
-        _run_leaderboard_preprocess(cfg)
+    if mode in {
+        "leaderboard_tune",
+        "temporal_tune",
+        "leaderboard_submission",
+    }:
+        _run_multi_source_preprocess(cfg)
         return
     if mode != "standard":
         raise ValueError(f"Unknown data.mode: {mode}")

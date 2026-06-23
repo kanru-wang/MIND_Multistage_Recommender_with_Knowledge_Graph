@@ -177,6 +177,27 @@ def _attach_time_periods(impr: pd.DataFrame, n_periods: int) -> tuple[pd.DataFra
     return out, meta
 
 
+def _attach_behavior_time(impr: pd.DataFrame, beh: pd.DataFrame) -> pd.DataFrame:
+    out = impr.copy()
+    if "time" in out.columns:
+        return out
+
+    if len(out) == len(beh):
+        out["time"] = beh["time"].to_numpy()
+        return out
+
+    beh_time = beh[["impression_id", "time"]].drop_duplicates(
+        "impression_id",
+        keep="first",
+    )
+    return out.merge(
+        beh_time,
+        on="impression_id",
+        how="left",
+        validate="many_to_one",
+    )
+
+
 def _metric_keys(ks: list[int]) -> list[str]:
     return (
         [f"ndcg@{k}" for k in ks]
@@ -231,11 +252,7 @@ def _evaluate_split(
     beh = pd.read_parquet(behavior_artifact_path(proc_root, split_name))
     impr["impression_id"] = impr["impression_id"].astype(str)
     beh["impression_id"] = beh["impression_id"].astype(str)
-    impr = impr.merge(
-        beh[["impression_id", "time"]],
-        on="impression_id",
-        how="left",
-    )
+    impr = _attach_behavior_time(impr, beh)
     time_periods = int(cfg.get("eval", {}).get("time_periods", 4))
     impr, time_period_meta = _attach_time_periods(impr, time_periods)
     ks = [int(k) for k in cfg["eval"]["ks"]]

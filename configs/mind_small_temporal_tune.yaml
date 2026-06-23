@@ -1,17 +1,18 @@
-run_name: "mind_large_tune"
+run_name: "mind_small_temporal_tune"
 
 data:
   raw_root: "data/raw"
-  dataset_name: "MINDlarge_tune"
-  mode: "leaderboard_tune"
-  train_dir: "MINDlarge_train"
-  dev_dir: "MINDlarge_dev"
-  test_dir: "MINDlarge_test"
+  dataset_name: "MINDsmall_temporal_tune"
+  mode: "temporal_tune"
+  train_dir: "MINDsmall_train"
+  dev_dir: "MINDsmall_dev"
   processed_root: "data/processed"
   max_history: 50
   min_user_hist_for_warm: 5
   min_item_train_clicks_for_warm: 10
   ranker_negatives_per_positive: 4
+  temporal_validation:
+    validation_start: "2019-11-14 00:00:00"
   sub_sample:
     enabled: false
     train_impressions: 200000
@@ -22,7 +23,7 @@ knowledge_graph:
   enabled: true
   entity_embedding_path: null
   relation_embedding_path: null
-  triples_path: "data/processed/MINDlarge/kg_triples.tsv"
+  triples_path: "data/processed/MINDsmall/kg_triples.tsv"
   max_entities_per_news: 12
   max_neighbors_per_entity: 20
   add_reverse_edges: true
