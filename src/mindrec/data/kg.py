@@ -13,6 +13,7 @@ import pandas as pd
 class NeighborEdge:
     relation_id: str
     neighbor_id: str
+    # 1 means current entity is the triple head; -1 means it is the triple tail.
     direction: int
 
 
@@ -182,7 +183,10 @@ def build_news_kg_feature_matrix(
                 if relation_vec is None:
                     msg = neighbor_vec
                 else:
-                    msg = neighbor_vec + (
+                    # TransE-style relation embeddings satisfy head + relation ~= tail.
+                    # Convert the neighbor back toward the current entity's space:
+                    # head-side entity receives tail - relation; tail-side receives head + relation.
+                    msg = neighbor_vec - (
                         edge.direction * relation_weight * relation_vec
                     )
                 neighbor_messages.append(msg.astype(np.float32, copy=False))
