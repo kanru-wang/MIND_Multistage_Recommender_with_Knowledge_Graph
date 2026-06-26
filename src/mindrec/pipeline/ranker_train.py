@@ -24,6 +24,8 @@ from mindrec.utils import (
     resolve_device,
     save_json,
     set_seed,
+    teacher_artifact_root,
+    teacher_artifact_run_name,
     to_device,
     validation_split_name,
 )
@@ -70,13 +72,14 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         if bool(cfg.get("knowledge_graph", {}).get("enabled", False))
         else "item_base_emb.npy"
     )
-    ranker_base_path = runs_root / "teacher" / ranker_base_name
+    teacher_root = teacher_artifact_root(cfg)
+    ranker_base_path = teacher_root / ranker_base_name
     item_base = np.load(ranker_base_path)
-    teacher_item = np.load(runs_root / "teacher" / "item_teacher_emb.npy")
+    teacher_item = np.load(teacher_root / "item_teacher_emb.npy")
     item_base_tensor = torch.tensor(item_base, dtype=torch.float32, device=device)
     teacher_item_tensor = torch.tensor(teacher_item, dtype=torch.float32, device=device)
     teacher_dim = int(teacher_item.shape[1])
-    teacher_ckpt = torch.load(runs_root / "teacher" / "model.pt", map_location=device)
+    teacher_ckpt = torch.load(teacher_root / "model.pt", map_location=device)
     teacher_model = TeacherTwoTower(
         item_dim=int(teacher_ckpt["item_dim"]),
         hidden_dim=int(teacher_ckpt["hidden_dim"]),
@@ -308,6 +311,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             "stopped_epoch": ep,
             "device": device_str,
             "device_info": device_info(device),
+            "teacher_artifact_run_name": teacher_artifact_run_name(cfg),
         },
     )
 

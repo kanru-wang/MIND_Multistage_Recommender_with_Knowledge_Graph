@@ -22,8 +22,9 @@ __pycache__/
 *.npy
 *.pt
 
-# Ignore generated full MIND-large training/submission runs.
+# Ignore certain runs
 runs/mind_large_*/
+runs/mind_small_temporal_tune_ranker_lr_*/
 
 # Ignore tests
 tests/

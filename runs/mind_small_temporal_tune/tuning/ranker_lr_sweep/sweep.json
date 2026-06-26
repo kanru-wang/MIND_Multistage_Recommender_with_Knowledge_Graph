@@ -1,0 +1,360 @@
+{
+  "base_run_name": "mind_small_temporal_tune",
+  "teacher_run_name": "mind_small_temporal_tune",
+  "lrs": [
+    0.001,
+    0.0003,
+    0.0001
+  ],
+  "evaluate": true,
+  "results": [
+    {
+      "lr": 0.001,
+      "run_name": "mind_small_temporal_tune_ranker_lr_1em03",
+      "ranker_train_summary_path": "runs\\mind_small_temporal_tune_ranker_lr_1em03\\ranker\\train_summary.json",
+      "ranker_epochs_path": "runs\\mind_small_temporal_tune_ranker_lr_1em03\\ranker\\epochs.json",
+      "eval_path": "runs\\mind_small_temporal_tune_ranker_lr_1em03\\eval\\ranker_eval_val.json",
+      "best_epoch": 3,
+      "best_val_auc": 0.6300248558024906,
+      "stopped_epoch": 5,
+      "ranking": {
+        "ndcg@5": 0.3262509952049256,
+        "ndcg@10": 0.38666789755303577,
+        "recall@5": 0.45968386088239366,
+        "recall@10": 0.6326023778037758,
+        "map@5": 0.2661767886265334,
+        "map@10": 0.2927408567224025,
+        "mrr": 0.2994551922082915,
+        "auc": 0.6297012694891418
+      },
+      "n_eval_impressions": 103422,
+      "epochs": [
+        {
+          "epoch": 1,
+          "train_loss_mean": 0.9228371904477578,
+          "val_auc": 0.6199918235642562
+        },
+        {
+          "epoch": 2,
+          "train_loss_mean": 0.9117826685544869,
+          "val_auc": 0.6286041141158186
+        },
+        {
+          "epoch": 3,
+          "train_loss_mean": 0.9084334917046953,
+          "val_auc": 0.6300248558024906
+        },
+        {
+          "epoch": 4,
+          "train_loss_mean": 0.9061062155001319,
+          "val_auc": 0.611763273104142
+        },
+        {
+          "epoch": 5,
+          "train_loss_mean": 0.9044370721209938,
+          "val_auc": 0.5923495303981349
+        }
+      ]
+    },
+    {
+      "lr": 0.0003,
+      "run_name": "mind_small_temporal_tune_ranker_lr_3em04",
+      "ranker_train_summary_path": "runs\\mind_small_temporal_tune_ranker_lr_3em04\\ranker\\train_summary.json",
+      "ranker_epochs_path": "runs\\mind_small_temporal_tune_ranker_lr_3em04\\ranker\\epochs.json",
+      "eval_path": "runs\\mind_small_temporal_tune_ranker_lr_3em04\\eval\\ranker_eval_val.json",
+      "best_epoch": 8,
+      "best_val_auc": 0.6355166535076352,
+      "stopped_epoch": 8,
+      "ranking": {
+        "ndcg@5": 0.31537308664967956,
+        "ndcg@10": 0.378299224148572,
+        "recall@5": 0.45217680611281924,
+        "recall@10": 0.6322637398694433,
+        "map@5": 0.25460631898650404,
+        "map@10": 0.28229271750924,
+        "mrr": 0.2894129916716805,
+        "auc": 0.6309019954460957
+      },
+      "n_eval_impressions": 103422,
+      "epochs": [
+        {
+          "epoch": 1,
+          "train_loss_mean": 0.9285258249154748,
+          "val_auc": 0.6108235725258172
+        },
+        {
+          "epoch": 2,
+          "train_loss_mean": 0.91530674406691,
+          "val_auc": 0.6183258736919048
+        },
+        {
+          "epoch": 3,
+          "train_loss_mean": 0.911687834671873,
+          "val_auc": 0.6279841673498254
+        },
+        {
+          "epoch": 4,
+          "train_loss_mean": 0.9094805516319404,
+          "val_auc": 0.6308089134010301
+        },
+        {
+          "epoch": 5,
+          "train_loss_mean": 0.9078689016418586,
+          "val_auc": 0.6312607211507717
+        },
+        {
+          "epoch": 6,
+          "train_loss_mean": 0.9065688410542619,
+          "val_auc": 0.6306893608795199
+        },
+        {
+          "epoch": 7,
+          "train_loss_mean": 0.9053033098544816,
+          "val_auc": 0.6339291937856437
+        },
+        {
+          "epoch": 8,
+          "train_loss_mean": 0.9042844692955706,
+          "val_auc": 0.6355166535076352
+        }
+      ]
+    },
+    {
+      "lr": 0.0001,
+      "run_name": "mind_small_temporal_tune_ranker_lr_1em04",
+      "ranker_train_summary_path": "runs\\mind_small_temporal_tune_ranker_lr_1em04\\ranker\\train_summary.json",
+      "ranker_epochs_path": "runs\\mind_small_temporal_tune_ranker_lr_1em04\\ranker\\epochs.json",
+      "eval_path": "runs\\mind_small_temporal_tune_ranker_lr_1em04\\eval\\ranker_eval_val.json",
+      "best_epoch": 7,
+      "best_val_auc": 0.6272290727081828,
+      "stopped_epoch": 8,
+      "ranking": {
+        "ndcg@5": 0.31076397474744166,
+        "ndcg@10": 0.3727420782214373,
+        "recall@5": 0.4462671705167708,
+        "recall@10": 0.6239805506683999,
+        "map@5": 0.2504898243227854,
+        "map@10": 0.2776800179310822,
+        "mrr": 0.28521589276593035,
+        "auc": 0.6168703813764156
+      },
+      "n_eval_impressions": 103422,
+      "epochs": [
+        {
+          "epoch": 1,
+          "train_loss_mean": 0.9383383731002464,
+          "val_auc": 0.6072310634274818
+        },
+        {
+          "epoch": 2,
+          "train_loss_mean": 0.9221803248601358,
+          "val_auc": 0.6136459995508026
+        },
+        {
+          "epoch": 3,
+          "train_loss_mean": 0.9176118237977642,
+          "val_auc": 0.6180761679437287
+        },
+        {
+          "epoch": 4,
+          "train_loss_mean": 0.9151212325483628,
+          "val_auc": 0.6247964582617622
+        },
+        {
+          "epoch": 5,
+          "train_loss_mean": 0.9133541248991043,
+          "val_auc": 0.6253582125790433
+        },
+        {
+          "epoch": 6,
+          "train_loss_mean": 0.912069816554373,
+          "val_auc": 0.6218902588907174
+        },
+        {
+          "epoch": 7,
+          "train_loss_mean": 0.9108496237016424,
+          "val_auc": 0.6272290727081828
+        },
+        {
+          "epoch": 8,
+          "train_loss_mean": 0.9099483524972645,
+          "val_auc": 0.6233799668953199
+        }
+      ]
+    }
+  ],
+  "best_by_ranker_val_auc": {
+    "lr": 0.0003,
+    "run_name": "mind_small_temporal_tune_ranker_lr_3em04",
+    "ranker_train_summary_path": "runs\\mind_small_temporal_tune_ranker_lr_3em04\\ranker\\train_summary.json",
+    "ranker_epochs_path": "runs\\mind_small_temporal_tune_ranker_lr_3em04\\ranker\\epochs.json",
+    "eval_path": "runs\\mind_small_temporal_tune_ranker_lr_3em04\\eval\\ranker_eval_val.json",
+    "best_epoch": 8,
+    "best_val_auc": 0.6355166535076352,
+    "stopped_epoch": 8,
+    "ranking": {
+      "ndcg@5": 0.31537308664967956,
+      "ndcg@10": 0.378299224148572,
+      "recall@5": 0.45217680611281924,
+      "recall@10": 0.6322637398694433,
+      "map@5": 0.25460631898650404,
+      "map@10": 0.28229271750924,
+      "mrr": 0.2894129916716805,
+      "auc": 0.6309019954460957
+    },
+    "n_eval_impressions": 103422,
+    "epochs": [
+      {
+        "epoch": 1,
+        "train_loss_mean": 0.9285258249154748,
+        "val_auc": 0.6108235725258172
+      },
+      {
+        "epoch": 2,
+        "train_loss_mean": 0.91530674406691,
+        "val_auc": 0.6183258736919048
+      },
+      {
+        "epoch": 3,
+        "train_loss_mean": 0.911687834671873,
+        "val_auc": 0.6279841673498254
+      },
+      {
+        "epoch": 4,
+        "train_loss_mean": 0.9094805516319404,
+        "val_auc": 0.6308089134010301
+      },
+      {
+        "epoch": 5,
+        "train_loss_mean": 0.9078689016418586,
+        "val_auc": 0.6312607211507717
+      },
+      {
+        "epoch": 6,
+        "train_loss_mean": 0.9065688410542619,
+        "val_auc": 0.6306893608795199
+      },
+      {
+        "epoch": 7,
+        "train_loss_mean": 0.9053033098544816,
+        "val_auc": 0.6339291937856437
+      },
+      {
+        "epoch": 8,
+        "train_loss_mean": 0.9042844692955706,
+        "val_auc": 0.6355166535076352
+      }
+    ]
+  },
+  "best_by_eval_auc": {
+    "lr": 0.0003,
+    "run_name": "mind_small_temporal_tune_ranker_lr_3em04",
+    "ranker_train_summary_path": "runs\\mind_small_temporal_tune_ranker_lr_3em04\\ranker\\train_summary.json",
+    "ranker_epochs_path": "runs\\mind_small_temporal_tune_ranker_lr_3em04\\ranker\\epochs.json",
+    "eval_path": "runs\\mind_small_temporal_tune_ranker_lr_3em04\\eval\\ranker_eval_val.json",
+    "best_epoch": 8,
+    "best_val_auc": 0.6355166535076352,
+    "stopped_epoch": 8,
+    "ranking": {
+      "ndcg@5": 0.31537308664967956,
+      "ndcg@10": 0.378299224148572,
+      "recall@5": 0.45217680611281924,
+      "recall@10": 0.6322637398694433,
+      "map@5": 0.25460631898650404,
+      "map@10": 0.28229271750924,
+      "mrr": 0.2894129916716805,
+      "auc": 0.6309019954460957
+    },
+    "n_eval_impressions": 103422,
+    "epochs": [
+      {
+        "epoch": 1,
+        "train_loss_mean": 0.9285258249154748,
+        "val_auc": 0.6108235725258172
+      },
+      {
+        "epoch": 2,
+        "train_loss_mean": 0.91530674406691,
+        "val_auc": 0.6183258736919048
+      },
+      {
+        "epoch": 3,
+        "train_loss_mean": 0.911687834671873,
+        "val_auc": 0.6279841673498254
+      },
+      {
+        "epoch": 4,
+        "train_loss_mean": 0.9094805516319404,
+        "val_auc": 0.6308089134010301
+      },
+      {
+        "epoch": 5,
+        "train_loss_mean": 0.9078689016418586,
+        "val_auc": 0.6312607211507717
+      },
+      {
+        "epoch": 6,
+        "train_loss_mean": 0.9065688410542619,
+        "val_auc": 0.6306893608795199
+      },
+      {
+        "epoch": 7,
+        "train_loss_mean": 0.9053033098544816,
+        "val_auc": 0.6339291937856437
+      },
+      {
+        "epoch": 8,
+        "train_loss_mean": 0.9042844692955706,
+        "val_auc": 0.6355166535076352
+      }
+    ]
+  },
+  "best_by_eval_ndcg10": {
+    "lr": 0.001,
+    "run_name": "mind_small_temporal_tune_ranker_lr_1em03",
+    "ranker_train_summary_path": "runs\\mind_small_temporal_tune_ranker_lr_1em03\\ranker\\train_summary.json",
+    "ranker_epochs_path": "runs\\mind_small_temporal_tune_ranker_lr_1em03\\ranker\\epochs.json",
+    "eval_path": "runs\\mind_small_temporal_tune_ranker_lr_1em03\\eval\\ranker_eval_val.json",
+    "best_epoch": 3,
+    "best_val_auc": 0.6300248558024906,
+    "stopped_epoch": 5,
+    "ranking": {
+      "ndcg@5": 0.3262509952049256,
+      "ndcg@10": 0.38666789755303577,
+      "recall@5": 0.45968386088239366,
+      "recall@10": 0.6326023778037758,
+      "map@5": 0.2661767886265334,
+      "map@10": 0.2927408567224025,
+      "mrr": 0.2994551922082915,
+      "auc": 0.6297012694891418
+    },
+    "n_eval_impressions": 103422,
+    "epochs": [
+      {
+        "epoch": 1,
+        "train_loss_mean": 0.9228371904477578,
+        "val_auc": 0.6199918235642562
+      },
+      {
+        "epoch": 2,
+        "train_loss_mean": 0.9117826685544869,
+        "val_auc": 0.6286041141158186
+      },
+      {
+        "epoch": 3,
+        "train_loss_mean": 0.9084334917046953,
+        "val_auc": 0.6300248558024906
+      },
+      {
+        "epoch": 4,
+        "train_loss_mean": 0.9061062155001319,
+        "val_auc": 0.611763273104142
+      },
+      {
+        "epoch": 5,
+        "train_loss_mean": 0.9044370721209938,
+        "val_auc": 0.5923495303981349
+      }
+    ]
+  }
+}

@@ -27,6 +27,7 @@ from mindrec.utils import (
     log_device,
     resolve_device,
     save_json,
+    teacher_artifact_root,
     test_split_name,
     validation_split_name,
 )
@@ -47,9 +48,10 @@ def _load_model(
         if bool(cfg.get("knowledge_graph", {}).get("enabled", False))
         else "item_base_emb.npy"
     )
-    ranker_base_path = runs_root / "teacher" / ranker_base_name
+    teacher_root = teacher_artifact_root(cfg)
+    ranker_base_path = teacher_root / ranker_base_name
     item_base = np.load(ranker_base_path)
-    teacher_item = np.load(runs_root / "teacher" / "item_teacher_emb.npy")
+    teacher_item = np.load(teacher_root / "item_teacher_emb.npy")
 
     dlrm_cfg = cfg["ranker"]["dlrm"]
     model = DLRMStudent(

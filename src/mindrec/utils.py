@@ -111,6 +111,14 @@ def test_split_name(_cfg: dict[str, Any]) -> str:
     return "test"
 
 
+def teacher_artifact_run_name(cfg: dict[str, Any]) -> str:
+    return str(cfg.get("artifacts", {}).get("teacher_run_name", cfg["run_name"]))
+
+
+def teacher_artifact_root(cfg: dict[str, Any]) -> Path:
+    return Path("runs") / teacher_artifact_run_name(cfg) / "teacher"
+
+
 def pair_artifact_path(proc_root: Path, split_name: str) -> Path:
     return proc_root / f"{split_name}_pairs.parquet"
 

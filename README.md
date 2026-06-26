@@ -406,6 +406,13 @@ python -m mindrec.cli train_ranker --config configs/mind_small_temporal_tune.yam
 
 After training the ranker on `train_pairs.parquet`, train_ranker fits a temperature scaler on `val_pairs.parquet`. It tunes a single positive scalar `T` in `sigmoid(logit / T)` against held-out labels, improving probability **calibration** without changing ranking order.
 
+For the Small temporal ranker learning-rate sweep:
+```powershell
+python -m mindrec.cli train_ranker_lr_sweep --config configs/mind_small_temporal_tune.yaml
+```
+
+This uses `ranker.lr_sweep.lrs` and writes isolated variant runs such as `runs/mind_small_temporal_tune_ranker_lr_1em03`. The combined summary is written to `runs/mind_small_temporal_tune/tuning/ranker_lr_sweep/sweep.json`.
+
 ### 3.4 Evaluate ranker + reranker (metrics + slices)
 ```powershell
 python -m mindrec.cli evaluate --config configs/mind_small_temporal_tune.yaml

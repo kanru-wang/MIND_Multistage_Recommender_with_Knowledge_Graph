@@ -7,6 +7,7 @@ from mindrec.config import load_config
 from mindrec.pipeline.evaluate import run_evaluate
 from mindrec.pipeline.preprocess import run_preprocess
 from mindrec.pipeline.ranker_train import run_train_ranker
+from mindrec.pipeline.ranker_lr_sweep import run_train_ranker_lr_sweep
 from mindrec.pipeline.rerank_eval import run_rerank_eval
 from mindrec.pipeline.rerank_search import run_rerank_search
 from mindrec.pipeline.retrieval import (
@@ -54,6 +55,12 @@ def main() -> None:
     _add_config_arg(p)
 
     p = sub.add_parser(
+        "train_ranker_lr_sweep",
+        help="Train ranker variants over ranker.lr_sweep.lrs and summarize val metrics",
+    )
+    _add_config_arg(p)
+
+    p = sub.add_parser(
         "evaluate",
         help="Evaluate ranker on splits (val and test) from eval.report_splits (many metrics)",
     )
@@ -95,6 +102,9 @@ def main() -> None:
         return
     if args.cmd == "train_ranker":
         run_train_ranker(cfg)
+        return
+    if args.cmd == "train_ranker_lr_sweep":
+        run_train_ranker_lr_sweep(cfg)
         return
     if args.cmd == "evaluate":
         run_evaluate(cfg)

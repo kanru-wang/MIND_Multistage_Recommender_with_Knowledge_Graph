@@ -94,6 +94,9 @@ ranker:
     enabled: true
     lr: 0.05
     max_iter: 100
+  lr_sweep:
+    lrs: [1.0e-3, 3.0e-4, 1.0e-4]
+    evaluate: true
 
 rerank:
   k_out: 10

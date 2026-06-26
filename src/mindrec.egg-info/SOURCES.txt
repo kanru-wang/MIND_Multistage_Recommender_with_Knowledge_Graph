@@ -28,6 +28,7 @@ src/mindrec/pipeline/__init__.py
 src/mindrec/pipeline/evaluate.py
 src/mindrec/pipeline/preprocess.py
 src/mindrec/pipeline/ranker_train.py
+src/mindrec/pipeline/ranker_lr_sweep.py
 src/mindrec/pipeline/rerank_eval.py
 src/mindrec/pipeline/rerank_search.py
 src/mindrec/pipeline/retrieval.py
