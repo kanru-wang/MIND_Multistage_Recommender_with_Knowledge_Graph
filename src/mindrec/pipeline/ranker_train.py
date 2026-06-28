@@ -21,6 +21,7 @@ from mindrec.utils import (
     device_info,
     log_device,
     pair_artifact_path,
+    ranker_time_feature_kwargs,
     resolve_device,
     save_json,
     set_seed,
@@ -29,6 +30,27 @@ from mindrec.utils import (
     to_device,
     validation_split_name,
 )
+
+
+def _require_time_feature_columns(
+    cfg: dict[str, Any],
+    pairs_train: pd.DataFrame,
+    pairs_val: pd.DataFrame | None,
+) -> None:
+    if not bool(cfg.get("ranker", {}).get("time_features", {}).get("enabled", False)):
+        return
+    required = ["hour_idx", "weekday_idx"]
+    missing = [col for col in required if col not in pairs_train.columns]
+    if pairs_val is not None:
+        missing.extend(
+            f"val.{col}" for col in required if col not in pairs_val.columns
+        )
+    if missing:
+        raise ValueError(
+            "ranker.time_features.enabled requires preprocessed pair artifacts "
+            "with hour_idx and weekday_idx columns. Rerun preprocess for this config. "
+            f"Missing: {missing}"
+        )
 
 
 class StudentProjHead(nn.Module):
@@ -55,6 +77,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     validation_allowed = data_mode != "leaderboard_submission"
     has_validation = validation_allowed and val_pairs_path.exists()
     pairs_val = pd.read_parquet(val_pairs_path) if has_validation else None
+    _require_time_feature_columns(cfg, pairs_train, pairs_val)
 
     dense_cols = ["history_len", "item_clicks_log1p"]
     train_ds = PairDataset(pairs_train, dense_cols=dense_cols)
@@ -115,6 +138,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         ),
         news_id_warm_scale=float(dlrm_cfg.get("news_id_warm_scale", 1.0)),
         news_id_cold_scale=float(dlrm_cfg.get("news_id_cold_scale", 1.0)),
+        **ranker_time_feature_kwargs(cfg),
     ).to(device)
 
     emb_dim = int(dlrm_cfg["emb_dim"])
@@ -194,6 +218,8 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                 history_item_base=hist_base_batch,
                 history_mask=batch["hist_mask"],
                 is_new_item=batch["is_new_item"],
+                hour_idx=batch["hour_idx"],
+                weekday_idx=batch["weekday_idx"],
                 return_repr=True,
             )
             y = batch["label"]
@@ -248,6 +274,8 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                         history_item_base=item_base_tensor[batch["hist_news_idx"]],
                         history_mask=batch["hist_mask"],
                         is_new_item=batch["is_new_item"],
+                        hour_idx=batch["hour_idx"],
+                        weekday_idx=batch["weekday_idx"],
                         return_repr=False,
                     )
                     ys.extend(batch["label"].detach().cpu().numpy().tolist())
@@ -349,6 +377,8 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                 history_item_base=item_base_tensor[batch["hist_news_idx"]],
                 history_mask=batch["hist_mask"],
                 is_new_item=batch["is_new_item"],
+                hour_idx=batch["hour_idx"],
+                weekday_idx=batch["weekday_idx"],
                 return_repr=False,
             )
             logits_all.append(logits.detach().cpu().numpy())

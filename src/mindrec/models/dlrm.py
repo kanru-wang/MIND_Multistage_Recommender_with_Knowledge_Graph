@@ -73,6 +73,9 @@ class DLRMStudent(nn.Module):
         semantic_dropout: float | None = None,
         news_id_warm_scale: float = 1.0,
         news_id_cold_scale: float = 1.0,
+        use_time_features: bool = False,
+        use_hour_feature: bool = True,
+        use_weekday_feature: bool = False,
     ) -> None:
         super().__init__()
         bottom_mlp = bottom_mlp or [128, 64]
@@ -81,6 +84,8 @@ class DLRMStudent(nn.Module):
         semantic_dropout = dropout if semantic_dropout is None else semantic_dropout
         self.news_id_warm_scale = float(news_id_warm_scale)
         self.news_id_cold_scale = float(news_id_cold_scale)
+        self.use_hour_feature = bool(use_time_features and use_hour_feature)
+        self.use_weekday_feature = bool(use_time_features and use_weekday_feature)
 
         self.user_emb = nn.Embedding(n_users, id_emb_dim, padding_idx=0)
         self.news_emb = nn.Embedding(n_news, id_emb_dim, padding_idx=0)
@@ -88,6 +93,10 @@ class DLRMStudent(nn.Module):
         self.news_id_proj = nn.Linear(id_emb_dim, emb_dim)
         self.cat_emb = nn.Embedding(n_cats, emb_dim, padding_idx=0)
         self.subcat_emb = nn.Embedding(n_subcats, emb_dim, padding_idx=0)
+        if self.use_hour_feature:
+            self.hour_emb = nn.Embedding(24, emb_dim)
+        if self.use_weekday_feature:
+            self.weekday_emb = nn.Embedding(7, emb_dim)
 
         self.bottom = make_mlp(
             dense_dim, bottom_mlp, dropout=dropout, last_activation=True
@@ -117,8 +126,9 @@ class DLRMStudent(nn.Module):
         # xd_emb, user_id, news_id, category, subcategory, user_sem, item_sem, sem_fused
         self.n_feat = 8
         n_inter = self.n_feat * (self.n_feat - 1) // 2
+        n_time_inter = 2 * int(self.use_hour_feature) + 2 * int(self.use_weekday_feature)
         n_concat_emb = self.n_feat
-        top_in = d_bottom + n_concat_emb * emb_dim + n_inter
+        top_in = d_bottom + n_concat_emb * emb_dim + n_inter + n_time_inter
 
         self.top = make_mlp(top_in, top_mlp, dropout=dropout, last_activation=False)
 
@@ -138,6 +148,8 @@ class DLRMStudent(nn.Module):
         history_item_base: torch.Tensor,
         history_mask: torch.Tensor,
         is_new_item: torch.Tensor | None = None,
+        hour_idx: torch.Tensor | None = None,
+        weekday_idx: torch.Tensor | None = None,
         return_repr: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         xd = self.bottom(dense)
@@ -182,9 +194,27 @@ class DLRMStudent(nn.Module):
             if inter
             else torch.zeros((xd.size(0), 0), device=xd.device)
         )
+        time_inter = []
+        if self.use_hour_feature:
+            if hour_idx is None:
+                hour_idx = torch.zeros_like(cat_idx)
+            eh = self.hour_emb(hour_idx.clamp(min=0, max=23))
+            time_inter.append((ec * eh).sum(dim=1, keepdim=True))
+            time_inter.append((es * eh).sum(dim=1, keepdim=True))
+        if self.use_weekday_feature:
+            if weekday_idx is None:
+                weekday_idx = torch.zeros_like(cat_idx)
+            ew = self.weekday_emb(weekday_idx.clamp(min=0, max=6))
+            time_inter.append((ec * ew).sum(dim=1, keepdim=True))
+            time_inter.append((es * ew).sum(dim=1, keepdim=True))
+        time_inter_vec = (
+            torch.cat(time_inter, dim=1)
+            if time_inter
+            else torch.zeros((xd.size(0), 0), device=xd.device)
+        )
 
         concat = torch.cat(
-            [xd] + feats + [inter_vec], dim=1
+            [xd] + feats + [inter_vec, time_inter_vec], dim=1
         )
         logit = self.top(concat).squeeze(1)
 

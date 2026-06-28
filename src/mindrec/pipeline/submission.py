@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from mindrec.config import ensure_dir
 from mindrec.data.featurize import IdMaps
-from mindrec.data.mind_io import count_behavior_rows, iter_behaviors_tsv
+from mindrec.data.mind_io import count_behavior_rows, iter_behaviors_tsv, time_feature_indices
 from mindrec.pipeline.evaluate import _expand_history_base, _load_model
 from mindrec.utils import load_json, log_device, resolve_device, save_json
 
@@ -70,6 +70,7 @@ def run_write_submission(cfg: dict[str, Any]) -> None:
             ):
                 user_id = str(r["user_id"])
                 history = list(r["history"])
+                hour_idx, weekday_idx = time_feature_indices(r["time"])
                 user_idx = maps.user2idx.get(user_id, 0)
                 hist_news_idx = [
                     maps.news2idx[h]
@@ -131,6 +132,12 @@ def run_write_submission(cfg: dict[str, Any]) -> None:
                     b_is_new = torch.tensor(
                         cand_is_new[sl], dtype=torch.long, device=device
                     )
+                    b_hour = torch.full(
+                        (current_batch_size,), hour_idx, dtype=torch.long, device=device
+                    )
+                    b_weekday = torch.full(
+                        (current_batch_size,), weekday_idx, dtype=torch.long, device=device
+                    )
                     b_dense = torch.tensor(
                         dense[sl], dtype=torch.float32, device=device
                     )
@@ -155,6 +162,8 @@ def run_write_submission(cfg: dict[str, Any]) -> None:
                         history_item_base=b_hist_base,
                         history_mask=b_hist_mask,
                         is_new_item=b_is_new,
+                        hour_idx=b_hour,
+                        weekday_idx=b_weekday,
                     )
                     logits.append(logit.detach().cpu().numpy())
 

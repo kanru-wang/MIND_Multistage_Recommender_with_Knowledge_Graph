@@ -10,10 +10,12 @@ from tqdm import tqdm
 from mindrec.config import ensure_dir
 from mindrec.data.featurize import IdMaps, add_indices, build_id_maps, is_cold_user
 from mindrec.data.mind_io import (
+    MIND_TIME_FORMAT,
     count_behavior_rows,
     read_behaviors_tsv,
     read_news_tsv,
     sub_sample_behaviors,
+    time_feature_indices,
 )
 from mindrec.utils import (
     behavior_artifact_path,
@@ -44,6 +46,10 @@ def build_pairs(
     for _, r in tqdm(beh.iterrows(), total=len(beh), desc="Build pairs"):
         user_id = str(r["user_id"])
         user_idx = maps.user2idx.get(user_id, 0)
+        if "time" in r.index:
+            hour_idx, weekday_idx = time_feature_indices(r["time"])
+        else:
+            hour_idx, weekday_idx = 0, 0
         hist = r["history"]
         hist_news_idx = [
             maps.news2idx[h]
@@ -83,6 +89,8 @@ def build_pairs(
                         "news_idx": int(meta["news_idx"]),
                         "cat_idx": int(meta["cat_idx"]),
                         "subcat_idx": int(meta["subcat_idx"]),
+                        "hour_idx": hour_idx,
+                        "weekday_idx": weekday_idx,
                         "hist_news_idx": hist_news_idx,
                         "history_len": float(len(hist_news_idx)),
                         "item_clicks": float(clicks),
@@ -112,6 +120,10 @@ def build_impressions_for_eval(
     for _, r in tqdm(beh.iterrows(), total=len(beh), desc="Build eval impressions"):
         user_id = str(r["user_id"])
         user_idx = maps.user2idx.get(user_id, 0)
+        if "time" in r.index:
+            hour_idx, weekday_idx = time_feature_indices(r["time"])
+        else:
+            hour_idx, weekday_idx = 0, 0
         hist = r["history"]
         hist_news_idx = [
             maps.news2idx[h]
@@ -146,6 +158,8 @@ def build_impressions_for_eval(
             "impression_id": str(r["impression_id"]),
             "user_id": user_id,
             "user_idx": user_idx,
+            "hour_idx": hour_idx,
+            "weekday_idx": weekday_idx,
             "hist_news_idx": hist_news_idx,
             "history_len": float(len(hist_news_idx)),
             "is_cold_user": cold_u,
@@ -196,7 +210,7 @@ def _split_holdout_behaviors(
 
     ordered = beh.copy()
     ordered["_parsed_time"] = pd.to_datetime(
-        ordered["time"], format="%m/%d/%Y %I:%M:%S %p", errors="coerce"
+        ordered["time"], format=MIND_TIME_FORMAT, errors="coerce"
     )
     ordered["_sort_impression_id"] = pd.to_numeric(
         ordered["impression_id"], errors="coerce"
@@ -229,7 +243,7 @@ def _split_behaviors_from_time(
     validation_start: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     parsed = pd.to_datetime(
-        beh["time"], format="%m/%d/%Y %I:%M:%S %p", errors="coerce"
+        beh["time"], format=MIND_TIME_FORMAT, errors="coerce"
     )
     if parsed.isna().any():
         raise ValueError("Temporal split found unparseable behavior timestamps.")

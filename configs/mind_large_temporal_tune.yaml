@@ -75,6 +75,10 @@ ranker:
     patience: 2
     min_delta: 1.0e-5
   device: "cuda"
+  time_features:
+    enabled: true
+    hour_enabled: true
+    weekday_enabled: false
   dlrm:
     emb_dim: 56
     id_emb_dim: 8

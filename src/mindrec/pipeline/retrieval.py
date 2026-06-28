@@ -12,6 +12,7 @@ from tqdm import tqdm
 
 from mindrec.config import ensure_dir
 from mindrec.data.featurize import IdMaps
+from mindrec.data.mind_io import MIND_TIME_FORMAT
 from mindrec.models.teacher import TeacherTwoTower
 from mindrec.utils import (
     behavior_artifact_path,
@@ -179,7 +180,7 @@ def _attach_time_periods(df: pd.DataFrame, n_periods: int) -> tuple[pd.DataFrame
     if n_periods <= 0 or "time" not in out.columns:
         return out, meta
 
-    parsed = pd.to_datetime(out["time"], format="%m/%d/%Y %I:%M:%S %p", errors="coerce")
+    parsed = pd.to_datetime(out["time"], format=MIND_TIME_FORMAT, errors="coerce")
     valid_idx = np.flatnonzero(parsed.notna().to_numpy())
     if len(valid_idx) == 0:
         return out, meta

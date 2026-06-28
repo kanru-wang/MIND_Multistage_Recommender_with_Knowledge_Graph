@@ -26,6 +26,9 @@ BEH_COLUMNS = [
 ]
 
 
+MIND_TIME_FORMAT = "%m/%d/%Y %I:%M:%S %p"
+
+
 def read_news_tsv(path: str | Path) -> pd.DataFrame:
     df = pd.read_csv(
         path,
@@ -58,6 +61,18 @@ def parse_impressions(impr: str) -> tuple[list[str], list[int]]:
             items.append(tok)
             labels.append(0)
     return items, labels
+
+
+def time_feature_indices(time_value: object) -> tuple[int, int]:
+    """Return (hour_idx, weekday_idx) from a MIND behavior timestamp.
+
+    Weekdays use pandas/Python convention: Monday=0, ..., Sunday=6.
+    """
+    parsed = pd.to_datetime(time_value, format=MIND_TIME_FORMAT, errors="coerce")
+    if pd.isna(parsed):
+        raise ValueError(f"Could not parse MIND behavior timestamp: {time_value!r}")
+    ts = pd.Timestamp(parsed)
+    return int(ts.hour), int(ts.dayofweek)
 
 
 def read_behaviors_tsv(path: str | Path) -> pd.DataFrame:

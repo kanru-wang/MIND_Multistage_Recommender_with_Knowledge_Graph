@@ -10,6 +10,7 @@ from tqdm import tqdm
 
 from mindrec.config import ensure_dir
 from mindrec.data.featurize import IdMaps
+from mindrec.data.mind_io import MIND_TIME_FORMAT, time_feature_indices
 from mindrec.metrics.benchmark import official_mind_benchmark_view
 from mindrec.metrics.calibration import brier_score, expected_calibration_error
 from mindrec.metrics.ranking import (
@@ -25,6 +26,7 @@ from mindrec.utils import (
     behavior_artifact_path,
     impression_artifact_path,
     log_device,
+    ranker_time_feature_kwargs,
     resolve_device,
     save_json,
     teacher_artifact_root,
@@ -73,6 +75,7 @@ def _load_model(
         ),
         news_id_warm_scale=float(dlrm_cfg.get("news_id_warm_scale", 1.0)),
         news_id_cold_scale=float(dlrm_cfg.get("news_id_cold_scale", 1.0)),
+        **ranker_time_feature_kwargs(cfg),
     ).to(device)
 
     ckpt = torch.load(runs_root / "ranker" / "best.pt", map_location=device)
@@ -153,7 +156,7 @@ def _attach_time_periods(impr: pd.DataFrame, n_periods: int) -> tuple[pd.DataFra
     if n_periods <= 0 or "time" not in out.columns:
         return out, meta
 
-    parsed = pd.to_datetime(out["time"], format="%m/%d/%Y %I:%M:%S %p", errors="coerce")
+    parsed = pd.to_datetime(out["time"], format=MIND_TIME_FORMAT, errors="coerce")
     valid_idx = np.flatnonzero(parsed.notna().to_numpy())
     if len(valid_idx) == 0:
         return out, meta
@@ -287,6 +290,13 @@ def _evaluate_split(
             cand_subcat_idx = np.array(r["cand_subcat_idx"], dtype=np.int64)
             cand_is_new = np.array(r["cand_is_new_item"], dtype=np.int64)
             cand_clicks_log1p = np.array(r["cand_item_clicks_log1p"], dtype=np.float32)
+            if "hour_idx" in r.index and "weekday_idx" in r.index:
+                hour_idx = int(r["hour_idx"])
+                weekday_idx = int(r["weekday_idx"])
+            elif "time" in r.index:
+                hour_idx, weekday_idx = time_feature_indices(r["time"])
+            else:
+                hour_idx, weekday_idx = 0, 0
 
             hlen = float(r["history_len"])
             dense = np.stack(
@@ -311,6 +321,12 @@ def _evaluate_split(
                 b_is_new = torch.tensor(
                     cand_is_new[sl], dtype=torch.long, device=device
                 )
+                b_hour = torch.full(
+                    (batch_size,), hour_idx, dtype=torch.long, device=device
+                )
+                b_weekday = torch.full(
+                    (batch_size,), weekday_idx, dtype=torch.long, device=device
+                )
                 b_dense = torch.tensor(dense[sl], dtype=torch.float32, device=device)
                 b_item_base = torch.tensor(
                     item_base[cand_news_idx[sl]], dtype=torch.float32, device=device
@@ -331,6 +347,8 @@ def _evaluate_split(
                     history_item_base=b_hist_base,
                     history_mask=b_hist_mask,
                     is_new_item=b_is_new,
+                    hour_idx=b_hour,
+                    weekday_idx=b_weekday,
                 )
                 logits.append(logit.detach().cpu().numpy())
             scores = np.concatenate(logits, axis=0)

@@ -119,6 +119,15 @@ def teacher_artifact_root(cfg: dict[str, Any]) -> Path:
     return Path("runs") / teacher_artifact_run_name(cfg) / "teacher"
 
 
+def ranker_time_feature_kwargs(cfg: dict[str, Any]) -> dict[str, bool]:
+    time_cfg = dict(cfg.get("ranker", {}).get("time_features", {}))
+    return {
+        "use_time_features": bool(time_cfg.get("enabled", False)),
+        "use_hour_feature": bool(time_cfg.get("hour_enabled", True)),
+        "use_weekday_feature": bool(time_cfg.get("weekday_enabled", False)),
+    }
+
+
 def pair_artifact_path(proc_root: Path, split_name: str) -> Path:
     return proc_root / f"{split_name}_pairs.parquet"
 

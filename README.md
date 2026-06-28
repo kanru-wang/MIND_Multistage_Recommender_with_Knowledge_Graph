@@ -91,6 +91,16 @@ The student keeps a lighter semantic core than the teacher, but combines it with
 - lightweight dense features
 - DLRM-style feature interactions
 
+Optional impression-time features can be enabled with:
+```yaml
+ranker:
+  time_features:
+    enabled: true
+    hour_enabled: true
+    weekday_enabled: false
+```
+When enabled, preprocessing extracts `hour_idx` and `weekday_idx` from each `behaviors.tsv` impression timestamp. These time embeddings are deliberately restricted to category/subcategory interactions only: `category.hour`, `subcategory.hour`, and, if `weekday_enabled=true`, `category.weekday`, `subcategory.weekday`. They are not added to the general DLRM feature list, so they do not directly interact with user ID, news ID, text/KG semantic features, or dense features. Weekdays use `Monday=0 ... Sunday=6`; weekday is off by default because the temporal tuning split can contain validation weekdays that are not present in the shortened training window.
+
 #### DLRM-style semantic additions
 - A classic DLRM usually combines sparse ID/category embeddings, dense numerical features, pairwise feature interactions, and a final top MLP. It usually does not include item text embeddings or user-history semantic embeddings directly; those are project-specific additions here.
 - In `DLRMStudent`, the candidate item's `item_ranker_base_emb.npy` vector is formed by concatenating its sentence-transformer text embedding with a KG feature vector. That KG vector aggregates the article's linked entity embeddings together with relation-aware one-hop neighbor context from the configured triples file. The candidate item's vector is projected into `item_sem`, and the corresponding clicked-history vectors are pooled/projected into `user_sem`. Both are mapped to the same `emb_dim` length as the other DLRM feature vectors.

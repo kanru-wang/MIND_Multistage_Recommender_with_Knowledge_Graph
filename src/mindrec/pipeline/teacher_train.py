@@ -16,7 +16,7 @@ from tqdm import tqdm
 from mindrec.config import ensure_dir
 from mindrec.data.featurize import IdMaps
 from mindrec.data.kg import build_news_kg_feature_matrix_from_config
-from mindrec.data.mind_io import read_behaviors_tsv
+from mindrec.data.mind_io import MIND_TIME_FORMAT, read_behaviors_tsv
 from mindrec.models.teacher import TeacherTwoTower
 from mindrec.utils import (
     behavior_artifact_path,
@@ -186,7 +186,7 @@ def _build_teacher_samples(
         if user_idx == 0:
             continue
         row_time = pd.to_datetime(
-            row.get("time"), format="%m/%d/%Y %I:%M:%S %p", errors="coerce"
+            row.get("time"), format=MIND_TIME_FORMAT, errors="coerce"
         )
 
         hist_news_idx = [
