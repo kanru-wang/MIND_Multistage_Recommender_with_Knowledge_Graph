@@ -15,7 +15,7 @@ from mindrec.data.mind_io import (
     read_behaviors_tsv,
     read_news_tsv,
     sub_sample_behaviors,
-    time_feature_indices,
+    time_feature_values,
 )
 from mindrec.utils import (
     behavior_artifact_path,
@@ -47,9 +47,9 @@ def build_pairs(
         user_id = str(r["user_id"])
         user_idx = maps.user2idx.get(user_id, 0)
         if "time" in r.index:
-            hour_idx, weekday_idx = time_feature_indices(r["time"])
+            hour_value, weekday_idx = time_feature_values(r["time"])
         else:
-            hour_idx, weekday_idx = 0, 0
+            hour_value, weekday_idx = 0.0, 0
         hist = r["history"]
         hist_news_idx = [
             maps.news2idx[h]
@@ -89,7 +89,7 @@ def build_pairs(
                         "news_idx": int(meta["news_idx"]),
                         "cat_idx": int(meta["cat_idx"]),
                         "subcat_idx": int(meta["subcat_idx"]),
-                        "hour_idx": hour_idx,
+                        "hour_value": hour_value,
                         "weekday_idx": weekday_idx,
                         "hist_news_idx": hist_news_idx,
                         "history_len": float(len(hist_news_idx)),
@@ -121,9 +121,9 @@ def build_impressions_for_eval(
         user_id = str(r["user_id"])
         user_idx = maps.user2idx.get(user_id, 0)
         if "time" in r.index:
-            hour_idx, weekday_idx = time_feature_indices(r["time"])
+            hour_value, weekday_idx = time_feature_values(r["time"])
         else:
-            hour_idx, weekday_idx = 0, 0
+            hour_value, weekday_idx = 0.0, 0
         hist = r["history"]
         hist_news_idx = [
             maps.news2idx[h]
@@ -158,7 +158,7 @@ def build_impressions_for_eval(
             "impression_id": str(r["impression_id"]),
             "user_id": user_id,
             "user_idx": user_idx,
-            "hour_idx": hour_idx,
+            "hour_value": hour_value,
             "weekday_idx": weekday_idx,
             "hist_news_idx": hist_news_idx,
             "history_len": float(len(hist_news_idx)),

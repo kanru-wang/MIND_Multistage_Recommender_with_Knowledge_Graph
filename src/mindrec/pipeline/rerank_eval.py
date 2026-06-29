@@ -127,7 +127,7 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
             cand_is_new = list(r["cand_is_new_item"])  # A binary list indicating whether each candidate news is a "new item" based on the training data
             cand_is_new_arr = np.array(cand_is_new, dtype=np.int64)
             cand_clicks_log1p = np.array(r["cand_item_clicks_log1p"], dtype=np.float32)
-            hour_idx = int(r["hour_idx"]) if "hour_idx" in r.index else 0
+            hour_value = float(r["hour_value"]) if "hour_value" in r.index else 0.0
             weekday_idx = int(r["weekday_idx"]) if "weekday_idx" in r.index else 0
             cand_cat_ref_full = [int(c) for c in cand_cat_idx.tolist() if int(c) != 0]
             hlen = float(r["history_len"])
@@ -155,7 +155,7 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
                     cand_is_new_arr[sl], dtype=torch.long, device=device
                 )
                 b_hour = torch.full(
-                    (batch_size,), hour_idx, dtype=torch.long, device=device
+                    (batch_size,), hour_value, dtype=torch.float32, device=device
                 )
                 b_weekday = torch.full(
                     (batch_size,), weekday_idx, dtype=torch.long, device=device
@@ -180,7 +180,7 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
                     history_item_base=b_hist_base,
                     history_mask=b_hist_mask,
                     is_new_item=b_is_new,
-                    hour_idx=b_hour,
+                    hour_value=b_hour,
                     weekday_idx=b_weekday,
                 )
                 logits.append(logit.detach().cpu().numpy())

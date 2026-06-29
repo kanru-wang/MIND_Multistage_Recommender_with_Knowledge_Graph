@@ -63,8 +63,8 @@ def parse_impressions(impr: str) -> tuple[list[str], list[int]]:
     return items, labels
 
 
-def time_feature_indices(time_value: object) -> tuple[int, int]:
-    """Return (hour_idx, weekday_idx) from a MIND behavior timestamp.
+def time_feature_values(time_value: object) -> tuple[float, int]:
+    """Return (fractional_hour, weekday_idx) from a MIND timestamp.
 
     Weekdays use pandas/Python convention: Monday=0, ..., Sunday=6.
     """
@@ -72,7 +72,14 @@ def time_feature_indices(time_value: object) -> tuple[int, int]:
     if pd.isna(parsed):
         raise ValueError(f"Could not parse MIND behavior timestamp: {time_value!r}")
     ts = pd.Timestamp(parsed)
-    return int(ts.hour), int(ts.dayofweek)
+    fractional_hour = ts.hour + ts.minute / 60.0 + ts.second / 3600.0
+    return float(fractional_hour), int(ts.dayofweek)
+
+
+def time_feature_indices(time_value: object) -> tuple[int, int]:
+    """Return integer hour and weekday indices for compatibility."""
+    fractional_hour, weekday_idx = time_feature_values(time_value)
+    return int(fractional_hour), weekday_idx
 
 
 def read_behaviors_tsv(path: str | Path) -> pd.DataFrame:

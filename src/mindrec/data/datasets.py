@@ -45,7 +45,9 @@ class PairDataset(Dataset):
             "news_idx": torch.tensor(int(r["news_idx"]), dtype=torch.long),
             "cat_idx": torch.tensor(int(r["cat_idx"]), dtype=torch.long),
             "subcat_idx": torch.tensor(int(r["subcat_idx"]), dtype=torch.long),
-            "hour_idx": torch.tensor(int(r.get("hour_idx", 0)), dtype=torch.long),
+            "hour_value": torch.tensor(
+                float(r.get("hour_value", 0.0)), dtype=torch.float32
+            ),
             "weekday_idx": torch.tensor(int(r.get("weekday_idx", 0)), dtype=torch.long),
             "hist_news_idx": torch.tensor(hist_news_idx, dtype=torch.long),
             "dense": torch.tensor(dense, dtype=torch.float32),
@@ -63,7 +65,7 @@ def collate_batch(batch: list[dict[str, Any]]) -> dict[str, Any]:
         "news_idx",
         "cat_idx",
         "subcat_idx",
-        "hour_idx",
+        "hour_value",
         "weekday_idx",
         "dense",
         "label",

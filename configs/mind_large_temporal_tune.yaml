@@ -77,8 +77,14 @@ ranker:
   device: "cuda"
   time_features:
     enabled: true
-    hour_enabled: true
-    weekday_enabled: false
+    embedding_dim: 4
+    gate_init: 0.0
+    gate_max_abs: 1.0
+    interactions:
+      category_hour: true
+      subcategory_hour: false
+      category_weekday: false
+      subcategory_weekday: false
   dlrm:
     emb_dim: 56
     id_emb_dim: 8

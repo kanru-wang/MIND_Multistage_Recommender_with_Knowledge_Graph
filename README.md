@@ -96,10 +96,42 @@ Optional impression-time features can be enabled with:
 ranker:
   time_features:
     enabled: true
-    hour_enabled: true
-    weekday_enabled: false
+    embedding_dim: 4
+    gate_init: 0.0
+    gate_max_abs: 1.0
+    interactions:
+      category_hour: true
+      subcategory_hour: false
+      category_weekday: false
+      subcategory_weekday: false
 ```
-When enabled, preprocessing extracts `hour_idx` and `weekday_idx` from each `behaviors.tsv` impression timestamp. These time embeddings are deliberately restricted to category/subcategory interactions only: `category.hour`, `subcategory.hour`, and, if `weekday_enabled=true`, `category.weekday`, `subcategory.weekday`. They are not added to the general DLRM feature list, so they do not directly interact with user ID, news ID, text/KG semantic features, or dense features. Weekdays use `Monday=0 ... Sunday=6`; weekday is off by default because the temporal tuning split can contain validation weekdays that are not present in the shortened training window.
+Preprocessing retains the fractional impression hour and weekday from each
+`behaviors.tsv` timestamp. Hours use bounded circular Fourier features, so times
+near midnight remain close; weekdays use the same circular construction with
+`Monday=0 ... Sunday=6`. Each enabled interaction has its own small temporal
+category/subcategory table and bounded learnable gate. The temporal adjustment
+is added to the final logit and does not reuse or reshape the ranker's main
+category embeddings. With `gate_init: 0.0`, the branch starts as the exact
+no-time baseline. Only `category_hour` is enabled by default; the other three
+interactions can be switched on independently for future ablations.
+The effective gate values are recorded in `ranker/epochs.json` and
+`ranker/train_summary.json`. Artifacts created by the earlier integer-hour
+implementation are incompatible with this branch: rerun preprocessing once to
+create `hour_value`, then retrain the ranker. Subsequent interaction-switch
+ablations can reuse those processed artifacts.
+
+To test whether category preference is predictably related to impression hour,
+run the exposure-adjusted streaming analysis:
+
+```powershell
+python scripts/analyze_category_hour.py
+```
+
+By default it samples 300,000 Large Train and 150,000 Large Dev impressions.
+Use `--max-train-impressions 0 --max-dev-impressions 0` for all labeled
+impressions. Outputs are written to `runs/mind_large_category_hour_analysis`,
+including the interaction heatmap, period effects, day-to-day stability
+correlations, and rolling category-only versus category-hour validation.
 
 #### DLRM-style semantic additions
 - A classic DLRM usually combines sparse ID/category embeddings, dense numerical features, pairwise feature interactions, and a final top MLP. It usually does not include item text embeddings or user-history semantic embeddings directly; those are project-specific additions here.

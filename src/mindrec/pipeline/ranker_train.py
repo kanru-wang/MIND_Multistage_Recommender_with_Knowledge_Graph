@@ -37,9 +37,22 @@ def _require_time_feature_columns(
     pairs_train: pd.DataFrame,
     pairs_val: pd.DataFrame | None,
 ) -> None:
-    if not bool(cfg.get("ranker", {}).get("time_features", {}).get("enabled", False)):
+    time_kwargs = ranker_time_feature_kwargs(cfg)
+    hour_enabled = bool(
+        time_kwargs["use_category_hour_interaction"]
+        or time_kwargs["use_subcategory_hour_interaction"]
+    )
+    weekday_enabled = bool(
+        time_kwargs["use_category_weekday_interaction"]
+        or time_kwargs["use_subcategory_weekday_interaction"]
+    )
+    if not hour_enabled and not weekday_enabled:
         return
-    required = ["hour_idx", "weekday_idx"]
+    required = []
+    if hour_enabled:
+        required.append("hour_value")
+    if weekday_enabled:
+        required.append("weekday_idx")
     missing = [col for col in required if col not in pairs_train.columns]
     if pairs_val is not None:
         missing.extend(
@@ -47,8 +60,8 @@ def _require_time_feature_columns(
         )
     if missing:
         raise ValueError(
-            "ranker.time_features.enabled requires preprocessed pair artifacts "
-            "with hour_idx and weekday_idx columns. Rerun preprocess for this config. "
+            "Enabled ranker time interactions require current preprocessed pair "
+            "artifacts. Rerun preprocess for this config. "
             f"Missing: {missing}"
         )
 
@@ -185,7 +198,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     best_epoch = 0
     epochs_without_improvement = 0
     stop_reason = "max_epochs"
-    epoch_metrics: list[dict[str, float | int]] = []
+    epoch_metrics: list[dict[str, Any]] = []
     for ep in range(1, epochs + 1):
         model.train()
         proj.train()
@@ -218,7 +231,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                 history_item_base=hist_base_batch,
                 history_mask=batch["hist_mask"],
                 is_new_item=batch["is_new_item"],
-                hour_idx=batch["hour_idx"],
+                hour_value=batch["hour_value"],
                 weekday_idx=batch["weekday_idx"],
                 return_repr=True,
             )
@@ -274,7 +287,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                         history_item_base=item_base_tensor[batch["hist_news_idx"]],
                         history_mask=batch["hist_mask"],
                         is_new_item=batch["is_new_item"],
-                        hour_idx=batch["hour_idx"],
+                        hour_value=batch["hour_value"],
                         weekday_idx=batch["weekday_idx"],
                         return_repr=False,
                     )
@@ -290,6 +303,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                 "epoch": ep,
                 "train_loss_mean": float(np.mean(losses) if losses else 0.0),
                 "val_auc": auc,
+                "temporal_gates": model.temporal_gate_values(),
             }
         )
         save_json(art_root / "epochs.json", epoch_metrics)
@@ -324,6 +338,10 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             stop_reason = "early_stopping"
             break
 
+    cal_cfg = dict(cfg["ranker"].get("calibration", {}))
+    ckpt = torch.load(art_root / "best.pt", map_location=device)
+    model.load_state_dict(ckpt["model"])
+    model.eval()
     save_json(
         art_root / "train_summary.json",
         {
@@ -340,13 +358,9 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             "device": device_str,
             "device_info": device_info(device),
             "teacher_artifact_run_name": teacher_artifact_run_name(cfg),
+            "temporal_gates": model.temporal_gate_values(),
         },
     )
-
-    cal_cfg = dict(cfg["ranker"].get("calibration", {}))
-    ckpt = torch.load(art_root / "best.pt", map_location=device)
-    model.load_state_dict(ckpt["model"])
-    model.eval()
 
     calibration_enabled = bool(cal_cfg.get("enabled", True)) and val_loader is not None
     if not calibration_enabled:
@@ -377,7 +391,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                 history_item_base=item_base_tensor[batch["hist_news_idx"]],
                 history_mask=batch["hist_mask"],
                 is_new_item=batch["is_new_item"],
-                hour_idx=batch["hour_idx"],
+                hour_value=batch["hour_value"],
                 weekday_idx=batch["weekday_idx"],
                 return_repr=False,
             )

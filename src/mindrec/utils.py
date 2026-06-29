@@ -119,12 +119,37 @@ def teacher_artifact_root(cfg: dict[str, Any]) -> Path:
     return Path("runs") / teacher_artifact_run_name(cfg) / "teacher"
 
 
-def ranker_time_feature_kwargs(cfg: dict[str, Any]) -> dict[str, bool]:
+def ranker_time_feature_kwargs(cfg: dict[str, Any]) -> dict[str, Any]:
     time_cfg = dict(cfg.get("ranker", {}).get("time_features", {}))
+    interactions = dict(time_cfg.get("interactions", {}))
+    enabled = bool(time_cfg.get("enabled", False))
     return {
-        "use_time_features": bool(time_cfg.get("enabled", False)),
-        "use_hour_feature": bool(time_cfg.get("hour_enabled", True)),
-        "use_weekday_feature": bool(time_cfg.get("weekday_enabled", False)),
+        "use_time_features": enabled,
+        "time_embedding_dim": int(time_cfg.get("embedding_dim", 4)),
+        "time_gate_init": float(time_cfg.get("gate_init", 0.0)),
+        "time_gate_max_abs": float(time_cfg.get("gate_max_abs", 1.0)),
+        "use_category_hour_interaction": enabled
+        and bool(
+            interactions.get(
+                "category_hour",
+                time_cfg.get("hour_enabled", True),
+            )
+        ),
+        "use_subcategory_hour_interaction": enabled
+        and bool(
+            interactions.get("subcategory_hour", False)
+        ),
+        "use_category_weekday_interaction": enabled
+        and bool(
+            interactions.get(
+                "category_weekday",
+                time_cfg.get("weekday_enabled", False),
+            )
+        ),
+        "use_subcategory_weekday_interaction": enabled
+        and bool(
+            interactions.get("subcategory_weekday", False)
+        ),
     }
 
 

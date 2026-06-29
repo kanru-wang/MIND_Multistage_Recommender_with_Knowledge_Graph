@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 from mindrec.config import ensure_dir
 from mindrec.data.featurize import IdMaps
-from mindrec.data.mind_io import MIND_TIME_FORMAT, time_feature_indices
+from mindrec.data.mind_io import MIND_TIME_FORMAT, time_feature_values
 from mindrec.metrics.benchmark import official_mind_benchmark_view
 from mindrec.metrics.calibration import brier_score, expected_calibration_error
 from mindrec.metrics.ranking import (
@@ -290,13 +290,13 @@ def _evaluate_split(
             cand_subcat_idx = np.array(r["cand_subcat_idx"], dtype=np.int64)
             cand_is_new = np.array(r["cand_is_new_item"], dtype=np.int64)
             cand_clicks_log1p = np.array(r["cand_item_clicks_log1p"], dtype=np.float32)
-            if "hour_idx" in r.index and "weekday_idx" in r.index:
-                hour_idx = int(r["hour_idx"])
+            if "hour_value" in r.index and "weekday_idx" in r.index:
+                hour_value = float(r["hour_value"])
                 weekday_idx = int(r["weekday_idx"])
             elif "time" in r.index:
-                hour_idx, weekday_idx = time_feature_indices(r["time"])
+                hour_value, weekday_idx = time_feature_values(r["time"])
             else:
-                hour_idx, weekday_idx = 0, 0
+                hour_value, weekday_idx = 0.0, 0
 
             hlen = float(r["history_len"])
             dense = np.stack(
@@ -322,7 +322,7 @@ def _evaluate_split(
                     cand_is_new[sl], dtype=torch.long, device=device
                 )
                 b_hour = torch.full(
-                    (batch_size,), hour_idx, dtype=torch.long, device=device
+                    (batch_size,), hour_value, dtype=torch.float32, device=device
                 )
                 b_weekday = torch.full(
                     (batch_size,), weekday_idx, dtype=torch.long, device=device
@@ -347,7 +347,7 @@ def _evaluate_split(
                     history_item_base=b_hist_base,
                     history_mask=b_hist_mask,
                     is_new_item=b_is_new,
-                    hour_idx=b_hour,
+                    hour_value=b_hour,
                     weekday_idx=b_weekday,
                 )
                 logits.append(logit.detach().cpu().numpy())
