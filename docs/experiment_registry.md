@@ -13,11 +13,14 @@ This registry names the split protocol behind each major result set. Use it befo
 
 ## Current Metrics
 
+Values below were read from the listed local evaluation artifacts on 2026-06-29.
+They describe completed runs, not untrained working-tree configuration changes.
+
 | Label | Eval split | Impressions | Teacher best epoch | Ranker best epoch | AUC | MRR | nDCG@5 | nDCG@10 |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | Small dev split | test | 14,631 | 2 | 5 | 0.6619 | 0.3589 | 0.3463 | 0.4050 |
 | Large dev only | val | 376,471 | 2 | 1 | 0.6686 | 0.3313 | 0.3659 | 0.4252 |
-| Large temporal | val | 807,988 | 4 | 1 | 0.6431 | 0.2958 | 0.3221 | 0.3843 |
+| Large temporal | val | 807,988 | 4 | 2 | 0.6538 | 0.3050 | 0.3332 | 0.3952 |
 | Small temporal | val | 103,422 | 1 | 3 | 0.6297 | 0.2995 | 0.3263 | 0.3867 |
 
 ## Sanity Rules

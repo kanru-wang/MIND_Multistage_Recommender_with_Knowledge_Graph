@@ -50,6 +50,10 @@ class PairDataset(Dataset):
             "label": torch.tensor(float(r["label"]), dtype=torch.float32),
             "is_cold_user": torch.tensor(int(r["is_cold_user"]), dtype=torch.long),
             "is_new_item": torch.tensor(int(r["is_new_item"]), dtype=torch.long),
+            "is_hard_negative": torch.tensor(
+                int(r["is_hard_negative"]) if "is_hard_negative" in r else 0,
+                dtype=torch.long,
+            ),
             "news_id": r["news_id"],
         }
 
@@ -65,6 +69,7 @@ def collate_batch(batch: list[dict[str, Any]]) -> dict[str, Any]:
         "label",
         "is_cold_user",
         "is_new_item",
+        "is_hard_negative",
     ]:
         out[k] = torch.stack([b[k] for b in batch], dim=0)
     max_hist_len = max(max(int(b["hist_news_idx"].numel()) for b in batch), 1)

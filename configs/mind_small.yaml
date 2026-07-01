@@ -72,6 +72,15 @@ ranker:
     patience: 2
     min_delta: 1.0e-5
   device: "cuda"
+  hard_negative_sampling:
+    enabled: true
+    pool_size: 20
+    hard_fraction: 0.25
+    score_batch_size: 512
+    teacher_consistent_hard_only: true
+    max_score_above_positive: 0.0
+    hard_for_cold_users_only: false
+    hard_negative_distill_weight: 0.0
   dlrm:
     emb_dim: 56
     id_emb_dim: 8

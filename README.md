@@ -54,11 +54,11 @@ The current repo/CLI does not implement online index updates; it builds and writ
   - `item_base_emb.npy`: frozen text-only sentence-transformer feature for every news item, used by teacher training and retrieval.
   - `item_ranker_base_emb.npy`: separate `[sentence-transformer text embedding ; KG entity/context embedding]` feature used by the student ranker
   - `item_teacher_emb.npy`: the final teacher embedding for every news item
-  - `user_teacher_emb.npy`: the final teacher embedding for each training user history
+  - `user_teacher_emb.npy`: a cached teacher embedding for each training user history, retained as an artifact for inspection/backward compatibility
 - These files are then reused by later stages:
   - `build_index` builds the Faiss retrieval index from `item_teacher_emb.npy`
   - `eval_retrieval` uses `item_teacher_emb.npy` and the saved teacher model to encode held-out histories and search that index
-  - `train_ranker` loads `item_ranker_base_emb.npy` as student semantic input and uses `item_teacher_emb.npy` / `user_teacher_emb.npy` only as teacher supervision targets
+  - `train_ranker` loads `item_ranker_base_emb.npy` as student semantic input and `item_teacher_emb.npy` as item supervision. It does **not** consume `user_teacher_emb.npy`; instead, it dynamically encodes each pair's impression-time history with the saved teacher model.
 
 ## Hybrid retrieval scoring
 
@@ -336,8 +336,22 @@ How pairs are created:
 - For an impression with `P` positives and `N` negatives, `P * (1 + min(data.ranker_negatives_per_positive, N))` pairs are generated.
 - Each positive is paired with up to `data.ranker_negatives_per_positive` sampled negatives; the current config uses `4`.
 - These negatives are labeled non-clicked candidates from the same impression.
-  This in-impression sampling is the ranker pair-building behavior.
-- Generated rows are used to train the **DLRM ranker (student)**.
+  This is the fallback ranker pair-building behavior when hard-negative sampling is disabled.
+- With `ranker.hard_negative_sampling.enabled: true`, ranker training rebuilds a larger
+  same-impression pool from `train_behaviors.parquet`. The teacher scores every pooled
+  candidate against that impression's history. The student then trains on a configurable
+  mix of teacher-hard and random non-clicked candidates.
+- The default hard-negative settings retain 4 negatives from a pool of up to 20:
+  1 teacher-hard negative and 3 random negatives.
+- To avoid teacher/student label conflict, teacher-hard candidates are only selected from
+  negatives that the teacher scores no higher than the clicked positive in the same
+  impression. Distillation is also disabled on teacher-mined hard-negative rows by
+  default; random negatives still use the normal distillation objective.
+- Set `ranker.hard_negative_sampling.hard_for_cold_users_only: true` to restrict
+  hard-negative mining to users with fewer than `data.min_user_hist_for_warm` history
+  items. Warm users then keep the same number of negatives, but all of them are random
+  same-impression negatives. The implementation skips teacher scoring for those warm
+  random-only groups.
 
 What about the negative sampling for teacher?
 - `teacher.negatives_per_positive` controls the contrastive sample of the teacher retriever.
@@ -404,7 +418,20 @@ It writes `runs/<run_name>/retrieval/sweep.json` with all tested settings plus t
 python -m mindrec.cli train_ranker --config configs/mind_small_temporal_tune.yaml
 ```
 
-After training the ranker on `train_pairs.parquet`, train_ranker fits a temperature scaler on `val_pairs.parquet`. It tunes a single positive scalar `T` in `sigmoid(logit / T)` against held-out labels, improving probability **calibration** without changing ranking order.
+When hard-negative sampling is enabled, `train_ranker` uses the persisted training
+behaviors to build a larger negative pool, scores it once with the trained teacher, and
+keeps the configured hard/random mixture. Teacher-mined hard negatives are tagged in the
+temporary training rows so their distillation weight can be reduced independently from
+ordinary random negatives. The optional `hard_for_cold_users_only` setting applies that
+hard/random mixture only to cold or no-history users. Set
+`ranker.hard_negative_sampling.enabled: false` to train on the original
+`train_pairs.parquet` random sample. Mining statistics are written under
+`hard_negative_sampling` in `ranker/train_summary.json`.
+
+After training, `train_ranker` fits a temperature scaler on the unchanged
+`val_pairs.parquet`. It tunes a single positive scalar `T` in
+`sigmoid(logit / T)` against held-out labels, improving probability **calibration**
+without changing ranking order.
 
 For the Small temporal ranker learning-rate sweep:
 ```powershell

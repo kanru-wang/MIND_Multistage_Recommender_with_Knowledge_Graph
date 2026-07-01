@@ -17,8 +17,11 @@ from mindrec.data.featurize import IdMaps
 from mindrec.models.calibration import fit_temperature_scaler
 from mindrec.models.dlrm import DLRMStudent
 from mindrec.models.teacher import TeacherTwoTower
+from mindrec.pipeline.hard_negative_sampling import build_teacher_hard_negative_pairs
 from mindrec.utils import (
+    behavior_artifact_path,
     device_info,
+    load_json,
     log_device,
     pair_artifact_path,
     resolve_device,
@@ -48,7 +51,13 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     proc_root = Path(cfg["data"]["processed_root"]) / ds
     maps = IdMaps.load(proc_root / "id_maps.json")
 
-    pairs_train = pd.read_parquet(proc_root / "train_pairs.parquet")
+    hard_cfg = dict(cfg["ranker"].get("hard_negative_sampling", {}))
+    hard_enabled = bool(hard_cfg.get("enabled", False))
+    pairs_train = (
+        None
+        if hard_enabled
+        else pd.read_parquet(proc_root / "train_pairs.parquet")
+    )
     val_split = validation_split_name(cfg)
     val_pairs_path = pair_artifact_path(proc_root, val_split)
     data_mode = str(cfg["data"].get("mode", "standard"))
@@ -57,8 +66,6 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     pairs_val = pd.read_parquet(val_pairs_path) if has_validation else None
 
     dense_cols = ["history_len", "item_clicks_log1p"]
-    train_ds = PairDataset(pairs_train, dense_cols=dense_cols)
-    val_ds = PairDataset(pairs_val, dense_cols=dense_cols) if pairs_val is not None else None
 
     device = resolve_device(cfg["ranker"].get("device", "cuda"))
     device_str = str(device)
@@ -90,6 +97,87 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     teacher_model.eval()
 
     news = pd.read_parquet(proc_root / "news.parquet")
+    hard_stats: dict[str, Any] = {"enabled": hard_enabled}
+    if hard_enabled:
+        negatives_per_positive = int(
+            cfg["data"].get("ranker_negatives_per_positive", 4)
+        )
+        pool_size = int(
+            hard_cfg.get("pool_size", max(negatives_per_positive * 5, 20))
+        )
+        hard_fraction = float(hard_cfg.get("hard_fraction", 0.75))
+        score_batch_size = int(hard_cfg.get("score_batch_size", 512))
+        teacher_consistent_hard_only = bool(
+            hard_cfg.get("teacher_consistent_hard_only", True)
+        )
+        max_score_above_positive = float(hard_cfg.get("max_score_above_positive", 0.0))
+        hard_for_cold_users_only = bool(
+            hard_cfg.get("hard_for_cold_users_only", False)
+        )
+        if pool_size < negatives_per_positive:
+            raise ValueError(
+                "ranker.hard_negative_sampling.pool_size must be at least "
+                "data.ranker_negatives_per_positive."
+            )
+
+        train_behaviors_path = behavior_artifact_path(proc_root, "train")
+        if not train_behaviors_path.exists():
+            raise FileNotFoundError(
+                "Hard-negative sampling requires train_behaviors.parquet. "
+                "Run preprocessing with the current pipeline first."
+            )
+        train_behaviors = pd.read_parquet(train_behaviors_path)
+        click_counts = load_json(proc_root / "item_click_counts.json")
+        pairs_train, selection_stats = build_teacher_hard_negative_pairs(
+            beh=train_behaviors,
+            news_idx_df=news,
+            maps=maps,
+            item_clicks_train=click_counts,
+            min_user_hist_for_warm=int(cfg["data"]["min_user_hist_for_warm"]),
+            min_item_train_clicks_for_warm=int(
+                cfg["data"]["min_item_train_clicks_for_warm"]
+            ),
+            max_history=int(cfg["data"]["max_history"]),
+            negatives_per_positive=negatives_per_positive,
+            pool_size=pool_size,
+            hard_fraction=hard_fraction,
+            teacher_consistent_hard_only=teacher_consistent_hard_only,
+            max_score_above_positive=max_score_above_positive,
+            hard_for_cold_users_only=hard_for_cold_users_only,
+            seed=seed,
+            teacher_model=teacher_model,
+            teacher_item_tensor=teacher_item_tensor,
+            device=device,
+            group_batch_size=score_batch_size,
+        )
+        hard_stats.update(
+            {
+                "pool_size": pool_size,
+                "negatives_per_positive": negatives_per_positive,
+                "score_batch_size": score_batch_size,
+                "scorer": "teacher_history_item_dot_product",
+                "teacher_consistent_hard_only": teacher_consistent_hard_only,
+                "max_score_above_positive": max_score_above_positive,
+                "hard_for_cold_users_only": hard_for_cold_users_only,
+                **selection_stats,
+            }
+        )
+        print(
+            "Hard-negative sampling selected "
+            f"{selection_stats['n_selected_negatives']:,} negatives from "
+            f"{selection_stats['n_pool_negatives']:,} pooled candidates "
+            f"({selection_stats['n_hard_negatives']:,} hard, "
+            f"{selection_stats['n_random_negatives']:,} random)."
+        )
+
+    if pairs_train is None:
+        raise RuntimeError("Ranker training pairs were not initialized.")
+    train_ds = PairDataset(pairs_train, dense_cols=dense_cols)
+    val_ds = (
+        PairDataset(pairs_val, dense_cols=dense_cols)
+        if pairs_val is not None
+        else None
+    )
     n_users = max(maps.user2idx.values()) + 1
     n_news = int(news["news_idx"].max()) + 1
     n_cats = int(news["cat_idx"].max()) + 1
@@ -150,6 +238,9 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     lam_repr = float(dist_cfg.get("lambda_repr", 0.1))
     w_cold = float(dist_cfg.get("cold_weight", 2.0))
     w_warm = float(dist_cfg.get("warm_weight", 0.3))
+    hard_negative_distill_weight = float(
+        hard_cfg.get("hard_negative_distill_weight", 0.0)
+    )
     es_cfg = dict(cfg["ranker"].get("early_stopping", {}))
     es_enabled = bool(es_cfg.get("enabled", True)) and has_validation
     es_patience = int(es_cfg.get("patience", 2))
@@ -215,6 +306,13 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             ).float()
             w = (cold_mask * w_cold) + ((1.0 - cold_mask) * w_warm)
             w = w * has_hist.float()
+            if hard_enabled:
+                hard_distill_scale = torch.where(
+                    batch["is_hard_negative"] == 1,
+                    torch.full_like(w, hard_negative_distill_weight),
+                    torch.ones_like(w),
+                )
+                w = w * hard_distill_scale
             w = w.detach()
 
             distill_loss = (w * (lam_logit * loss_logit + lam_repr * loss_repr)).mean()
@@ -312,6 +410,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             "device": device_str,
             "device_info": device_info(device),
             "teacher_artifact_run_name": teacher_artifact_run_name(cfg),
+            "hard_negative_sampling": hard_stats,
         },
     )
 

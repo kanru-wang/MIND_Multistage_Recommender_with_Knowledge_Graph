@@ -1,4 +1,7 @@
-run_name: "mind_large_temporal_tune"
+run_name: "mind_large_temporal_hard_neg_v3"
+
+artifacts:
+  teacher_run_name: "mind_large_temporal_tune"
 
 data:
   raw_root: "data/raw"
@@ -6,7 +9,6 @@ data:
   mode: "temporal_tune"
   train_dir: "MINDlarge_train"
   dev_dir: "MINDlarge_dev"
-  test_dir: "MINDlarge_test"
   processed_root: "data/processed"
   max_history: 50
   min_user_hist_for_warm: 5
@@ -75,6 +77,15 @@ ranker:
     patience: 2
     min_delta: 1.0e-5
   device: "cuda"
+  hard_negative_sampling:
+    enabled: true
+    pool_size: 20
+    hard_fraction: 0.25
+    score_batch_size: 512
+    teacher_consistent_hard_only: true
+    max_score_above_positive: 0.0
+    hard_for_cold_users_only: true
+    hard_negative_distill_weight: 0.0
   dlrm:
     emb_dim: 56
     id_emb_dim: 8
