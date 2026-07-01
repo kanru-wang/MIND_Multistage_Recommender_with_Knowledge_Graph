@@ -1,0 +1,123 @@
+{
+  "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+  "device": "cuda",
+  "device_info": {
+    "requested_device": "cuda",
+    "device_type": "cuda",
+    "torch_version": "2.11.0+cu128",
+    "cuda_available": true,
+    "cuda_version": "12.8",
+    "cudnn_version": 91900,
+    "cuda_device_index": 0,
+    "cuda_device_name": "NVIDIA GeForce RTX 3060 Laptop GPU",
+    "cuda_total_memory_gb": 6.0
+  },
+  "item_base_dim": 384,
+  "teacher_dim": 384,
+  "hidden_dim": 384,
+  "user_pooling": "attention",
+  "dropout": 0.1,
+  "temperature": 0.05,
+  "negatives_per_positive": 8,
+  "text": {
+    "include_category_prefix": false
+  },
+  "item_base_features": {
+    "mode": "text_only",
+    "text_dim": 384,
+    "item_base_dim": 384,
+    "kg": {
+      "dim": 100,
+      "n_items": 130380,
+      "n_items_with_linked_entities": 115300,
+      "n_items_with_entity_vectors": 114785,
+      "n_items_with_kg_neighbors": 111668,
+      "n_entity_mentions": 320919,
+      "n_entity_vectors_used": 316871,
+      "n_neighbor_vectors_used": 3265633,
+      "max_entities_per_news": 12,
+      "entity_weight": 1.0,
+      "neighbor_weight": 0.1,
+      "relation_weight": 0.1,
+      "normalize": true,
+      "enabled": true,
+      "entity_embedding_path": [
+        "data\\raw\\MINDlarge_train\\entity_embedding.vec",
+        "data\\raw\\MINDlarge_dev\\entity_embedding.vec",
+        "data\\raw\\MINDlarge_test\\entity_embedding.vec"
+      ],
+      "relation_embedding_path": [
+        "data\\raw\\MINDlarge_train\\relation_embedding.vec",
+        "data\\raw\\MINDlarge_dev\\relation_embedding.vec",
+        "data\\raw\\MINDlarge_test\\relation_embedding.vec"
+      ],
+      "triples_path": "data\\processed\\MINDlarge\\kg_triples.tsv",
+      "n_entity_embeddings": 49220,
+      "n_relation_embeddings": 1091,
+      "n_entities_with_neighbors": 38895
+    },
+    "use_kg": false
+  },
+  "ranker_item_base_features": {
+    "mode": "text_plus_kg",
+    "text_dim": 384,
+    "kg_dim": 100,
+    "item_base_dim": 484,
+    "text_feature_weight": 1.0,
+    "kg_feature_weight": 0.25,
+    "normalize_item_base": true,
+    "kg": {
+      "dim": 100,
+      "n_items": 130380,
+      "n_items_with_linked_entities": 115300,
+      "n_items_with_entity_vectors": 114785,
+      "n_items_with_kg_neighbors": 111668,
+      "n_entity_mentions": 320919,
+      "n_entity_vectors_used": 316871,
+      "n_neighbor_vectors_used": 3265633,
+      "max_entities_per_news": 12,
+      "entity_weight": 1.0,
+      "neighbor_weight": 0.1,
+      "relation_weight": 0.1,
+      "normalize": true,
+      "enabled": true,
+      "entity_embedding_path": [
+        "data\\raw\\MINDlarge_train\\entity_embedding.vec",
+        "data\\raw\\MINDlarge_dev\\entity_embedding.vec",
+        "data\\raw\\MINDlarge_test\\entity_embedding.vec"
+      ],
+      "relation_embedding_path": [
+        "data\\raw\\MINDlarge_train\\relation_embedding.vec",
+        "data\\raw\\MINDlarge_dev\\relation_embedding.vec",
+        "data\\raw\\MINDlarge_test\\relation_embedding.vec"
+      ],
+      "triples_path": "data\\processed\\MINDlarge\\kg_triples.tsv",
+      "n_entity_embeddings": 49220,
+      "n_relation_embeddings": 1091,
+      "n_entities_with_neighbors": 38895
+    },
+    "use_kg": true
+  },
+  "train_samples": 3870640,
+  "train_users": 736348,
+  "validation_split_name": "val",
+  "has_validation": false,
+  "val_samples": 0,
+  "epochs": 2,
+  "early_stopping_enabled": false,
+  "early_stopping_monitor": "retrieval_recall@k",
+  "early_stopping_patience": 2,
+  "early_stopping_min_delta": 0.0001,
+  "stopped_epoch": 2,
+  "best_epoch": 2,
+  "best_val_loss_mean": 6.227549963133045,
+  "best_val_recall_at_k": null,
+  "best_val_recall_k": 200,
+  "best_val_recall_n_eval": 0,
+  "selection_mode": "fixed_epoch",
+  "stop_reason": "max_epochs",
+  "lr": 0.0002,
+  "train_loss_mean": 6.227549963133045,
+  "item_encoder": "sentence_transformer_frozen_plus_projection",
+  "user_encoder": "attention_pool_over_history"
+}

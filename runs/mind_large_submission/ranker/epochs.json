@@ -1,0 +1,10 @@
+[
+  {
+    "epoch": 1,
+    "train_loss_mean": 0.8543950617121278,
+    "val_auc": null,
+    "temporal_gates": {
+      "category_hour": 0.0393199659883976
+    }
+  }
+]
