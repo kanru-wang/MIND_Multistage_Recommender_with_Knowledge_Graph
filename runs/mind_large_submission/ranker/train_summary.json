@@ -21,8 +21,5 @@
     "cuda_device_name": "NVIDIA GeForce RTX 3060 Laptop GPU",
     "cuda_total_memory_gb": 6.0
   },
-  "teacher_artifact_run_name": "mind_large_submission",
-  "temporal_gates": {
-    "category_hour": 0.0393199659883976
-  }
+  "teacher_artifact_run_name": "mind_large_submission"
 }
