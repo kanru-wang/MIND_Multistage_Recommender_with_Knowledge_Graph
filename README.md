@@ -490,11 +490,26 @@ Inspect:
 
 For temporal configs, the evaluation row count in `ranker_eval_val.json` should match `n_validation_eval_impressions` in `preprocess_meta.json`. If it does not, rerun `evaluate` with the current code before using the metrics as a baseline.
 
+Latest completed Large temporal baseline:
+
+| Validation impressions | Teacher best epoch | Ranker best epoch | AUC | MRR | nDCG@5 | nDCG@10 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 807,988 | 4 | 1 | 0.646597 | 0.304210 | 0.330920 | 0.393785 |
+
+This run trains on `MINDlarge_train` impressions before Nov 14 and evaluates the full
+validation window formed from the Nov 14 tail of `MINDlarge_train` plus all of
+`MINDlarge_dev` on Nov 15. The teacher stopped at epoch 6 and selected epoch 4;
+the ranker stopped at epoch 3 and selected epoch 1. The table reports full
+impression-ranking metrics from `ranker_eval_val.json`; the ranker's sampled-pair
+early-stopping AUC is a different quantity.
+
 Current baseline metrics are recorded in [docs/experiment_registry.md](docs/experiment_registry.md).
 
 Then copy the selected fixed epoch counts into `configs/mind_large_submission.yaml`:
 - `teacher.epochs`: selected teacher `best_epoch`
 - `ranker.epochs`: selected ranker `best_epoch`
+
+For the completed baseline above, use `teacher.epochs: 4` and `ranker.epochs: 1`.
 
 The final submission config disables early stopping and calibration because no labeled validation split is held out in the final fit. Then run:
 ```powershell
