@@ -6,7 +6,6 @@ data:
   mode: "leaderboard_tune"
   train_dir: "MINDlarge_train"
   dev_dir: "MINDlarge_dev"
-  test_dir: "MINDlarge_test"
   processed_root: "data/processed"
   max_history: 50
   min_user_hist_for_warm: 5
@@ -136,4 +135,3 @@ eval:
   report_splits: ["val"]
   ks: [5, 10]
   time_periods: 4
-  plot_curves: true

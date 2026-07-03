@@ -73,11 +73,13 @@ def build_teacher_hard_negative_pairs(
     rows: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []
     n_groups = 0
-    n_pool_negatives = 0
+    n_teacher_scored_pool_negatives = 0
+    n_random_only_selected_negatives = 0
     n_hard_eligible_pool_negatives = 0
     n_hard_ineligible_pool_negatives = 0
     n_hard_mining_groups = 0
     n_random_only_groups = 0
+    n_zero_history_random_only_groups = 0
     n_hard_negatives = 0
     n_random_negatives = 0
 
@@ -116,13 +118,11 @@ def build_teacher_hard_negative_pairs(
     def flush_pending() -> None:
         nonlocal n_hard_negatives, n_random_negatives
         nonlocal n_hard_eligible_pool_negatives, n_hard_ineligible_pool_negatives
-        nonlocal n_hard_mining_groups, n_random_only_groups
+        nonlocal n_hard_mining_groups
         if not pending:
             return
         histories = [group["hist_news_idx"] for group in pending]
-        max_batch_history = max(
-            max((len(history) for history in histories), default=0), 1
-        )
+        max_batch_history = max(len(history) for history in histories)
         history_idx = torch.zeros(
             (len(pending), max_batch_history), dtype=torch.long, device=device
         )
@@ -130,25 +130,16 @@ def build_teacher_hard_negative_pairs(
             (len(pending), max_batch_history), dtype=torch.bool, device=device
         )
         for row_idx, history in enumerate(histories):
-            if not history:
-                continue
             history_idx[row_idx, : len(history)] = torch.as_tensor(
                 history, dtype=torch.long, device=device
             )
             history_mask[row_idx, : len(history)] = True
 
-        user_vectors = torch.zeros(
-            (len(pending), teacher_item_tensor.shape[1]),
-            dtype=teacher_item_tensor.dtype,
-            device=device,
-        )
-        has_history = history_mask.any(dim=1)
         with torch.no_grad():
-            if bool(has_history.any().item()):
-                user_vectors[has_history] = teacher_model.encode_user_from_item_vectors(
-                    teacher_item_tensor[history_idx[has_history]],
-                    history_mask[has_history],
-                )
+            user_vectors = teacher_model.encode_user_from_item_vectors(
+                teacher_item_tensor[history_idx],
+                history_mask,
+            )
 
             max_pool_size = max(len(group["negative_pool"]) for group in pending)
             pool_news_idx = torch.zeros(
@@ -201,13 +192,9 @@ def build_teacher_hard_negative_pairs(
                 pool_positions = group["negative_pool"]
                 scores = pool_scores_array[row_idx, : len(pool_positions)]
                 hard_eligible_mask = None
-                group_hard_fraction = hard_fraction
-                if group_hard_fraction > 0.0:
-                    n_hard_mining_groups += 1
-                else:
-                    n_random_only_groups += 1
+                n_hard_mining_groups += 1
 
-                if teacher_consistent_hard_only and group_hard_fraction > 0.0:
+                if teacher_consistent_hard_only:
                     hard_eligible_mask = (
                         scores
                         <= float(positive_scores[row_idx].detach().cpu())
@@ -222,7 +209,7 @@ def build_teacher_hard_negative_pairs(
                 chosen_offsets, n_hard, n_random = _choose_negative_offsets(
                     scores=scores,
                     n_select=min(negatives_per_positive, len(pool_positions)),
-                    hard_fraction=group_hard_fraction,
+                    hard_fraction=hard_fraction,
                     rng=rng,
                     hard_eligible_mask=hard_eligible_mask,
                 )
@@ -273,16 +260,21 @@ def build_teacher_hard_negative_pairs(
             }
             n_groups += 1
 
-            use_hard_mining = hard_fraction > 0.0 and (
-                not hard_for_cold_users_only or cold_u == 1
+            has_usable_history = bool(hist_news_idx)
+            use_hard_mining = (
+                hard_fraction > 0.0
+                and has_usable_history
+                and (not hard_for_cold_users_only or cold_u == 1)
             )
             if not use_hard_mining:
                 n_random_only_groups += 1
+                if not has_usable_history:
+                    n_zero_history_random_only_groups += 1
                 sample_size = min(negatives_per_positive, len(negative_positions))
                 chosen_negatives = rng.choice(
                     negative_positions, size=sample_size, replace=False
                 ).tolist()
-                n_pool_negatives += len(chosen_negatives)
+                n_random_only_selected_negatives += len(chosen_negatives)
                 n_random_negatives += len(chosen_negatives)
                 append_row(group, positive_position)
                 for negative_position in chosen_negatives:
@@ -293,11 +285,9 @@ def build_teacher_hard_negative_pairs(
             negative_pool = rng.choice(
                 negative_positions, size=sample_size, replace=False
             ).tolist()
-            n_pool_negatives += len(negative_pool)
+            n_teacher_scored_pool_negatives += len(negative_pool)
             group["negative_pool"] = negative_pool
-            pending.append(
-                group
-            )
+            pending.append(group)
             if len(pending) >= group_batch_size:
                 flush_pending()
     flush_pending()
@@ -305,11 +295,19 @@ def build_teacher_hard_negative_pairs(
     n_selected_negatives = n_hard_negatives + n_random_negatives
     stats: dict[str, Any] = {
         "n_groups": int(n_groups),
-        "n_pool_negatives": int(n_pool_negatives),
+        "n_teacher_scored_pool_negatives": int(
+            n_teacher_scored_pool_negatives
+        ),
+        "n_random_only_selected_negatives": int(
+            n_random_only_selected_negatives
+        ),
         "n_hard_eligible_pool_negatives": int(n_hard_eligible_pool_negatives),
         "n_hard_ineligible_pool_negatives": int(n_hard_ineligible_pool_negatives),
         "n_hard_mining_groups": int(n_hard_mining_groups),
         "n_random_only_groups": int(n_random_only_groups),
+        "n_zero_history_random_only_groups": int(
+            n_zero_history_random_only_groups
+        ),
         "n_selected_rows": int(len(rows)),
         "n_selected_negatives": int(n_selected_negatives),
         "n_hard_negatives": int(n_hard_negatives),

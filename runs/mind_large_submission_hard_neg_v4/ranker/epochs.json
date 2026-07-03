@@ -1,0 +1,7 @@
+[
+  {
+    "epoch": 1,
+    "train_loss_mean": 0.8367063054293843,
+    "val_auc": null
+  }
+]

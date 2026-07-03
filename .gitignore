@@ -16,6 +16,7 @@ venv/
 # Ignore Python cache/bytecode files
 __pycache__/
 .pytest_tmp/
+*.egg-info/
 *.pyc
 *.pyo
 *.index
@@ -26,7 +27,7 @@ __pycache__/
 runs/mind_large_category_hour_analysis*/
 runs/mind_large_tune*/
 runs/mind_large_temporal_hard_neg*/
-runs/mind_large_submission/submission/
+runs/mind_large_submission*/submission/
 runs/mind_small_temporal_tune_ranker_lr_*/
 
 # Ignore tests

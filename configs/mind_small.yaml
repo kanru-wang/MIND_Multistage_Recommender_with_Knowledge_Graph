@@ -134,4 +134,3 @@ eval:
   report_splits: ["val", "test"]
   ks: [5, 10]
   time_periods: 4
-  plot_curves: true

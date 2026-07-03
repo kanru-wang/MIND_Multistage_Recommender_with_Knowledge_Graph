@@ -236,7 +236,6 @@ This repo is designed to run on a powerful Windows laptop:
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-pip install -e .
 ```
 
 ### GPU check
@@ -329,7 +328,8 @@ Main steps for temporal-tune configs such as `configs/mind_small_temporal_tune.y
 - Read `news.tsv` and `behaviors.tsv` from train/dev.
 - Build ID mappings (`user_id/news_id/category/subcategory -> integer index`).
 - Move the final day of `train_dir` into validation, then append all of `dev_dir` to that same validation split.
-- Build pairwise rows for training and held-out validation (`train_pairs.parquet`, `val_pairs.parquet`).
+- Build held-out pairwise rows (`val_pairs.parquet`). Persist `train_pairs.parquet`
+  only when hard-negative sampling is disabled.
 - Build impression-level validation data (`val_impressions.parquet`).
 
 How pairs are created:
@@ -340,26 +340,32 @@ How pairs are created:
 - With `ranker.hard_negative_sampling.enabled: true`, ranker training rebuilds a larger
   same-impression pool from `train_behaviors.parquet`. The teacher scores every pooled
   candidate against that impression's history. The student then trains on a configurable
-  mix of teacher-hard and random non-clicked candidates.
+  mix of teacher-hard and random non-clicked candidates. Preprocessing skips the unused
+  `train_pairs.parquet` artifact in this mode.
 - The default hard-negative settings retain 4 negatives from a pool of up to 20:
-  1 teacher-hard negative and 3 random negatives.
+  1 teacher-hard negative and 3 random negatives for groups with a usable history.
+- Groups with no usable encoded history bypass teacher scoring and retain 4 random
+  same-impression negatives. A zero-history teacher vector cannot distinguish candidates,
+  so labeling one of those negatives as hard would be arbitrary.
 - To avoid teacher/student label conflict, teacher-hard candidates are only selected from
   negatives that the teacher scores no higher than the clicked positive in the same
   impression. Distillation is also disabled on teacher-mined hard-negative rows by
   default; random negatives still use the normal distillation objective.
 - Set `ranker.hard_negative_sampling.hard_for_cold_users_only: true` to restrict
   hard-negative mining to users with fewer than `data.min_user_hist_for_warm` history
-  items. Warm users then keep the same number of negatives, but all of them are random
-  same-impression negatives. The implementation skips teacher scoring for those warm
-  random-only groups.
+  items and at least one usable encoded history item. With the default warm threshold of
+  5, users with 1-4 history items receive the hard/random mixture; zero-history and warm
+  users keep the same number of negatives, but all of them are random same-impression
+  negatives. The implementation skips teacher scoring for all random-only groups.
 
 What about the negative sampling for teacher?
 - `teacher.negatives_per_positive` controls the contrastive sample of the teacher retriever.
 - The current config uses `8`, so each clicked item can be paired with up to 8 non-clicked candidates from the same impression when training the teacher. If an impression only has 5 negatives, it uses 5.
-- Samples are generated in-memory. Sampling does not change the ranker pair parquet size.
+- Samples are generated in-memory and independently from ranker pair construction.
 
 Why there is no `train_impressions.parquet`:
-- Training uses pairwise rows (`train_pairs.parquet`), not full impression-grouped rows.
+- Ranker training uses pairwise rows, either persisted in `train_pairs.parquet` for random
+  sampling or built dynamically from `train_behaviors.parquet` for hard mining.
 - Impression-grouped data is mainly needed for ranking evaluation, so temporal-tune configs only generate it for `val`.
 
 Validation split note:
@@ -423,7 +429,8 @@ behaviors to build a larger negative pool, scores it once with the trained teach
 keeps the configured hard/random mixture. Teacher-mined hard negatives are tagged in the
 temporary training rows so their distillation weight can be reduced independently from
 ordinary random negatives. The optional `hard_for_cold_users_only` setting applies that
-hard/random mixture only to cold or no-history users. Set
+hard/random mixture only to cold users with a usable history; zero-history users always
+receive random negatives because their teacher candidate scores tie. Set
 `ranker.hard_negative_sampling.enabled: false` to train on the original
 `train_pairs.parquet` random sample. Mining statistics are written under
 `hard_negative_sampling` in `ranker/train_summary.json`.
@@ -459,10 +466,17 @@ The ranker evaluation includes additional slice families:
 For new/cold item ranking evaluation, each impression contains many candidate items, and ranking metrics are calculated for the whole impression. Therefore `impressions_with_clicked_new_item` means: evaluate whole impressions where at least one clicked positive item is new. It does not mean evaluating only the new candidate items inside all impressions.
 
 ### 3.5 Build a MIND-large leaderboard submission
-Use three MIND-large configs:
-- `configs/mind_large_temporal_tune.yaml`: recommended experiment baseline. It trains on `MINDlarge_train` before Nov 14, then validates on Nov 14 from `MINDlarge_train` plus all of `MINDlarge_dev`.
+Use four MIND-large configs:
+- `configs/mind_large_temporal_baseline.yaml`: reproducible random-negative baseline. It
+  trains on `MINDlarge_train` before Nov 14, then validates on Nov 14 from
+  `MINDlarge_train` plus all of `MINDlarge_dev`.
+- `configs/mind_large_temporal_tune.yaml`: hard-negative v4 experiment on the same
+  temporal split. It reuses the baseline teacher and mines hard negatives only for cold
+  users with usable history.
 - `configs/mind_large_tune.yaml`: official train-to-dev model-selection run, with all `MINDlarge_train` for training and `MINDlarge_dev` for validation.
-- `configs/mind_large_submission.yaml`: final submission run, with `MINDlarge_train + MINDlarge_dev` for fixed-epoch training and `MINDlarge_test` for hidden-test scoring.
+- `configs/mind_large_submission.yaml`: hard-negative v4 final submission run, with
+  `MINDlarge_train + MINDlarge_dev` for fixed-epoch training and `MINDlarge_test` for
+  hidden-test scoring.
 
 If `knowledge_graph.enabled: true`, first build the Large KG triples file:
 ```powershell
@@ -476,10 +490,10 @@ python scripts/build_mind_wikidata5m_triples.py `
 
 First build the temporal baseline for future experiments:
 ```powershell
-python -m mindrec.cli preprocess --config configs/mind_large_temporal_tune.yaml
-python -m mindrec.cli train_teacher --config configs/mind_large_temporal_tune.yaml
-python -m mindrec.cli train_ranker --config configs/mind_large_temporal_tune.yaml
-python -m mindrec.cli evaluate --config configs/mind_large_temporal_tune.yaml
+python -m mindrec.cli preprocess --config configs/mind_large_temporal_baseline.yaml
+python -m mindrec.cli train_teacher --config configs/mind_large_temporal_baseline.yaml
+python -m mindrec.cli train_ranker --config configs/mind_large_temporal_baseline.yaml
+python -m mindrec.cli evaluate --config configs/mind_large_temporal_baseline.yaml
 ```
 
 Inspect:
@@ -505,6 +519,15 @@ early-stopping AUC is a different quantity.
 
 Current baseline metrics are recorded in [docs/experiment_registry.md](docs/experiment_registry.md).
 
+Latest completed hard-negative v4 result on the same 807,988 validation impressions:
+
+| AUC | MRR | nDCG@5 | nDCG@10 |
+| ---: | ---: | ---: | ---: |
+| 0.645785 | 0.305195 | 0.332726 | 0.394743 |
+
+V4 uses `configs/mind_large_temporal_tune.yaml`. Its zero-history groups use 4 random
+negatives; cold users with usable history use 1 teacher-hard plus 3 random negatives.
+
 Then copy the selected fixed epoch counts into `configs/mind_large_submission.yaml`:
 - `teacher.epochs`: selected teacher `best_epoch`
 - `ranker.epochs`: selected ranker `best_epoch`
@@ -520,10 +543,13 @@ python -m mindrec.cli write_submission --config configs/mind_large_submission.ya
 ```
 
 The submission command does not use the reranker. It writes:
-- `runs/mind_large_submission/submission/prediction.txt`
-- `runs/mind_large_submission/submission/prediction.zip`
+- `runs/mind_large_submission_hard_neg_v4/submission/prediction.txt`
+- `runs/mind_large_submission_hard_neg_v4/submission/prediction.zip`
 
-By default, it streams the hidden test file and does not write a large scores parquet. Set `submission.save_scores: true` only if you explicitly want `runs/mind_large_submission/submission/submission_test_scores.parquet` for debugging.
+By default, it streams the hidden test file and does not write a large scores parquet.
+Set `submission.save_scores: true` only if you explicitly want
+`runs/mind_large_submission_hard_neg_v4/submission/submission_test_scores.parquet`
+for debugging.
 
 The official MIND evaluator reads `prediction.txt` lines as `impression_id [rank,...]`, where rank `1` is the highest-scored candidate. Local MIND metrics report AUC, MRR, nDCG@5, and nDCG@10 using the same per-impression ranking definitions as the official evaluator; leaderboard rank is primarily by AUC.
 

@@ -164,10 +164,13 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         )
         print(
             "Hard-negative sampling selected "
-            f"{selection_stats['n_selected_negatives']:,} negatives from "
-            f"{selection_stats['n_pool_negatives']:,} pooled candidates "
+            f"{selection_stats['n_selected_negatives']:,} negatives "
             f"({selection_stats['n_hard_negatives']:,} hard, "
-            f"{selection_stats['n_random_negatives']:,} random)."
+            f"{selection_stats['n_random_negatives']:,} random); teacher-scored "
+            f"{selection_stats['n_teacher_scored_pool_negatives']:,} pooled "
+            "candidates and directly selected "
+            f"{selection_stats['n_random_only_selected_negatives']:,} negatives "
+            "for random-only groups."
         )
 
     if pairs_train is None:

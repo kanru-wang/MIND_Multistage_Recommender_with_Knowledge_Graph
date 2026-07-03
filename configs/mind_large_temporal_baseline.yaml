@@ -1,17 +1,18 @@
-run_name: "mind_large_submission_hard_neg_v4"
+run_name: "mind_large_temporal_tune"
 
 data:
   raw_root: "data/raw"
-  dataset_name: "MINDlarge_submission"
-  mode: "leaderboard_submission"
+  dataset_name: "MINDlarge_temporal_tune"
+  mode: "temporal_tune"
   train_dir: "MINDlarge_train"
   dev_dir: "MINDlarge_dev"
-  test_dir: "MINDlarge_test"
   processed_root: "data/processed"
   max_history: 50
   min_user_hist_for_warm: 5
   min_item_train_clicks_for_warm: 10
   ranker_negatives_per_positive: 4
+  temporal_validation:
+    validation_start: "2019-11-14 00:00:00"
   sub_sample:
     enabled: false
     train_impressions: 200000
@@ -42,9 +43,9 @@ teacher:
   user_attn_heads: 4
   user_attn_dim: 384
   lr: 2.0e-4
-  epochs: 4
+  epochs: 8
   early_stopping:
-    enabled: false
+    enabled: true
     patience: 2
     monitor: "retrieval_recall@k"
     min_delta: 1.0e-4
@@ -67,20 +68,20 @@ ranker:
   batch_size: 1024
   lr: 3.0e-4
   weight_decay: 3.0e-5
-  epochs: 1
+  epochs: 8
   early_stopping:
-    enabled: false
+    enabled: true
     patience: 2
     min_delta: 1.0e-5
   device: "cuda"
   hard_negative_sampling:
-    enabled: true
+    enabled: false
     pool_size: 20
     hard_fraction: 0.25
     score_batch_size: 512
     teacher_consistent_hard_only: true
     max_score_above_positive: 0.0
-    hard_for_cold_users_only: true
+    hard_for_cold_users_only: false
     hard_negative_distill_weight: 0.0
   dlrm:
     emb_dim: 56
@@ -99,7 +100,7 @@ ranker:
     cold_weight: 2.0
     warm_weight: 0.5
   calibration:
-    enabled: false
+    enabled: true
     lr: 0.05
     max_iter: 100
 
@@ -133,10 +134,6 @@ rerank:
       fairness_kl_pool_improvement_units: 1.5
 
 eval:
-  report_splits: []
+  report_splits: ["val"]
   ks: [5, 10]
   time_periods: 4
-
-submission:
-  split_name: "submission_test"
-  batch_size: 2048

@@ -263,6 +263,11 @@ def _split_behaviors_from_time(
     return train, val, meta
 
 
+def _materialize_train_pairs(cfg: dict[str, Any]) -> bool:
+    hard_cfg = cfg.get("ranker", {}).get("hard_negative_sampling", {})
+    return not bool(hard_cfg.get("enabled", False))
+
+
 def _run_standard_preprocess(cfg: dict[str, Any]) -> None:
     seed = int(cfg["data"].get("sub_sample", {}).get("seed", 13))
     set_seed(seed, seed_cuda=False)
@@ -310,19 +315,25 @@ def _run_standard_preprocess(cfg: dict[str, Any]) -> None:
     )
     ranker_neg_per_pos = int(cfg["data"].get("ranker_negatives_per_positive", 4))
 
-    pairs_train = build_pairs(
-        beh=beh_train,
-        news_idx_df=news_idx_df,
-        maps=maps,
-        item_clicks_train=click_counts,
-        min_user_hist_for_warm=int(cfg["data"]["min_user_hist_for_warm"]),
-        min_item_train_clicks_for_warm=int(
-            cfg["data"]["min_item_train_clicks_for_warm"]
-        ),
-        max_history=int(cfg["data"]["max_history"]),
-        neg_per_pos=ranker_neg_per_pos,
-        seed=seed,
-    )
+    train_pairs_path = pair_artifact_path(proc_root, "train")
+    pairs_train = None
+    if _materialize_train_pairs(cfg):
+        pairs_train = build_pairs(
+            beh=beh_train,
+            news_idx_df=news_idx_df,
+            maps=maps,
+            item_clicks_train=click_counts,
+            min_user_hist_for_warm=int(cfg["data"]["min_user_hist_for_warm"]),
+            min_item_train_clicks_for_warm=int(
+                cfg["data"]["min_item_train_clicks_for_warm"]
+            ),
+            max_history=int(cfg["data"]["max_history"]),
+            neg_per_pos=ranker_neg_per_pos,
+            seed=seed,
+        )
+        pairs_train.to_parquet(train_pairs_path, index=False)
+    else:
+        _remove_if_exists(train_pairs_path)
     pairs_val = build_pairs(
         beh=val_beh,
         news_idx_df=news_idx_df,
@@ -350,7 +361,6 @@ def _run_standard_preprocess(cfg: dict[str, Any]) -> None:
         seed=seed + 2,
     )
 
-    pairs_train.to_parquet(pair_artifact_path(proc_root, "train"), index=False)
     pairs_val.to_parquet(pair_artifact_path(proc_root, val_name), index=False)
     pairs_test.to_parquet(pair_artifact_path(proc_root, test_name), index=False)
 
@@ -392,7 +402,13 @@ def _run_standard_preprocess(cfg: dict[str, Any]) -> None:
         "test_split_name": test_name,
         "n_validation_impressions": int(len(val_beh)),
         "n_test_impressions": int(len(test_beh)),
-        "n_train_pairs": int(len(pairs_train)),
+        "n_train_pairs": int(len(pairs_train)) if pairs_train is not None else 0,
+        "train_pairs_materialized": pairs_train is not None,
+        "ranker_train_pair_source": (
+            "train_pairs.parquet"
+            if pairs_train is not None
+            else "train_behaviors.parquet"
+        ),
         "n_validation_pairs": int(len(pairs_val)),
         "n_test_pairs": int(len(pairs_test)),
         "ranker_negatives_per_positive": ranker_neg_per_pos,
@@ -516,20 +532,25 @@ def _run_multi_source_preprocess(cfg: dict[str, Any]) -> None:
     save_json(proc_root / "item_click_counts.json", click_counts)
 
     ranker_neg_per_pos = int(cfg["data"].get("ranker_negatives_per_positive", 4))
-    pairs_train = build_pairs(
-        beh=fit_beh,
-        news_idx_df=news_idx_df,
-        maps=maps,
-        item_clicks_train=click_counts,
-        min_user_hist_for_warm=int(cfg["data"]["min_user_hist_for_warm"]),
-        min_item_train_clicks_for_warm=int(
-            cfg["data"]["min_item_train_clicks_for_warm"]
-        ),
-        max_history=int(cfg["data"]["max_history"]),
-        neg_per_pos=ranker_neg_per_pos,
-        seed=seed,
-    )
-    pairs_train.to_parquet(pair_artifact_path(proc_root, "train"), index=False)
+    train_pairs_path = pair_artifact_path(proc_root, "train")
+    pairs_train = None
+    if _materialize_train_pairs(cfg):
+        pairs_train = build_pairs(
+            beh=fit_beh,
+            news_idx_df=news_idx_df,
+            maps=maps,
+            item_clicks_train=click_counts,
+            min_user_hist_for_warm=int(cfg["data"]["min_user_hist_for_warm"]),
+            min_item_train_clicks_for_warm=int(
+                cfg["data"]["min_item_train_clicks_for_warm"]
+            ),
+            max_history=int(cfg["data"]["max_history"]),
+            neg_per_pos=ranker_neg_per_pos,
+            seed=seed,
+        )
+        pairs_train.to_parquet(train_pairs_path, index=False)
+    else:
+        _remove_if_exists(train_pairs_path)
 
     pairs_val = None
     impr_val = None
@@ -575,7 +596,13 @@ def _run_multi_source_preprocess(cfg: dict[str, Any]) -> None:
         "submission_split_name": submission_split,
         "n_validation_impressions": int(len(val_beh)) if val_beh is not None else 0,
         "n_submission_impressions": int(n_submission_impressions),
-        "n_train_pairs": int(len(pairs_train)),
+        "n_train_pairs": int(len(pairs_train)) if pairs_train is not None else 0,
+        "train_pairs_materialized": pairs_train is not None,
+        "ranker_train_pair_source": (
+            "train_pairs.parquet"
+            if pairs_train is not None
+            else "train_behaviors.parquet"
+        ),
         "n_validation_pairs": int(len(pairs_val)) if pairs_val is not None else 0,
         "ranker_negatives_per_positive": ranker_neg_per_pos,
         "n_validation_eval_impressions": int(len(impr_val)) if impr_val is not None else 0,

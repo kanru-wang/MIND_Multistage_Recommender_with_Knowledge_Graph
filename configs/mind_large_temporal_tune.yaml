@@ -1,4 +1,4 @@
-run_name: "mind_large_temporal_hard_neg_v3"
+run_name: "mind_large_temporal_hard_neg_v4"
 
 artifacts:
   teacher_run_name: "mind_large_temporal_tune"
@@ -140,4 +140,3 @@ eval:
   report_splits: ["val"]
   ks: [5, 10]
   time_periods: 4
-  plot_curves: true
