@@ -65,9 +65,9 @@ retrieval:
 
 ranker:
   batch_size: 1024
-  lr: 3.0e-4
+  lr: 1.0e-4
   weight_decay: 3.0e-5
-  epochs: 1
+  epochs: 4
   early_stopping:
     enabled: false
     patience: 2

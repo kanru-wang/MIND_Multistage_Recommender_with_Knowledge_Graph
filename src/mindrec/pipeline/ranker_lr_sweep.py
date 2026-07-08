@@ -11,7 +11,11 @@ from mindrec.utils import load_json, save_json
 
 
 def _lr_slug(lr: float) -> str:
-    return f"{lr:.0e}".replace("-", "m").replace("+", "")
+    mantissa, exponent_text = f"{lr:.12e}".split("e")
+    mantissa = mantissa.rstrip("0").rstrip(".").replace(".", "p")
+    exponent = int(exponent_text)
+    exponent_sign = "m" if exponent < 0 else ""
+    return f"{mantissa}e{exponent_sign}{abs(exponent):02d}"
 
 
 def _variant_run_name(base_run_name: str, lr: float) -> str:
