@@ -65,9 +65,9 @@ retrieval:
 
 ranker:
   batch_size: 1024
-  lr: 1.0e-4
-  weight_decay: 3.0e-5
-  epochs: 4
+  lr: 3.25e-4
+  weight_decay: 1e-5
+  epochs: 1
   early_stopping:
     enabled: false
     patience: 2
@@ -139,4 +139,7 @@ eval:
 
 submission:
   split_name: "submission_test"
-  batch_size: 2048
+  batch_size: 8192
+  candidate_buffer_size: 65536
+  exact_rank_guard_threshold: 1.0e-5
+  reference_batch_size: 2048

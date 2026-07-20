@@ -238,18 +238,6 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-### GPU check
-
-The checked-in configs use `device: "cuda"` for teacher and ranker training. CUDA is now strict: if PyTorch cannot see the NVIDIA GPU, training and scoring fail instead of silently falling back to CPU. Use `device: "auto"` only when you explicitly want CPU fallback.
-
-Verify GPU execution before a long run:
-
-```bash
-python scripts/check_gpu.py --config configs/mind_small_temporal_tune.yaml --component ranker
-```
-
-The output should show `cuda_available: True`, `result_device: cuda:0`, and a non-zero `cuda_peak_memory_mb`.
-
 ---
 
 ## 2) Get the dataset (MIND)
@@ -289,16 +277,16 @@ Download one of the Wikidata5M KG files from:
 
 Then filter it down to MIND-mentioned entities:
 
-```powershell
-python scripts/build_mind_wikidata5m_triples.py `
-  --kg-path path/to/wikidata5m_transductive_train.txt `
-  --raw-root data/raw `
-  --train-dir MINDsmall_train `
-  --dev-dir MINDsmall_dev `
-  --entity-embedding data/raw/MINDsmall_train/entity_embedding.vec `
-  --entity-embedding data/raw/MINDsmall_dev/entity_embedding.vec `
-  --relation-embedding data/raw/MINDsmall_train/relation_embedding.vec `
-  --relation-embedding data/raw/MINDsmall_dev/relation_embedding.vec `
+```
+python scripts/build_mind_wikidata5m_triples.py
+  --kg-path path/to/wikidata5m_transductive_train.txt
+  --raw-root data/raw
+  --train-dir MINDsmall_train
+  --dev-dir MINDsmall_dev
+  --entity-embedding data/raw/MINDsmall_train/entity_embedding.vec
+  --entity-embedding data/raw/MINDsmall_dev/entity_embedding.vec
+  --relation-embedding data/raw/MINDsmall_train/relation_embedding.vec
+  --relation-embedding data/raw/MINDsmall_dev/relation_embedding.vec
   --output data/processed/MINDsmall/kg_triples.tsv
 ```
 

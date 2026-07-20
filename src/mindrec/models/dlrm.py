@@ -127,33 +127,77 @@ class DLRMStudent(nn.Module):
         refined = self.item_base_mlp(base)
         return F.normalize(base + refined, dim=-1)
 
-    def forward(
+    def encode_item_base_semantics(self, item_base: torch.Tensor) -> torch.Tensor:
+        """Encode reusable item features shared by candidate and history paths."""
+        return self._encode_item_base(item_base)
+
+    def project_item_semantics(
+        self, encoded_item_base: torch.Tensor
+    ) -> torch.Tensor:
+        """Project reusable item features into the candidate-item scoring space."""
+        return self.item_sem_proj(encoded_item_base)
+
+    def encode_item_semantics(self, item_base: torch.Tensor) -> torch.Tensor:
+        """Encode candidate items into the semantic space used for scoring."""
+        encoded_item_base = self.encode_item_base_semantics(item_base)
+        return self.project_item_semantics(encoded_item_base)
+
+    def encode_user_semantics_from_history(
+        self,
+        encoded_history_items: torch.Tensor,
+        history_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Pool pre-encoded history items into one semantic vector per history."""
+        hist_sem = encoded_history_items + self.hist_refine(encoded_history_items)
+        user_hist = masked_mean(hist_sem, history_mask)
+        user_sem = self.user_sem_proj(user_hist)
+        user_sem = mask_pooled_vector(user_sem, history_mask)
+        return F.normalize(user_sem, dim=-1)
+
+    def score_from_semantics(
         self,
         user_idx: torch.Tensor,
         news_idx: torch.Tensor,
         cat_idx: torch.Tensor,
         subcat_idx: torch.Tensor,
         dense: torch.Tensor,
-        item_base: torch.Tensor,
-        history_item_base: torch.Tensor,
-        history_mask: torch.Tensor,
+        user_sem: torch.Tensor,
+        item_sem: torch.Tensor,
         is_new_item: torch.Tensor | None = None,
         return_repr: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        """Score candidates whose item and history semantics are already encoded."""
         xd = self.bottom(dense)
         xd_emb = self.xd_proj(xd)
 
-        item_sem = self.item_sem_proj(self._encode_item_base(item_base))
-        # The same item embedding may play slightly different roles as a candidate
-        # item vs. as part of a user’s past behavior.
-        # hist_sem is a residual network which gives the model a chance to make
-        # history item vectors more user-profile-friendly before aggregation.
-        hist_sem = self._encode_item_base(history_item_base)
-        hist_sem = hist_sem + self.hist_refine(hist_sem)
-        user_hist = masked_mean(hist_sem, history_mask)
-        user_sem = self.user_sem_proj(user_hist)
-        user_sem = mask_pooled_vector(user_sem, history_mask)
-        user_sem = F.normalize(user_sem, dim=-1)
+        return self._score_from_semantics_with_dense(
+            user_idx=user_idx,
+            news_idx=news_idx,
+            cat_idx=cat_idx,
+            subcat_idx=subcat_idx,
+            xd=xd,
+            xd_emb=xd_emb,
+            user_sem=user_sem,
+            item_sem=item_sem,
+            is_new_item=is_new_item,
+            return_repr=return_repr,
+        )
+
+    def _score_from_semantics_with_dense(
+        self,
+        user_idx: torch.Tensor,
+        news_idx: torch.Tensor,
+        cat_idx: torch.Tensor,
+        subcat_idx: torch.Tensor,
+        xd: torch.Tensor,
+        xd_emb: torch.Tensor,
+        user_sem: torch.Tensor,
+        item_sem: torch.Tensor,
+        is_new_item: torch.Tensor | None = None,
+        return_repr: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        """Complete scoring from precomputed dense and semantic branches."""
+
         eu = self.user_id_proj(self.user_emb(user_idx))
         en = self.news_id_proj(self.news_emb(news_idx))
         if is_new_item is not None:
@@ -167,7 +211,6 @@ class DLRMStudent(nn.Module):
         query = xd_emb + eu + 0.5 * (ec + es)
 
         concat_feats = [xd_emb, eu, en, ec, es]
-
         sem_fused = self.semantic_fusion(
             q=query, kv=torch.stack([user_sem, item_sem], dim=1)
         )
@@ -183,12 +226,49 @@ class DLRMStudent(nn.Module):
             else torch.zeros((xd.size(0), 0), device=xd.device)
         )
 
-        concat = torch.cat(
-            [xd] + feats + [inter_vec], dim=1
-        )
+        concat = torch.cat([xd] + feats + [inter_vec], dim=1)
         logit = self.top(concat).squeeze(1)
 
         rep = None
         if return_repr:
             rep = torch.cat([user_sem, item_sem, sem_fused], dim=1)
         return logit, rep
+
+    def forward(
+        self,
+        user_idx: torch.Tensor,
+        news_idx: torch.Tensor,
+        cat_idx: torch.Tensor,
+        subcat_idx: torch.Tensor,
+        dense: torch.Tensor,
+        item_base: torch.Tensor,
+        history_item_base: torch.Tensor,
+        history_mask: torch.Tensor,
+        is_new_item: torch.Tensor | None = None,
+        return_repr: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        # Preserve the original training-time module/dropout call order.
+        xd = self.bottom(dense)
+        xd_emb = self.xd_proj(xd)
+        item_sem = self.encode_item_semantics(item_base)
+        # The same item embedding may play slightly different roles as a candidate
+        # item vs. as part of a user’s past behavior.
+        # hist_sem is a residual network which gives the model a chance to make
+        # history item vectors more user-profile-friendly before aggregation.
+        encoded_history = self._encode_item_base(history_item_base)
+        user_sem = self.encode_user_semantics_from_history(
+            encoded_history,
+            history_mask,
+        )
+        return self._score_from_semantics_with_dense(
+            user_idx=user_idx,
+            news_idx=news_idx,
+            cat_idx=cat_idx,
+            subcat_idx=subcat_idx,
+            xd=xd,
+            xd_emb=xd_emb,
+            user_sem=user_sem,
+            item_sem=item_sem,
+            is_new_item=is_new_item,
+            return_repr=return_repr,
+        )
