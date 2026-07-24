@@ -10,6 +10,11 @@ from tqdm import tqdm
 
 from mindrec.config import ensure_dir
 from mindrec.data.featurize import IdMaps
+from mindrec.data.item_trend import (
+    candidate_dense_matrix,
+    item_age_residual_config,
+    ranker_dense_columns,
+)
 from mindrec.metrics.benchmark import official_mind_benchmark_view
 from mindrec.metrics.calibration import brier_score, expected_calibration_error
 from mindrec.metrics.ranking import (
@@ -33,15 +38,80 @@ from mindrec.utils import (
 )
 
 
+def _validate_ranker_checkpoint_config(
+    actual: dict[str, Any],
+    expected: dict[str, Any],
+    checkpoint_path: Path,
+    prefix: str = "",
+) -> None:
+    """Require an optional nested config subset to match a frozen checkpoint."""
+    mismatches: list[str] = []
+
+    def compare(
+        actual_value: Any,
+        expected_value: Any,
+        path: str,
+    ) -> None:
+        if isinstance(expected_value, dict):
+            if not isinstance(actual_value, dict):
+                mismatches.append(
+                    f"{path}: expected a mapping, found {actual_value!r}"
+                )
+                return
+            for key, child_expected in expected_value.items():
+                child_path = f"{path}.{key}" if path else str(key)
+                if key not in actual_value:
+                    mismatches.append(f"{child_path}: missing from checkpoint config")
+                    continue
+                compare(actual_value[key], child_expected, child_path)
+            return
+        if actual_value != expected_value:
+            mismatches.append(
+                f"{path}: expected {expected_value!r}, found {actual_value!r}"
+            )
+
+    compare(actual, expected, prefix)
+    if mismatches:
+        details = "; ".join(mismatches)
+        raise ValueError(
+            f"Ranker checkpoint does not match the required experiment baseline: "
+            f"{checkpoint_path}. {details}. Retrain the required baseline before "
+            "writing this submission."
+        )
+
+
 def _load_model(
-    cfg: dict[str, Any], proc_root: Path, runs_root: Path, device: torch.device
-) -> tuple[DLRMStudent, np.ndarray, np.ndarray]:
+    cfg: dict[str, Any],
+    proc_root: Path,
+    runs_root: Path,
+    device: torch.device,
+    *,
+    load_teacher_item: bool = True,
+) -> tuple[DLRMStudent, np.ndarray, np.ndarray | None]:
     maps = IdMaps.load(proc_root / "id_maps.json")
     news = pd.read_parquet(proc_root / "news.parquet")
     n_users = max(maps.user2idx.values()) + 1
     n_news = int(news["news_idx"].max()) + 1
     n_cats = int(news["cat_idx"].max()) + 1
     n_subcats = int(news["subcat_idx"].max()) + 1
+
+    ranker_run_name = str(
+        cfg.get("artifacts", {}).get("ranker_run_name", cfg["run_name"])
+    )
+    checkpoint_path = Path("runs") / ranker_run_name / "ranker" / "best.pt"
+    ckpt = torch.load(checkpoint_path, map_location=device)
+    # The checkpoint is authoritative for architecture-affecting settings. This
+    # also lets a post-hoc output run reuse a frozen ranker without copying it.
+    model_cfg = ckpt.get("cfg", cfg)
+    expected_checkpoint_cfg = cfg.get("artifacts", {}).get(
+        "ranker_expected_config"
+    )
+    if expected_checkpoint_cfg:
+        _validate_ranker_checkpoint_config(
+            model_cfg,
+            expected_checkpoint_cfg,
+            checkpoint_path,
+        )
 
     ranker_base_name = (
         "item_ranker_base_emb.npy"
@@ -51,15 +121,20 @@ def _load_model(
     teacher_root = teacher_artifact_root(cfg)
     ranker_base_path = teacher_root / ranker_base_name
     item_base = np.load(ranker_base_path)
-    teacher_item = np.load(teacher_root / "item_teacher_emb.npy")
+    teacher_item = (
+        np.load(teacher_root / "item_teacher_emb.npy")
+        if load_teacher_item
+        else None
+    )
 
-    dlrm_cfg = cfg["ranker"]["dlrm"]
+    dlrm_cfg = model_cfg["ranker"]["dlrm"]
+    age_residual_cfg = item_age_residual_config(model_cfg)
     model = DLRMStudent(
         n_users=n_users,
         n_news=n_news,
         n_cats=n_cats,
         n_subcats=n_subcats,
-        dense_dim=2,
+        dense_dim=len(ranker_dense_columns(model_cfg)),
         item_base_dim=int(item_base.shape[1]),
         emb_dim=int(dlrm_cfg["emb_dim"]),
         id_emb_dim=int(dlrm_cfg.get("id_emb_dim", dlrm_cfg["emb_dim"])),
@@ -73,9 +148,13 @@ def _load_model(
         ),
         news_id_warm_scale=float(dlrm_cfg.get("news_id_warm_scale", 1.0)),
         news_id_cold_scale=float(dlrm_cfg.get("news_id_cold_scale", 1.0)),
+        use_item_age_residual=age_residual_cfg["enabled"],
+        item_age_max_hours=age_residual_cfg["max_age_hours"],
+        item_age_max_abs_logit_adjustment=age_residual_cfg[
+            "max_abs_logit_adjustment"
+        ],
     ).to(device)
 
-    ckpt = torch.load(runs_root / "ranker" / "best.pt", map_location=device)
     model.load_state_dict(ckpt["model"])
     model.eval()
     return model, item_base, teacher_item
@@ -289,8 +368,20 @@ def _evaluate_split(
             cand_clicks_log1p = np.array(r["cand_item_clicks_log1p"], dtype=np.float32)
 
             hlen = float(r["history_len"])
-            dense = np.stack(
-                [np.full_like(cand_clicks_log1p, hlen), cand_clicks_log1p], axis=1
+            dense = candidate_dense_matrix(
+                cfg=cfg,
+                history_len=hlen,
+                item_clicks_log1p=cand_clicks_log1p,
+                item_age_log1p=(
+                    np.asarray(r["cand_item_age_log1p"], dtype=np.float32)
+                    if "cand_item_age_log1p" in r.index
+                    else None
+                ),
+                item_burst=(
+                    np.asarray(r["cand_item_burst"], dtype=np.float32)
+                    if "cand_item_burst" in r.index
+                    else None
+                ),
             )
 
             logits = []
@@ -312,6 +403,15 @@ def _evaluate_split(
                     cand_is_new[sl], dtype=torch.long, device=device
                 )
                 b_dense = torch.tensor(dense[sl], dtype=torch.float32, device=device)
+                b_item_age = torch.tensor(
+                    (
+                        np.asarray(r["cand_item_age_log1p"], dtype=np.float32)[sl]
+                        if "cand_item_age_log1p" in r.index
+                        else np.zeros(batch_size, dtype=np.float32)
+                    ),
+                    dtype=torch.float32,
+                    device=device,
+                )
                 b_item_base = torch.tensor(
                     item_base[cand_news_idx[sl]], dtype=torch.float32, device=device
                 )
@@ -331,6 +431,7 @@ def _evaluate_split(
                     history_item_base=b_hist_base,
                     history_mask=b_hist_mask,
                     is_new_item=b_is_new,
+                    item_age_log1p=b_item_age,
                 )
                 logits.append(logit.detach().cpu().numpy())
             scores = np.concatenate(logits, axis=0)
@@ -443,7 +544,13 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
     device_str = str(device)
     log_device(device, "Evaluate")
 
-    model, item_base, _ = _load_model(cfg, proc_root, runs_root, device)
+    model, item_base, _ = _load_model(
+        cfg,
+        proc_root,
+        runs_root,
+        device,
+        load_teacher_item=False,
+    )
     calib_path = runs_root / "ranker" / "calibration.json"
     scaler = TemperatureScaler.load(calib_path) if calib_path.exists() else None
     split_results = {}

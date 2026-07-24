@@ -1,0 +1,51 @@
+run_name: "mind_large_submission_recency_alpha_002_v1"
+
+artifacts:
+  # This checkpoint must first be regenerated with mind_large_submission.yaml.
+  ranker_run_name: "mind_large_submission_hard_neg_v4"
+  teacher_run_name: "mind_large_submission_hard_neg_v4"
+  # Refuse to score the stale emb_dim=48 checkpoint that produced 0.6599.
+  ranker_expected_config:
+    run_name: "mind_large_submission_hard_neg_v4"
+    data:
+      dataset_name: "MINDlarge_submission"
+    ranker:
+      dlrm:
+        emb_dim: 56
+        bottom_mlp: [64, 56]
+
+data:
+  raw_root: "data/raw"
+  dataset_name: "MINDlarge_submission_item_trend_v1"
+  test_dir: "MINDlarge_test"
+  processed_root: "data/processed"
+  max_history: 50
+  min_item_train_clicks_for_warm: 10
+
+knowledge_graph:
+  enabled: true
+
+ranker:
+  device: "cuda"
+  item_trend:
+    enabled: true
+    dense_features: []
+    compute_burst: false
+    recent_hours: 3
+    baseline_hours: 24
+    smoothing: 5.0
+    max_abs_burst: 3.0
+    max_age_hours: 720.0
+
+posthoc_recency:
+  enabled: true
+  age_dataset_name: "MINDlarge_submission_item_trend_v1"
+  # Deliberately override the validation-selected alpha=0 for this leaderboard test.
+  alpha: 0.02
+
+submission:
+  split_name: "submission_test"
+  batch_size: 8192
+  candidate_buffer_size: 65536
+  exact_rank_guard_threshold: 1.0e-5
+  reference_batch_size: 2048

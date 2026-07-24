@@ -12,7 +12,21 @@ from tqdm import tqdm
 
 from mindrec.config import ensure_dir
 from mindrec.data.featurize import IdMaps
+from mindrec.data.item_trend import (
+    ItemTrendIndex,
+    candidate_dense_matrix,
+    item_age_residual_config,
+    item_trend_artifact_path,
+    item_trend_config,
+    load_item_trend_index,
+    ranker_dense_columns,
+)
 from mindrec.data.mind_io import count_behavior_rows, iter_behaviors_tsv
+from mindrec.data.recency_tiebreaker import (
+    apply_recency_tiebreaker,
+    recency_tiebreaker_config,
+    resolve_recency_alpha,
+)
 from mindrec.models.dlrm import DLRMStudent
 from mindrec.pipeline.evaluate import _load_model
 from mindrec.utils import load_json, log_device, resolve_device, save_json
@@ -131,6 +145,16 @@ def _score_prepared_groups(
     subcat_idx = np.concatenate([group["cand_subcat_idx"] for group in groups])
     is_new_item = np.concatenate([group["cand_is_new"] for group in groups])
     dense = np.concatenate([group["dense"] for group in groups], axis=0)
+    item_age_log1p = np.concatenate(
+        [
+            group.get(
+                "item_age_log1p",
+                np.zeros(length, dtype=np.float32),
+            )
+            for group, length in zip(groups, lengths)
+        ],
+        axis=0,
+    )
 
     t_group_idx = torch.as_tensor(candidate_group_idx, dtype=torch.long, device=device)
     t_user_idx = torch.as_tensor(user_idx, dtype=torch.long, device=device)
@@ -139,6 +163,9 @@ def _score_prepared_groups(
     t_subcat_idx = torch.as_tensor(subcat_idx, dtype=torch.long, device=device)
     t_is_new_item = torch.as_tensor(is_new_item, dtype=torch.long, device=device)
     t_dense = torch.as_tensor(dense, dtype=torch.float32, device=device)
+    t_item_age = torch.as_tensor(
+        item_age_log1p, dtype=torch.float32, device=device
+    )
 
     score_tensor = torch.empty(
         n_candidates,
@@ -157,6 +184,7 @@ def _score_prepared_groups(
             user_sem=group_user_semantics[t_group_idx[sl]],
             item_sem=item_semantics[t_news_idx[sl]],
             is_new_item=t_is_new_item[sl],
+            item_age_log1p=t_item_age[sl],
         )
         score_tensor[sl].copy_(logit)
 
@@ -236,6 +264,14 @@ def _score_reference_group(
             is_new_item=torch.tensor(
                 group["cand_is_new"][sl], dtype=torch.long, device=device
             ),
+            item_age_log1p=torch.tensor(
+                group.get(
+                    "item_age_log1p",
+                    np.zeros(n_candidates, dtype=np.float32),
+                )[sl],
+                dtype=torch.float32,
+                device=device,
+            ),
         )
         logits.append(logit.cpu().numpy())
 
@@ -279,12 +315,46 @@ def run_write_submission(cfg: dict[str, Any]) -> None:
     device_str = str(device)
     log_device(device, "Submission")
 
-    model, item_base, _ = _load_model(cfg, proc_root, runs_root, device)
+    model, item_base, _ = _load_model(
+        cfg,
+        proc_root,
+        runs_root,
+        device,
+        load_teacher_item=False,
+    )
     maps = IdMaps.load(proc_root / "id_maps.json")
     news = pd.read_parquet(proc_root / "news.parquet")
     news_lookup = news.set_index("news_id")[["news_idx", "cat_idx", "subcat_idx"]].to_dict(
         orient="index"
     )
+    trend_cfg = item_trend_config(cfg)
+    age_residual_cfg = item_age_residual_config(cfg)
+    recency_cfg = recency_tiebreaker_config(cfg)
+    recency_alpha = (
+        resolve_recency_alpha(cfg) if recency_cfg["enabled"] else 0.0
+    )
+    item_trend_index = load_item_trend_index(cfg, proc_root)
+    recency_age_index: ItemTrendIndex | None = None
+    recency_age_lookup = None
+    recency_uses_model_news_indices = False
+    if recency_cfg["enabled"]:
+        recency_age_root = (
+            Path(cfg["data"]["processed_root"])
+            / recency_cfg["age_dataset_name"]
+        )
+        if (
+            recency_age_root.resolve() == proc_root.resolve()
+            and item_trend_index is not None
+        ):
+            recency_age_index = item_trend_index
+            recency_uses_model_news_indices = True
+        else:
+            recency_age_maps = IdMaps.load(recency_age_root / "id_maps.json")
+            recency_age_lookup = recency_age_maps.news2idx.get
+            recency_age_index = ItemTrendIndex.load(
+                item_trend_artifact_path(recency_age_root),
+                use_burst=False,
+            )
     click_counts = load_json(proc_root / "item_click_counts.json")
     raw_root = Path(cfg["data"]["raw_root"])
     test_dir = raw_root / cfg["data"]["test_dir"]
@@ -330,6 +400,12 @@ def run_write_submission(cfg: dict[str, Any]) -> None:
                         device=device,
                     )
                     n_reference_rescored_impressions += 1
+                if recency_cfg["enabled"]:
+                    scores = apply_recency_tiebreaker(
+                        scores,
+                        group["recency_item_age_log1p"],
+                        recency_alpha,
+                    )
                 ranks = _scores_to_ranks(scores)
                 rank_json = json.dumps(ranks.tolist(), separators=(",", ":"))
                 f.write(f"{group['impression_id']} {rank_json}\n")
@@ -387,9 +463,38 @@ def run_write_submission(cfg: dict[str, Any]) -> None:
             cand_clicks_log1p = np.asarray(cand_clicks_log1p, dtype=np.float32)
 
             hlen = float(len(hist_news_idx))
-            dense = np.stack(
-                [np.full_like(cand_clicks_log1p, hlen), cand_clicks_log1p],
-                axis=1,
+            if item_trend_index is not None:
+                cand_item_age_log1p, cand_item_burst = item_trend_index.features(
+                    cand_news_idx,
+                    r.get("time"),
+                )
+            else:
+                cand_item_age_log1p = None
+                cand_item_burst = None
+            if recency_age_index is not None:
+                if recency_uses_model_news_indices:
+                    recency_news_idx = cand_news_idx
+                else:
+                    assert recency_age_lookup is not None
+                    recency_news_idx = np.asarray(
+                        [
+                            int(recency_age_lookup(news_id, 0))
+                            for news_id in cand_news_id
+                        ],
+                        dtype=np.int64,
+                    )
+                recency_item_age_log1p, _ = recency_age_index.features(
+                    recency_news_idx,
+                    r.get("time"),
+                )
+            else:
+                recency_item_age_log1p = None
+            dense = candidate_dense_matrix(
+                cfg=cfg,
+                history_len=hlen,
+                item_clicks_log1p=cand_clicks_log1p,
+                item_age_log1p=cand_item_age_log1p,
+                item_burst=cand_item_burst,
             )
 
             pending_groups.append(
@@ -403,6 +508,16 @@ def run_write_submission(cfg: dict[str, Any]) -> None:
                     "cand_subcat_idx": cand_subcat_idx,
                     "cand_is_new": cand_is_new,
                     "dense": dense,
+                    "item_age_log1p": (
+                        cand_item_age_log1p
+                        if cand_item_age_log1p is not None
+                        else np.zeros(len(cand_news_idx), dtype=np.float32)
+                    ),
+                    "recency_item_age_log1p": (
+                        recency_item_age_log1p
+                        if recency_item_age_log1p is not None
+                        else np.zeros(len(cand_news_idx), dtype=np.float32)
+                    ),
                 }
             )
             n_pending_candidates += len(cand_news_idx)
@@ -432,6 +547,22 @@ def run_write_submission(cfg: dict[str, Any]) -> None:
             "reference_batch_size": reference_batch_size,
             "n_reference_rescored_impressions": n_reference_rescored_impressions,
             "scoring_mode": "cached_item_semantics_with_exact_rank_guard",
+            "dense_columns": ranker_dense_columns(cfg),
+            "item_trend": trend_cfg,
+            "item_age_residual": {
+                **age_residual_cfg,
+                "learned_logit_adjustment": model.item_age_gate_value(),
+            },
+            "posthoc_recency": {
+                "enabled": recency_cfg["enabled"],
+                "alpha": recency_alpha,
+                "alpha_path": recency_cfg["alpha_path"],
+                "age_dataset_name": recency_cfg["age_dataset_name"],
+                "formula": (
+                    "zscore_within_impression(baseline_logit) + "
+                    "alpha * freshness_percentile"
+                ),
+            },
             "format": "MIND leaderboard prediction.txt: impression_id compact_json_ranks",
         },
     )

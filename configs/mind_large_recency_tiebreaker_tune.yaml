@@ -1,0 +1,30 @@
+run_name: "mind_large_recency_tiebreaker_tune_v1"
+
+artifacts:
+  # Freeze and reuse the existing temporal-validation ranker and its teacher.
+  ranker_run_name: "mind_large_temporal_hard_neg_v4"
+  teacher_run_name: "mind_large_temporal_tune"
+
+data:
+  dataset_name: "MINDlarge_temporal_tune"
+  processed_root: "data/processed"
+
+knowledge_graph:
+  enabled: true
+
+ranker:
+  device: "cuda"
+
+posthoc_recency:
+  enabled: true
+  # First-seen timestamps are reusable by news ID even though the frozen ranker
+  # uses the earlier temporal-tune ID map.
+  age_dataset_name: "MINDlarge_submission_item_trend_v1"
+  alpha_grid: [-0.02, -0.01, -0.005, -0.0025, 0.0, 0.0025, 0.005, 0.01, 0.02]
+  min_auc_improvement: 1.0e-5
+  require_all_dates_nonnegative: true
+  batch_size: 8192
+  candidate_buffer_size: 65536
+  exact_rank_guard_threshold: 1.0e-5
+  reference_batch_size: 2048
+
