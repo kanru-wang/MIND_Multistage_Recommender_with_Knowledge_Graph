@@ -9,12 +9,6 @@ from tqdm import tqdm
 
 from mindrec.config import ensure_dir
 from mindrec.data.featurize import IdMaps, add_indices, build_id_maps, is_cold_user
-from mindrec.data.item_trend import (
-    ItemTrendIndex,
-    build_item_trend_index,
-    item_trend_artifact_path,
-    item_trend_config,
-)
 from mindrec.data.mind_io import (
     count_behavior_rows,
     read_behaviors_tsv,
@@ -40,7 +34,6 @@ def build_pairs(
     max_history: int,
     neg_per_pos: int = 4,
     seed: int = 13,
-    item_trend_index: ItemTrendIndex | None = None,
 ) -> pd.DataFrame:
     set_seed(seed, seed_cuda=False)
     news_lookup = news_idx_df.set_index("news_id")[
@@ -63,17 +56,6 @@ def build_pairs(
         labels = list(r["cand_label"])
         if not cand_ids:
             continue
-        cand_meta = [
-            news_lookup.get(
-                nid, {"news_idx": 0, "cat_idx": 0, "subcat_idx": 0}
-            )
-            for nid in cand_ids
-        ]
-        if item_trend_index is not None:
-            cand_item_age_log1p, cand_item_burst = item_trend_index.features(
-                [int(meta["news_idx"]) for meta in cand_meta],
-                r.get("time"),
-            )
         pos = [i for i, l in enumerate(labels) if l == 1]
         neg = [i for i, l in enumerate(labels) if l == 0]
         if not pos or not neg:
@@ -88,29 +70,28 @@ def build_pairs(
             for j in [pi] + neg_idx.tolist():
                 nid = cand_ids[j]
                 lab = int(labels[j])
-                meta = cand_meta[j]
+                meta = news_lookup.get(
+                    nid, {"news_idx": 0, "cat_idx": 0, "subcat_idx": 0}
+                )
                 clicks = int(item_clicks_train.get(nid, 0))
                 is_new = 1 if clicks < min_item_train_clicks_for_warm else 0
-                row = {
-                    "user_id": user_id,
-                    "news_id": nid,
-                    "user_idx": user_idx,
-                    "news_idx": int(meta["news_idx"]),
-                    "cat_idx": int(meta["cat_idx"]),
-                    "subcat_idx": int(meta["subcat_idx"]),
-                    "hist_news_idx": hist_news_idx,
-                    "history_len": float(len(hist_news_idx)),
-                    "item_clicks": float(clicks),
-                    "item_clicks_log1p": float(np.log1p(clicks)),
-                    "label": lab,
-                    "is_cold_user": cold_u,
-                    "is_new_item": is_new,
-                }
-                if item_trend_index is not None:
-                    row["item_age_log1p"] = float(cand_item_age_log1p[j])
-                    if item_trend_index.use_burst:
-                        row["item_burst"] = float(cand_item_burst[j])
-                rows.append(row)
+                rows.append(
+                    {
+                        "user_id": user_id,
+                        "news_id": nid,
+                        "user_idx": user_idx,
+                        "news_idx": int(meta["news_idx"]),
+                        "cat_idx": int(meta["cat_idx"]),
+                        "subcat_idx": int(meta["subcat_idx"]),
+                        "hist_news_idx": hist_news_idx,
+                        "history_len": float(len(hist_news_idx)),
+                        "item_clicks": float(clicks),
+                        "item_clicks_log1p": float(np.log1p(clicks)),
+                        "label": lab,
+                        "is_cold_user": cold_u,
+                        "is_new_item": is_new,
+                    }
+                )
     return pd.DataFrame(rows)
 
 
@@ -123,7 +104,6 @@ def build_impressions_for_eval(
     min_item_train_clicks_for_warm: int,
     max_history: int,
     require_positive_label: bool = True,
-    item_trend_index: ItemTrendIndex | None = None,
 ) -> pd.DataFrame:
     news_lookup = news_idx_df.set_index("news_id")[
         ["news_idx", "cat_idx", "subcat_idx"]
@@ -162,12 +142,6 @@ def build_impressions_for_eval(
             cand_is_new.append(is_new)
             cand_clicks_log1p.append(float(np.log1p(clicks)))
 
-        if item_trend_index is not None:
-            cand_item_age_log1p, cand_item_burst = item_trend_index.features(
-                cand_news_idx,
-                r.get("time"),
-            )
-
         row = {
             "impression_id": str(r["impression_id"]),
             "user_id": user_id,
@@ -183,10 +157,6 @@ def build_impressions_for_eval(
             "cand_is_new_item": cand_is_new,
             "cand_item_clicks_log1p": cand_clicks_log1p,
         }
-        if item_trend_index is not None:
-            row["cand_item_age_log1p"] = cand_item_age_log1p.tolist()
-            if item_trend_index.use_burst:
-                row["cand_item_burst"] = cand_item_burst.tolist()
         if "time" in r.index:
             row["time"] = r["time"]
         rows.append(row)
@@ -333,14 +303,6 @@ def _run_standard_preprocess(cfg: dict[str, Any]) -> None:
     news_idx_df = add_indices(news_all, maps)
     news_idx_df.to_parquet(proc_root / "news.parquet", index=False)
 
-    item_trend_index = build_item_trend_index(
-        cfg,
-        [train_dir / "behaviors.tsv", dev_dir / "behaviors.tsv"],
-        maps.news2idx,
-    )
-    if item_trend_index is not None:
-        item_trend_index.save(item_trend_artifact_path(proc_root))
-
     click_counts = _compute_click_counts(beh_train)
     save_json(proc_root / "item_click_counts.json", click_counts)
 
@@ -368,7 +330,6 @@ def _run_standard_preprocess(cfg: dict[str, Any]) -> None:
             max_history=int(cfg["data"]["max_history"]),
             neg_per_pos=ranker_neg_per_pos,
             seed=seed,
-            item_trend_index=item_trend_index,
         )
         pairs_train.to_parquet(train_pairs_path, index=False)
     else:
@@ -385,7 +346,6 @@ def _run_standard_preprocess(cfg: dict[str, Any]) -> None:
         max_history=int(cfg["data"]["max_history"]),
         neg_per_pos=ranker_neg_per_pos,
         seed=seed + 1,
-        item_trend_index=item_trend_index,
     )
     pairs_test = build_pairs(
         beh=test_beh,
@@ -399,7 +359,6 @@ def _run_standard_preprocess(cfg: dict[str, Any]) -> None:
         max_history=int(cfg["data"]["max_history"]),
         neg_per_pos=ranker_neg_per_pos,
         seed=seed + 2,
-        item_trend_index=item_trend_index,
     )
 
     pairs_val.to_parquet(pair_artifact_path(proc_root, val_name), index=False)
@@ -415,7 +374,6 @@ def _run_standard_preprocess(cfg: dict[str, Any]) -> None:
             cfg["data"]["min_item_train_clicks_for_warm"]
         ),
         max_history=int(cfg["data"]["max_history"]),
-        item_trend_index=item_trend_index,
     )
     impr_test = build_impressions_for_eval(
         beh=test_beh,
@@ -427,7 +385,6 @@ def _run_standard_preprocess(cfg: dict[str, Any]) -> None:
             cfg["data"]["min_item_train_clicks_for_warm"]
         ),
         max_history=int(cfg["data"]["max_history"]),
-        item_trend_index=item_trend_index,
     )
     impr_val.to_parquet(impression_artifact_path(proc_root, val_name), index=False)
     impr_test.to_parquet(impression_artifact_path(proc_root, test_name), index=False)
@@ -455,7 +412,6 @@ def _run_standard_preprocess(cfg: dict[str, Any]) -> None:
         "n_validation_pairs": int(len(pairs_val)),
         "n_test_pairs": int(len(pairs_test)),
         "ranker_negatives_per_positive": ranker_neg_per_pos,
-        "item_trend": item_trend_config(cfg),
         "n_validation_eval_impressions": int(len(impr_val)),
         "n_test_eval_impressions": int(len(impr_test)),
         "holdout": holdout_meta,
@@ -572,21 +528,6 @@ def _run_multi_source_preprocess(cfg: dict[str, Any]) -> None:
     news_idx_df = add_indices(news_all, maps)
     news_idx_df.to_parquet(proc_root / "news.parquet", index=False)
 
-    trend_behavior_paths = [
-        train_dir / "behaviors.tsv",
-        dev_dir / "behaviors.tsv",
-    ]
-    if mode == "leaderboard_submission":
-        assert test_dir is not None
-        trend_behavior_paths.append(test_dir / "behaviors.tsv")
-    item_trend_index = build_item_trend_index(
-        cfg,
-        trend_behavior_paths,
-        maps.news2idx,
-    )
-    if item_trend_index is not None:
-        item_trend_index.save(item_trend_artifact_path(proc_root))
-
     click_counts = _compute_click_counts(fit_beh)
     save_json(proc_root / "item_click_counts.json", click_counts)
 
@@ -606,7 +547,6 @@ def _run_multi_source_preprocess(cfg: dict[str, Any]) -> None:
             max_history=int(cfg["data"]["max_history"]),
             neg_per_pos=ranker_neg_per_pos,
             seed=seed,
-            item_trend_index=item_trend_index,
         )
         pairs_train.to_parquet(train_pairs_path, index=False)
     else:
@@ -627,7 +567,6 @@ def _run_multi_source_preprocess(cfg: dict[str, Any]) -> None:
             max_history=int(cfg["data"]["max_history"]),
             neg_per_pos=ranker_neg_per_pos,
             seed=seed + 1,
-            item_trend_index=item_trend_index,
         )
         pairs_val.to_parquet(pair_artifact_path(proc_root, "val"), index=False)
         impr_val = build_impressions_for_eval(
@@ -640,7 +579,6 @@ def _run_multi_source_preprocess(cfg: dict[str, Any]) -> None:
                 cfg["data"]["min_item_train_clicks_for_warm"]
             ),
             max_history=int(cfg["data"]["max_history"]),
-            item_trend_index=item_trend_index,
         )
         impr_val.to_parquet(impression_artifact_path(proc_root, "val"), index=False)
         val_beh.to_parquet(behavior_artifact_path(proc_root, "val"), index=False)
@@ -667,7 +605,6 @@ def _run_multi_source_preprocess(cfg: dict[str, Any]) -> None:
         ),
         "n_validation_pairs": int(len(pairs_val)) if pairs_val is not None else 0,
         "ranker_negatives_per_positive": ranker_neg_per_pos,
-        "item_trend": item_trend_config(cfg),
         "n_validation_eval_impressions": int(len(impr_val)) if impr_val is not None else 0,
         "n_submission_eval_impressions": 0,
         "submission_eval_mode": "stream_raw_behaviors",

@@ -23,12 +23,19 @@ __pycache__/
 *.npy
 *.pt
 
+# Ignore tests
+tests/
+
 # Ignore certain runs
 runs/mind_large_category_hour_analysis*/
 runs/mind_large_tune*/
 runs/mind_large_temporal_hard_neg*/
 runs/mind_large_submission*/submission/
 runs/mind_small_temporal_tune_ranker_lr_*/
-
-# Ignore tests
-tests/
+runs/mind_large_submission_item_age_residual_*/
+runs/mind_large_submission_item_trend_*/
+runs/mind_large_submission_hard_neg_*/
+runs/mind_large_submission_content_trend_*/
+runs/mind_large_semantic_burst_*/
+runs/mind_large_content_trend_*/
+runs/mind_large_recency_tiebreaker_tune_*/

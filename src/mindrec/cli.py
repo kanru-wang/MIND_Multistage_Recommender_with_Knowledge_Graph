@@ -4,10 +4,10 @@ import argparse
 from pathlib import Path
 
 from mindrec.config import load_config
+from mindrec.data.item_age import run_build_item_age
 from mindrec.pipeline.evaluate import run_evaluate
 from mindrec.pipeline.preprocess import run_preprocess
 from mindrec.pipeline.ranker_train import run_train_ranker
-from mindrec.pipeline.recency_tiebreaker_tune import run_tune_recency_tiebreaker
 from mindrec.pipeline.ranker_lr_sweep import run_train_ranker_lr_sweep
 from mindrec.pipeline.rerank_eval import run_rerank_eval
 from mindrec.pipeline.rerank_search import run_rerank_search
@@ -84,8 +84,8 @@ def main() -> None:
     _add_config_arg(p)
 
     p = sub.add_parser(
-        "tune_recency_tiebreaker",
-        help="Tune a frozen-ranker recency tiebreaker on labeled validation impressions",
+        "build_item_age",
+        help="Build the first-seen article-age index used by alpha=0.02",
     )
     _add_config_arg(p)
 
@@ -125,8 +125,8 @@ def main() -> None:
     if args.cmd == "write_submission":
         run_write_submission(cfg)
         return
-    if args.cmd == "tune_recency_tiebreaker":
-        run_tune_recency_tiebreaker(cfg)
+    if args.cmd == "build_item_age":
+        run_build_item_age(cfg)
         return
 
     raise RuntimeError(f"Unknown command: {args.cmd}")

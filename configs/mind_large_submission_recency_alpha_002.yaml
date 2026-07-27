@@ -16,7 +16,9 @@ artifacts:
 
 data:
   raw_root: "data/raw"
-  dataset_name: "MINDlarge_submission_item_trend_v1"
+  dataset_name: "MINDlarge_submission"
+  train_dir: "MINDlarge_train"
+  dev_dir: "MINDlarge_dev"
   test_dir: "MINDlarge_test"
   processed_root: "data/processed"
   max_history: 50
@@ -27,21 +29,12 @@ knowledge_graph:
 
 ranker:
   device: "cuda"
-  item_trend:
-    enabled: true
-    dense_features: []
-    compute_burst: false
-    recent_hours: 3
-    baseline_hours: 24
-    smoothing: 5.0
-    max_abs_burst: 3.0
-    max_age_hours: 720.0
 
 posthoc_recency:
   enabled: true
-  age_dataset_name: "MINDlarge_submission_item_trend_v1"
-  # Deliberately override the validation-selected alpha=0 for this leaderboard test.
+  age_dataset_name: "MINDlarge_submission"
   alpha: 0.02
+  max_age_hours: 720.0
 
 submission:
   split_name: "submission_test"

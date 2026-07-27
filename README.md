@@ -541,7 +541,33 @@ for debugging.
 
 The official MIND evaluator reads `prediction.txt` lines as `impression_id [rank,...]`, where rank `1` is the highest-scored candidate. Local MIND metrics report AUC, MRR, nDCG@5, and nDCG@10 using the same per-impression ranking definitions as the official evaluator; leaderboard rank is primarily by AUC.
 
-### 3.6 Search reranker hyperparameters under a product constraint
+### 3.6 Fixed recency tiebreaker (`alpha=0.02`)
+
+This keeps the 0.6721 baseline ranker frozen, standardizes its scores within
+each impression, and adds `0.02 * freshness_percentile`. Build the label-free
+first-seen-time index once, then write the submission:
+
+```powershell
+python -m mindrec.cli train_ranker --config configs/mind_large_submission.yaml
+python -m mindrec.cli build_item_age --config configs/mind_large_submission_recency_alpha_002.yaml
+python -m mindrec.cli write_submission --config configs/mind_large_submission_recency_alpha_002.yaml
+```
+
+Large Test AUC was **0.6724**. The output is
+`runs/mind_large_submission_recency_alpha_002_v1/submission/prediction.zip`.
+
+#### Failed trend experiments
+
+| Experiment | Result | Decision |
+|---|---:|---|
+| Item exposure burst + age features | 0.6518 Large Test | Removed |
+| Learned age-residual branch | 0.6679 Large Test | Removed |
+| Recency `alpha=0.03` | 0.6723 Large Test | Removed; keep `0.02` |
+| Semantic-neighborhood burst | Temporal tuning selected zero | Removed |
+| Content trend propensity | 0.6722 Large Test | Removed |
+| Conservative content tiebreaker grids | Guardrails selected zero | Removed |
+
+### 3.7 Search reranker hyperparameters under a product constraint
 Reranking is not used by the leaderboard submission path, but the search workflow is still available for product-style ranking experiments:
 ```powershell
 python -m mindrec.cli rerank_search --config configs/mind_small_temporal_tune.yaml
@@ -613,7 +639,7 @@ The search writes its summary to `runs/<run_name>/eval/rerank_search.json`.
 Artifacts go to `runs/<run_name>/`.
 Training logs are written to `runs/<run_name>/teacher/epochs.json` and `runs/<run_name>/ranker/epochs.json`.
 
-### 3.7 Historical demo results (`runs/mind_small_demo`)
+### 3.8 Historical demo results (`runs/mind_small_demo`)
 
 Teacher retrieval:
 - Historical retrieval setup was text-only hybrid retrieval:

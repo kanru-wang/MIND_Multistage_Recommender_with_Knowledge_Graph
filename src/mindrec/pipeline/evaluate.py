@@ -10,11 +10,6 @@ from tqdm import tqdm
 
 from mindrec.config import ensure_dir
 from mindrec.data.featurize import IdMaps
-from mindrec.data.item_trend import (
-    candidate_dense_matrix,
-    item_age_residual_config,
-    ranker_dense_columns,
-)
 from mindrec.metrics.benchmark import official_mind_benchmark_view
 from mindrec.metrics.calibration import brier_score, expected_calibration_error
 from mindrec.metrics.ranking import (
@@ -128,13 +123,12 @@ def _load_model(
     )
 
     dlrm_cfg = model_cfg["ranker"]["dlrm"]
-    age_residual_cfg = item_age_residual_config(model_cfg)
     model = DLRMStudent(
         n_users=n_users,
         n_news=n_news,
         n_cats=n_cats,
         n_subcats=n_subcats,
-        dense_dim=len(ranker_dense_columns(model_cfg)),
+        dense_dim=2,
         item_base_dim=int(item_base.shape[1]),
         emb_dim=int(dlrm_cfg["emb_dim"]),
         id_emb_dim=int(dlrm_cfg.get("id_emb_dim", dlrm_cfg["emb_dim"])),
@@ -148,11 +142,6 @@ def _load_model(
         ),
         news_id_warm_scale=float(dlrm_cfg.get("news_id_warm_scale", 1.0)),
         news_id_cold_scale=float(dlrm_cfg.get("news_id_cold_scale", 1.0)),
-        use_item_age_residual=age_residual_cfg["enabled"],
-        item_age_max_hours=age_residual_cfg["max_age_hours"],
-        item_age_max_abs_logit_adjustment=age_residual_cfg[
-            "max_abs_logit_adjustment"
-        ],
     ).to(device)
 
     model.load_state_dict(ckpt["model"])
@@ -368,20 +357,8 @@ def _evaluate_split(
             cand_clicks_log1p = np.array(r["cand_item_clicks_log1p"], dtype=np.float32)
 
             hlen = float(r["history_len"])
-            dense = candidate_dense_matrix(
-                cfg=cfg,
-                history_len=hlen,
-                item_clicks_log1p=cand_clicks_log1p,
-                item_age_log1p=(
-                    np.asarray(r["cand_item_age_log1p"], dtype=np.float32)
-                    if "cand_item_age_log1p" in r.index
-                    else None
-                ),
-                item_burst=(
-                    np.asarray(r["cand_item_burst"], dtype=np.float32)
-                    if "cand_item_burst" in r.index
-                    else None
-                ),
+            dense = np.stack(
+                [np.full_like(cand_clicks_log1p, hlen), cand_clicks_log1p], axis=1
             )
 
             logits = []
@@ -403,15 +380,6 @@ def _evaluate_split(
                     cand_is_new[sl], dtype=torch.long, device=device
                 )
                 b_dense = torch.tensor(dense[sl], dtype=torch.float32, device=device)
-                b_item_age = torch.tensor(
-                    (
-                        np.asarray(r["cand_item_age_log1p"], dtype=np.float32)[sl]
-                        if "cand_item_age_log1p" in r.index
-                        else np.zeros(batch_size, dtype=np.float32)
-                    ),
-                    dtype=torch.float32,
-                    device=device,
-                )
                 b_item_base = torch.tensor(
                     item_base[cand_news_idx[sl]], dtype=torch.float32, device=device
                 )
@@ -431,7 +399,6 @@ def _evaluate_split(
                     history_item_base=b_hist_base,
                     history_mask=b_hist_mask,
                     is_new_item=b_is_new,
-                    item_age_log1p=b_item_age,
                 )
                 logits.append(logit.detach().cpu().numpy())
             scores = np.concatenate(logits, axis=0)
