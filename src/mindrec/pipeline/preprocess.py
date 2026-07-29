@@ -15,6 +15,7 @@ from mindrec.data.mind_io import (
     read_news_tsv,
     sub_sample_behaviors,
 )
+from mindrec.data.taxonomy_support import taxonomy_mapping_metadata
 from mindrec.utils import (
     behavior_artifact_path,
     impression_artifact_path,
@@ -412,6 +413,7 @@ def _run_standard_preprocess(cfg: dict[str, Any]) -> None:
         "n_validation_pairs": int(len(pairs_val)),
         "n_test_pairs": int(len(pairs_test)),
         "ranker_negatives_per_positive": ranker_neg_per_pos,
+        "taxonomy_mapping": taxonomy_mapping_metadata(maps),
         "n_validation_eval_impressions": int(len(impr_val)),
         "n_test_eval_impressions": int(len(impr_test)),
         "holdout": holdout_meta,
@@ -605,6 +607,7 @@ def _run_multi_source_preprocess(cfg: dict[str, Any]) -> None:
         ),
         "n_validation_pairs": int(len(pairs_val)) if pairs_val is not None else 0,
         "ranker_negatives_per_positive": ranker_neg_per_pos,
+        "taxonomy_mapping": taxonomy_mapping_metadata(maps),
         "n_validation_eval_impressions": int(len(impr_val)) if impr_val is not None else 0,
         "n_submission_eval_impressions": 0,
         "submission_eval_mode": "stream_raw_behaviors",

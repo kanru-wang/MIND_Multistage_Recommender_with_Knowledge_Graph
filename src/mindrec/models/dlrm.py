@@ -73,6 +73,8 @@ class DLRMStudent(nn.Module):
         semantic_dropout: float | None = None,
         news_id_warm_scale: float = 1.0,
         news_id_cold_scale: float = 1.0,
+        supported_cat_ids: list[int] | tuple[int, ...] | None = None,
+        supported_subcat_ids: list[int] | tuple[int, ...] | None = None,
     ) -> None:
         super().__init__()
         bottom_mlp = bottom_mlp or [128, 64]
@@ -88,6 +90,16 @@ class DLRMStudent(nn.Module):
         self.news_id_proj = nn.Linear(id_emb_dim, emb_dim)
         self.cat_emb = nn.Embedding(n_cats, emb_dim, padding_idx=0)
         self.subcat_emb = nn.Embedding(n_subcats, emb_dim, padding_idx=0)
+        self.register_buffer(
+            "_supported_cat_mask",
+            self._build_support_mask(n_cats, supported_cat_ids),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_supported_subcat_mask",
+            self._build_support_mask(n_subcats, supported_subcat_ids),
+            persistent=False,
+        )
 
         self.bottom = make_mlp(
             dense_dim, bottom_mlp, dropout=dropout, last_activation=True
@@ -121,6 +133,37 @@ class DLRMStudent(nn.Module):
         top_in = d_bottom + n_concat_emb * emb_dim + n_inter
 
         self.top = make_mlp(top_in, top_mlp, dropout=dropout, last_activation=False)
+
+    @staticmethod
+    def _build_support_mask(
+        size: int,
+        supported_ids: list[int] | tuple[int, ...] | None,
+    ) -> torch.Tensor:
+        if supported_ids is None:
+            return torch.ones(size, dtype=torch.bool)
+        mask = torch.zeros(size, dtype=torch.bool)
+        mask[0] = True
+        for value in supported_ids:
+            index = int(value)
+            if index <= 0 or index >= size:
+                raise ValueError(
+                    f"Supported taxonomy ID {index} is outside [1, {size - 1}]."
+                )
+            mask[index] = True
+        return mask
+
+    @staticmethod
+    def _mask_unsupported_ids(
+        indices: torch.Tensor,
+        support_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        valid = (indices >= 0) & (indices < len(support_mask))
+        safe = torch.where(valid, indices, torch.zeros_like(indices))
+        return torch.where(
+            support_mask[safe],
+            safe,
+            torch.zeros_like(safe),
+        )
 
     def _encode_item_base(self, item_base: torch.Tensor) -> torch.Tensor:
         base = self.item_base_proj(item_base)
@@ -198,6 +241,11 @@ class DLRMStudent(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """Complete scoring from precomputed dense and semantic branches."""
 
+        cat_idx = self._mask_unsupported_ids(cat_idx, self._supported_cat_mask)
+        subcat_idx = self._mask_unsupported_ids(
+            subcat_idx,
+            self._supported_subcat_mask,
+        )
         eu = self.user_id_proj(self.user_emb(user_idx))
         en = self.news_id_proj(self.news_emb(news_idx))
         if is_new_item is not None:

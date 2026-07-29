@@ -1,18 +1,19 @@
-# MIND Multi-Stage News Recommender (Retrieval -> DLRM+Knowledge_Graph Ranker -> Diversity+Coverage+Fairness Re-ranker)
+# MIND Multi-Stage News Recommender (Retrieval -> DLRM+Knowledge_Graph Ranker; Optional Legacy Re-ranker)
 
 This project implements a realistic recommender stack on the **Microsoft News Dataset (MIND)**:
 - Preprocessing: prepare train/val/test data, click-count features, cold/new flags, impression-level eval data, and map IDs to indices.
 - Train **Teacher retrieval encoders** (text-based item encoder + history-based user encoder).
 - Build two Faiss ANN retrieval indexes: (1) for item embeddings from teacher, and (2) for item-base features. These indexes are used for hybrid candidate retrieval.
 - Train **Student ranker**, a lean DLRM-style sparse+dense model that narrows **hybrid retrieval** returned `topk` items to more relevant `pool_size` items. Alongside the usual DLRM-style ID embeddings, category/subcategory embeddings, and dense features, this student uses semantic and **Knowledge Graph embeddings**: it encodes the candidate's text-plus-KG item-base embedding and pools the clicked-history text-plus-KG item-base embeddings. Teacher **distillation** (logit + representation) from the text/history-based teacher helps those semantic branches learn a stronger user/item matching space than click labels alone, **improving cold user/item behavior where ID memorization is weak**.
-- **Re-ranking** enforcing a certain degree of item diversity, category/named-entity coverage, and position-weighted exposure fairness for categories/new-items. It further narrows `pool_size` items to `k_out` items.
-- Find the best set of reranking weights/penalties given constraints on metrics.
+- The repository retains an **outdated optional re-ranking** implementation for diversity, coverage, and exposure-fairness experiments. It is not used by the current submission path.
+- Historical utilities can search reranking weights and penalties under product constraints.
 - Extensive **evaluation**: ranking metrics, calibration, diversity, exposure fairness, and cold/new slices.
 
-In production, for each user we have three inference steps:
+The active retrieval/ranking design has two inference steps:
 1. Retrieval narrows millions/thousands of items to `topk=200`
 2. Student ranker scores the topk, and narrows down to `pool_size=50`
-3. Reranker takes the `pool_size`, and outputs final `k_out=10` items
+
+The optional legacy reranker can further reduce `pool_size` to `k_out=10`, but it is not part of the current submission.
 
 MIND is widely used as a benchmark for news recommendation, with impression logs and rich news metadata.
 
@@ -146,12 +147,12 @@ Category and clicked-item-popularity slices help check whether the model is robu
 - teacher sequence-aware user encoder -> cheaper history aggregation path
 - teacher cosine scorer -> student MLP ranker with many extra inputs
 
-## Re-ranking
+## Re-ranking (Optional and outdated — not used by the current submission)
 - In this project, re-ranking is a **deterministic optimization layer** on top of ranker scores.
 - It is controlled by hyperparameters/constraints (relevance, novelty, coverage, fairness).
 - **No training loop is required** for this re-ranking stage.
 
-#### Re-ranking process
+#### Re-ranking process (Optional and outdated)
 - `greedy_rerank()` takes the top `pool_size` candidates by ranker score, then builds the final top-`k_out` list one item at a time.
 - At each step it scores every remaining candidate with:
 - `relevance_weight * relevance`
@@ -216,9 +217,6 @@ The official MIND leaderboard reports `AUC`, `MRR`, `nDCG@5`, and `nDCG@10` (see
 
 The split protocols and current result locations are tracked in [docs/experiment_registry.md](docs/experiment_registry.md). Check that registry before comparing metrics across runs.
 
-<br>
-<br>
-
 # Quickstart
 
 ## 0) Hardware target
@@ -249,7 +247,6 @@ data/raw/MINDsmall_dev/
 ```
 Each folder should contain `behaviors.tsv` and `news.tsv`. The reranker may use the entity annotation columns already present in `news.tsv` for coverage when `rerank.coverage.entity_bonus > 0`.
 When `knowledge_graph.enabled: true`, the model also needs to use `entity_embedding.vec` and `relation_embedding.vec`.
-
 
 ---
 
@@ -323,28 +320,12 @@ Main steps for temporal-tune configs such as `configs/mind_small_temporal_tune.y
 How pairs are created:
 - For an impression with `P` positives and `N` negatives, `P * (1 + min(data.ranker_negatives_per_positive, N))` pairs are generated.
 - Each positive is paired with up to `data.ranker_negatives_per_positive` sampled negatives; the current config uses `4`.
-- These negatives are labeled non-clicked candidates from the same impression.
-  This is the fallback ranker pair-building behavior when hard-negative sampling is disabled.
-- With `ranker.hard_negative_sampling.enabled: true`, ranker training rebuilds a larger
-  same-impression pool from `train_behaviors.parquet`. The teacher scores every pooled
-  candidate against that impression's history. The student then trains on a configurable
-  mix of teacher-hard and random non-clicked candidates. Preprocessing skips the unused
-  `train_pairs.parquet` artifact in this mode.
-- The default hard-negative settings retain 4 negatives from a pool of up to 20:
-  1 teacher-hard negative and 3 random negatives for groups with a usable history.
-- Groups with no usable encoded history bypass teacher scoring and retain 4 random
-  same-impression negatives. A zero-history teacher vector cannot distinguish candidates,
-  so labeling one of those negatives as hard would be arbitrary.
-- To avoid teacher/student label conflict, teacher-hard candidates are only selected from
-  negatives that the teacher scores no higher than the clicked positive in the same
-  impression. Distillation is also disabled on teacher-mined hard-negative rows by
-  default; random negatives still use the normal distillation objective.
-- Set `ranker.hard_negative_sampling.hard_for_cold_users_only: true` to restrict
-  hard-negative mining to users with fewer than `data.min_user_hist_for_warm` history
-  items and at least one usable encoded history item. With the default warm threshold of
-  5, users with 1-4 history items receive the hard/random mixture; zero-history and warm
-  users keep the same number of negatives, but all of them are random same-impression
-  negatives. The implementation skips teacher scoring for all random-only groups.
+- These negatives are labeled non-clicked candidates from the same impression. This is the fallback ranker pair-building behavior when hard-negative sampling is disabled.
+- With `ranker.hard_negative_sampling.enabled: true`, ranker training rebuilds a larger same-impression pool from `train_behaviors.parquet`. The teacher scores every pooled candidate against that impression's history. The student then trains on a configurable mix of teacher-hard and random non-clicked candidates. Preprocessing skips the unused `train_pairs.parquet` artifact in this mode.
+- The default hard-negative settings retain 4 negatives from a pool of up to 20: 1 teacher-hard negative and 3 random negatives for groups with a usable history.
+- Groups with no usable encoded history bypass teacher scoring and retain 4 random same-impression negatives. A zero-history teacher vector cannot distinguish candidates, so labeling one of those negatives as hard would be arbitrary.
+- To avoid teacher/student label conflict, teacher-hard candidates are only selected from negatives that the teacher scores no higher than the clicked positive in the same impression. Distillation is also disabled on teacher-mined hard-negative rows by default; random negatives still use the normal distillation objective.
+- Set `ranker.hard_negative_sampling.hard_for_cold_users_only: true` to restrict hard-negative mining to users with fewer than `data.min_user_hist_for_warm` history items and at least one usable encoded history item. With the default warm threshold of 5, users with 1-4 history items receive the hard/random mixture; zero-history and warm users keep the same number of negatives, but all of them are random same-impression negatives. The implementation skips teacher scoring for all random-only groups.
 
 What about the negative sampling for teacher?
 - `teacher.negatives_per_positive` controls the contrastive sample of the teacher retriever.
@@ -352,8 +333,7 @@ What about the negative sampling for teacher?
 - Samples are generated in-memory and independently from ranker pair construction.
 
 Why there is no `train_impressions.parquet`:
-- Ranker training uses pairwise rows, either persisted in `train_pairs.parquet` for random
-  sampling or built dynamically from `train_behaviors.parquet` for hard mining.
+- Ranker training uses pairwise rows, either persisted in `train_pairs.parquet` for random sampling or built dynamically from `train_behaviors.parquet` for hard mining.
 - Impression-grouped data is mainly needed for ranking evaluation, so temporal-tune configs only generate it for `val`.
 
 Validation split note:
@@ -412,16 +392,7 @@ It writes `runs/<run_name>/retrieval/sweep.json` with all tested settings plus t
 python -m mindrec.cli train_ranker --config configs/mind_small_temporal_tune.yaml
 ```
 
-When hard-negative sampling is enabled, `train_ranker` uses the persisted training
-behaviors to build a larger negative pool, scores it once with the trained teacher, and
-keeps the configured hard/random mixture. Teacher-mined hard negatives are tagged in the
-temporary training rows so their distillation weight can be reduced independently from
-ordinary random negatives. The optional `hard_for_cold_users_only` setting applies that
-hard/random mixture only to cold users with a usable history; zero-history users always
-receive random negatives because their teacher candidate scores tie. Set
-`ranker.hard_negative_sampling.enabled: false` to train on the original
-`train_pairs.parquet` random sample. Mining statistics are written under
-`hard_negative_sampling` in `ranker/train_summary.json`.
+When hard-negative sampling is enabled, `train_ranker` uses the persisted training behaviors to build a larger negative pool, scores it once with the trained teacher, and keeps the configured hard/random mixture. Teacher-mined hard negatives are tagged in the temporary training rows so their distillation weight can be reduced independently from ordinary random negatives. The optional `hard_for_cold_users_only` setting applies that hard/random mixture only to cold users with a usable history; zero-history users always receive random negatives because their teacher candidate scores tie. Set `ranker.hard_negative_sampling.enabled: false` to train on the original `train_pairs.parquet` random sample. Mining statistics are written under `hard_negative_sampling` in `ranker/train_summary.json`.
 
 After training, `train_ranker` fits a temperature scaler on the unchanged
 `val_pairs.parquet`. It tunes a single positive scalar `T` in
@@ -435,7 +406,7 @@ python -m mindrec.cli train_ranker_lr_sweep --config configs/mind_small_temporal
 
 This uses `ranker.lr_sweep.lrs` and writes isolated variant runs such as `runs/mind_small_temporal_tune_ranker_lr_1em03`. The combined summary is written to `runs/mind_small_temporal_tune/tuning/ranker_lr_sweep/sweep.json`.
 
-### 3.4 Evaluate ranker + reranker (metrics + slices)
+### 3.4 Evaluate ranker (optional reranker evaluation is outdated)
 ```powershell
 python -m mindrec.cli evaluate --config configs/mind_small_temporal_tune.yaml
 ```
@@ -455,16 +426,10 @@ For new/cold item ranking evaluation, each impression contains many candidate it
 
 ### 3.5 Build a MIND-large leaderboard submission
 Use four MIND-large configs:
-- `configs/mind_large_temporal_baseline.yaml`: reproducible random-negative baseline. It
-  trains on `MINDlarge_train` before Nov 14, then validates on Nov 14 from
-  `MINDlarge_train` plus all of `MINDlarge_dev`.
-- `configs/mind_large_temporal_tune.yaml`: hard-negative v4 experiment on the same
-  temporal split. It reuses the baseline teacher and mines hard negatives only for cold
-  users with usable history.
+- `configs/mind_large_temporal_baseline.yaml`: reproducible random-negative baseline. It trains on `MINDlarge_train` before Nov 14, then validates on Nov 14 from `MINDlarge_train` plus all of `MINDlarge_dev`.
+- `configs/mind_large_temporal_tune.yaml`: hard-negative v4 experiment on the same temporal split. It reuses the baseline teacher and mines hard negatives only for cold users with usable history.
 - `configs/mind_large_tune.yaml`: official train-to-dev model-selection run, with all `MINDlarge_train` for training and `MINDlarge_dev` for validation.
-- `configs/mind_large_submission.yaml`: hard-negative v4 final submission run, with
-  `MINDlarge_train + MINDlarge_dev` for fixed-epoch training and `MINDlarge_test` for
-  hidden-test scoring.
+- `configs/mind_large_submission.yaml`: hard-negative v4 final submission run, with `MINDlarge_train + MINDlarge_dev` for fixed-epoch training and `MINDlarge_test` for hidden-test scoring.
 
 If `knowledge_graph.enabled: true`, first build the Large KG triples file:
 ```powershell
@@ -490,31 +455,7 @@ Inspect:
 - `runs/mind_large_temporal_tune/ranker/train_summary.json`
 - `runs/mind_large_temporal_tune/eval/ranker_eval_val.json`
 
-For temporal configs, the evaluation row count in `ranker_eval_val.json` should match `n_validation_eval_impressions` in `preprocess_meta.json`. If it does not, rerun `evaluate` with the current code before using the metrics as a baseline.
-
-Latest completed Large temporal baseline:
-
-| Validation impressions | Teacher best epoch | Ranker best epoch | AUC | MRR | nDCG@5 | nDCG@10 |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 807,988 | 4 | 1 | 0.646597 | 0.304210 | 0.330920 | 0.393785 |
-
-This run trains on `MINDlarge_train` impressions before Nov 14 and evaluates the full
-validation window formed from the Nov 14 tail of `MINDlarge_train` plus all of
-`MINDlarge_dev` on Nov 15. The teacher stopped at epoch 6 and selected epoch 4;
-the ranker stopped at epoch 3 and selected epoch 1. The table reports full
-impression-ranking metrics from `ranker_eval_val.json`; the ranker's sampled-pair
-early-stopping AUC is a different quantity.
-
-Current baseline metrics are recorded in [docs/experiment_registry.md](docs/experiment_registry.md).
-
-Latest completed hard-negative v4 result on the same 807,988 validation impressions:
-
-| AUC | MRR | nDCG@5 | nDCG@10 |
-| ---: | ---: | ---: | ---: |
-| 0.645785 | 0.305195 | 0.332726 | 0.394743 |
-
-V4 uses `configs/mind_large_temporal_tune.yaml`. Its zero-history groups use 4 random
-negatives; cold users with usable history use 1 teacher-hard plus 3 random negatives.
+Completed Large temporal metrics, protocol details, and rejected experiments are recorded in [docs/experiment_registry.md](docs/experiment_registry.md).
 
 Then copy the selected fixed epoch counts into `configs/mind_large_submission.yaml`:
 - `teacher.epochs`: selected teacher `best_epoch`
@@ -522,52 +463,27 @@ Then copy the selected fixed epoch counts into `configs/mind_large_submission.ya
 
 For the completed baseline above, use `teacher.epochs: 4` and `ranker.epochs: 1`.
 
-The final submission config disables early stopping and calibration because no labeled validation split is held out in the final fit. Then run:
+The base submission config disables early stopping and calibration because no labeled validation split is held out in the final fit. The recency config then reuses that frozen ranker. Run:
 ```powershell
 python -m mindrec.cli preprocess --config configs/mind_large_submission.yaml
 python -m mindrec.cli train_teacher --config configs/mind_large_submission.yaml
-python -m mindrec.cli train_ranker --config configs/mind_large_submission.yaml
-python -m mindrec.cli write_submission --config configs/mind_large_submission.yaml
-```
-
-The submission command does not use the reranker. It writes:
-- `runs/mind_large_submission_hard_neg_v4/submission/prediction.txt`
-- `runs/mind_large_submission_hard_neg_v4/submission/prediction.zip`
-
-By default, it streams the hidden test file and does not write a large scores parquet.
-Set `submission.save_scores: true` only if you explicitly want
-`runs/mind_large_submission_hard_neg_v4/submission/submission_test_scores.parquet`
-for debugging.
-
-The official MIND evaluator reads `prediction.txt` lines as `impression_id [rank,...]`, where rank `1` is the highest-scored candidate. Local MIND metrics report AUC, MRR, nDCG@5, and nDCG@10 using the same per-impression ranking definitions as the official evaluator; leaderboard rank is primarily by AUC.
-
-### 3.6 Fixed recency tiebreaker (`alpha=0.02`)
-
-This keeps the 0.6721 baseline ranker frozen, standardizes its scores within
-each impression, and adds `0.02 * freshness_percentile`. Build the label-free
-first-seen-time index once, then write the submission:
-
-```powershell
 python -m mindrec.cli train_ranker --config configs/mind_large_submission.yaml
 python -m mindrec.cli build_item_age --config configs/mind_large_submission_recency_alpha_002.yaml
 python -m mindrec.cli write_submission --config configs/mind_large_submission_recency_alpha_002.yaml
 ```
 
-Large Test AUC was **0.6724**. The output is
-`runs/mind_large_submission_recency_alpha_002_v1/submission/prediction.zip`.
+The last two commands apply a label-free recency tiebreaker (`alpha=0.02`) to the frozen ranker before writing the submission.
 
-#### Failed trend experiments
+The submission command does not use the optional reranker. It writes:
 
-| Experiment | Result | Decision |
-|---|---:|---|
-| Item exposure burst + age features | 0.6518 Large Test | Removed |
-| Learned age-residual branch | 0.6679 Large Test | Removed |
-| Recency `alpha=0.03` | 0.6723 Large Test | Removed; keep `0.02` |
-| Semantic-neighborhood burst | Temporal tuning selected zero | Removed |
-| Content trend propensity | 0.6722 Large Test | Removed |
-| Conservative content tiebreaker grids | Guardrails selected zero | Removed |
+- `runs/mind_large_submission_recency_alpha_002_v1/submission/prediction.txt`
+- `runs/mind_large_submission_recency_alpha_002_v1/submission/prediction.zip`
 
-### 3.7 Search reranker hyperparameters under a product constraint
+To write an unmodified baseline submission instead, use `python -m mindrec.cli write_submission --config configs/mind_large_submission.yaml`; that path does not require `build_item_age`.
+
+The official MIND evaluator reads `prediction.txt` lines as `impression_id [rank,...]`, where rank `1` is the highest-scored candidate. Local MIND metrics report AUC, MRR, nDCG@5, and nDCG@10 using the same per-impression ranking definitions as the official evaluator; leaderboard rank is primarily by AUC.
+
+### 3.6 Search reranker hyperparameters (Optional and outdated)
 Reranking is not used by the leaderboard submission path, but the search workflow is still available for product-style ranking experiments:
 ```powershell
 python -m mindrec.cli rerank_search --config configs/mind_small_temporal_tune.yaml
@@ -639,7 +555,7 @@ The search writes its summary to `runs/<run_name>/eval/rerank_search.json`.
 Artifacts go to `runs/<run_name>/`.
 Training logs are written to `runs/<run_name>/teacher/epochs.json` and `runs/<run_name>/ranker/epochs.json`.
 
-### 3.8 Historical demo results (`runs/mind_small_demo`)
+### 3.7 Historical demo results (`runs/mind_small_demo`)
 
 Teacher retrieval:
 - Historical retrieval setup was text-only hybrid retrieval:

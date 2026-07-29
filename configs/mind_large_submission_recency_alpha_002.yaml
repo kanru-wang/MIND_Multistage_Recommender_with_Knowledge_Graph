@@ -4,6 +4,7 @@ artifacts:
   # This checkpoint must first be regenerated with mind_large_submission.yaml.
   ranker_run_name: "mind_large_submission_hard_neg_v4"
   teacher_run_name: "mind_large_submission_hard_neg_v4"
+  require_taxonomy_support: true
   # Refuse to score the stale emb_dim=48 checkpoint that produced 0.6599.
   ranker_expected_config:
     run_name: "mind_large_submission_hard_neg_v4"

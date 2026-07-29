@@ -10,6 +10,11 @@ from tqdm import tqdm
 
 from mindrec.config import ensure_dir
 from mindrec.data.featurize import IdMaps
+from mindrec.data.taxonomy_support import (
+    TaxonomySupport,
+    taxonomy_support_path,
+    validate_taxonomy_mapping_artifact,
+)
 from mindrec.metrics.benchmark import official_mind_benchmark_view
 from mindrec.metrics.calibration import brier_score, expected_calibration_error
 from mindrec.metrics.ranking import (
@@ -87,8 +92,10 @@ def _load_model(
     news = pd.read_parquet(proc_root / "news.parquet")
     n_users = max(maps.user2idx.values()) + 1
     n_news = int(news["news_idx"].max()) + 1
-    n_cats = int(news["cat_idx"].max()) + 1
-    n_subcats = int(news["subcat_idx"].max()) + 1
+    # Match training/checkpoint shapes even though fit-unseen taxonomy keys
+    # deliberately resolve to the neutral row 0.
+    n_cats = len(maps.cat2idx) + 1
+    n_subcats = len(maps.subcat2idx) + 1
 
     ranker_run_name = str(
         cfg.get("artifacts", {}).get("ranker_run_name", cfg["run_name"])
@@ -106,6 +113,28 @@ def _load_model(
             model_cfg,
             expected_checkpoint_cfg,
             checkpoint_path,
+        )
+    require_taxonomy_support = bool(
+        cfg.get("artifacts", {}).get("require_taxonomy_support", False)
+    )
+    if require_taxonomy_support:
+        validate_taxonomy_mapping_artifact(proc_root, maps)
+    support_path = taxonomy_support_path(ranker_run_name)
+    taxonomy_support = (
+        TaxonomySupport.load(
+            support_path,
+            maps=maps,
+            checkpoint_path=checkpoint_path,
+            ranker_run_name=ranker_run_name,
+            dataset_name=str(cfg["data"]["dataset_name"]),
+        )
+        if support_path.exists()
+        else None
+    )
+    if require_taxonomy_support and taxonomy_support is None:
+        raise FileNotFoundError(
+            f"Missing taxonomy-support artifact: {support_path}. "
+            "Build it from the exact ranker training pairs before scoring."
         )
 
     ranker_base_name = (
@@ -142,6 +171,16 @@ def _load_model(
         ),
         news_id_warm_scale=float(dlrm_cfg.get("news_id_warm_scale", 1.0)),
         news_id_cold_scale=float(dlrm_cfg.get("news_id_cold_scale", 1.0)),
+        supported_cat_ids=(
+            taxonomy_support.supported_cat_ids
+            if taxonomy_support is not None
+            else None
+        ),
+        supported_subcat_ids=(
+            taxonomy_support.supported_subcat_ids
+            if taxonomy_support is not None
+            else None
+        ),
     ).to(device)
 
     model.load_state_dict(ckpt["model"])
@@ -317,6 +356,8 @@ def _evaluate_split(
         .set_index("subcat_idx")["subcategory"]
         .to_dict()
     )
+    cat_lookup[0] = "unknown"
+    subcat_lookup[0] = "unknown"
 
     impr = pd.read_parquet(impression_artifact_path(proc_root, split_name))
     beh = pd.read_parquet(behavior_artifact_path(proc_root, split_name))
@@ -520,6 +561,12 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
     )
     calib_path = runs_root / "ranker" / "calibration.json"
     scaler = TemperatureScaler.load(calib_path) if calib_path.exists() else None
+
+    # Temporal-evaluation consistency check:
+    # ranker_eval_val.json:n_impressions should equal
+    # preprocess_meta.json:n_validation_eval_impressions. A mismatch means the
+    # evaluation artifact is stale and must be regenerated before its metrics
+    # are treated as a baseline.
     split_results = {}
     for split_name in _resolve_eval_splits(cfg):
         split_results[split_name] = _evaluate_split(

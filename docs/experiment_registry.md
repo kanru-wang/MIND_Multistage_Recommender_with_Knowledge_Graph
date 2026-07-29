@@ -12,7 +12,32 @@ This registry names the split protocol behind each major result set. Use it befo
 | Large temporal hard-negative v4 | Use the Large temporal split and baseline teacher; mine hard negatives only for cold users with usable history. | Current repo | `configs/mind_large_temporal_tune.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_hard_neg_v4` | `runs/mind_large_temporal_hard_neg_v4/eval/ranker_eval_val.json` |
 | Small temporal | Train on `MINDsmall_train` before Nov 14; validate on Nov 14 tail from `MINDsmall_train` plus all `MINDsmall_dev`. | Current repo | `configs/mind_small_temporal_tune.yaml` | `data/processed/MINDsmall_temporal_tune` | `runs/mind_small_temporal_tune` | `runs/mind_small_temporal_tune/eval/ranker_eval_val.json` |
 
-## Current Metrics
+## Latest Completed Large Temporal Baseline
+
+| Validation impressions | Teacher best epoch | Ranker best epoch | AUC | MRR | nDCG@5 | nDCG@10 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 807,988 | 4 | 1 | 0.646597 | 0.304210 | 0.330920 | 0.393785 |
+
+This run trains on `MINDlarge_train` impressions before Nov 14 and evaluates
+the full validation window formed from the Nov 14 tail of `MINDlarge_train`
+plus all of `MINDlarge_dev` on Nov 15. The teacher stopped at epoch 6 and
+selected epoch 4; the ranker stopped at epoch 3 and selected epoch 1. These are
+full impression-ranking metrics from `ranker_eval_val.json`; the ranker's
+sampled-pair early-stopping AUC is a different quantity.
+
+## Latest Completed Large Temporal Hard-Negative V4
+
+This result uses the same 807,988 validation impressions as the baseline.
+
+| AUC | MRR | nDCG@5 | nDCG@10 |
+| ---: | ---: | ---: | ---: |
+| 0.645785 | 0.305195 | 0.332726 | 0.394743 |
+
+V4 uses `configs/mind_large_temporal_tune.yaml`. Its zero-history groups use
+four random negatives; cold users with usable history use one teacher-hard
+plus three random negatives.
+
+## Additional Current Metrics
 
 Values below were read from the listed local evaluation artifacts on 2026-07-03.
 They describe completed runs, not untrained working-tree configuration changes.
@@ -21,16 +46,22 @@ They describe completed runs, not untrained working-tree configuration changes.
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | Small dev split | test | 14,631 | 2 | 5 | 0.6619 | 0.3589 | 0.3463 | 0.4050 |
 | Large dev only | val | 376,471 | 2 | 1 | 0.6686 | 0.3313 | 0.3659 | 0.4252 |
-| Large temporal | val | 807,988 | 4 | 1 | 0.6466 | 0.3042 | 0.3309 | 0.3938 |
 | Large temporal hard-negative v3 | val | 807,988 | 4 (reused) | 1 | 0.6498 | 0.3082 | 0.3344 | 0.3969 |
-| Large temporal hard-negative v4 | val | 807,988 | 4 (reused) | 1 | 0.6458 | 0.3052 | 0.3327 | 0.3947 |
 | Small temporal | val | 103,422 | 1 | 3 | 0.6297 | 0.2995 | 0.3263 | 0.3867 |
 
 The hard-negative v3 run applied 1 teacher-hard plus 3 random negatives to all cold
-users, including zero-history groups. V4 corrected that limitation: 52,294 zero-history
-training groups used 4 random negatives because their teacher candidate scores tie,
-while cold users with usable history retained the 1-hard/3-random mixture. V4 improved
-MRR and both nDCGs over the refreshed baseline, with a small AUC decrease.
+users, including zero-history groups.
+
+## Failed Trend Experiments
+
+| Experiment | Result | Decision |
+| --- | ---: | --- |
+| Item exposure burst + age features | 0.6518 Large Test | Removed |
+| Learned age-residual branch | 0.6679 Large Test | Removed |
+| Recency `alpha=0.03` | 0.6723 Large Test | Removed; keep `0.02` |
+| Semantic-neighborhood burst | Temporal tuning selected zero | Removed |
+| Content trend propensity | 0.6722 Large Test | Removed |
+| Conservative content tiebreaker grids | Guardrails selected zero | Removed |
 
 ## Current Large Submission
 

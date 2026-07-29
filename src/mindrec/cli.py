@@ -5,6 +5,7 @@ from pathlib import Path
 
 from mindrec.config import load_config
 from mindrec.data.item_age import run_build_item_age
+from mindrec.data.taxonomy_support import run_build_taxonomy_support
 from mindrec.pipeline.evaluate import run_evaluate
 from mindrec.pipeline.preprocess import run_preprocess
 from mindrec.pipeline.ranker_train import run_train_ranker
@@ -89,6 +90,12 @@ def main() -> None:
     )
     _add_config_arg(p)
 
+    p = sub.add_parser(
+        "build_taxonomy_support",
+        help="Bind exact trained category/subcategory IDs to a ranker checkpoint",
+    )
+    _add_config_arg(p)
+
     args = parser.parse_args()
     cfg = load_config(args.config)
 
@@ -127,6 +134,9 @@ def main() -> None:
         return
     if args.cmd == "build_item_age":
         run_build_item_age(cfg)
+        return
+    if args.cmd == "build_taxonomy_support":
+        run_build_taxonomy_support(cfg)
         return
 
     raise RuntimeError(f"Unknown command: {args.cmd}")

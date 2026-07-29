@@ -266,6 +266,14 @@ def run_write_submission(cfg: dict[str, Any]) -> None:
         submission_cfg.get("exact_rank_guard_threshold", 1.0e-5)
     )
     reference_batch_size = int(submission_cfg.get("reference_batch_size", 2048))
+
+    # Submission output policy:
+    # By default, score the hidden test file as a stream and do not materialize
+    # the much larger per-candidate scores parquet. Set submission.save_scores
+    # to true only when that parquet is explicitly needed for debugging. For
+    # the standard Large submission run, its path is:
+    # runs/mind_large_submission_hard_neg_v4/submission/
+    # submission_test_scores.parquet
     save_scores = bool(submission_cfg.get("save_scores", False))
     if batch_size < 1:
         raise ValueError("submission.batch_size must be at least 1.")

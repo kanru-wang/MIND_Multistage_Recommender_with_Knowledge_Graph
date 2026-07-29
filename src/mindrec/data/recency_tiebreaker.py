@@ -5,6 +5,37 @@ from typing import Any
 import numpy as np
 
 
+# Fixed recency tiebreaker (alpha=0.02)
+#
+# This post-hoc path keeps the trained ranker frozen. Within each impression,
+# it standardizes the baseline logits and adds:
+#
+#     0.02 * freshness_percentile
+#
+# "Age" is an exposure-age proxy, not publication age: MIND has no publication
+# timestamp. ItemAgeIndex scans candidate appearances in the configured Train,
+# Dev, and Test behavior files and records the earliest impression timestamp
+# for each news ID. At scoring time:
+#
+#     age_hours = max(0, (impression_time - first_seen_time) / 3600)
+#
+# Age is capped at 720 hours and represented as log(1 + age_hours). Click labels
+# are never used. Inside an impression, the youngest item receives freshness
+# near +1, the oldest near -1, and tied ages share their average rank. Thus the
+# final score is:
+#
+#     zscore(baseline_logit) + 0.02 * freshness_percentile
+#
+# Reproduction workflow:
+#   python -m mindrec.cli train_ranker --config configs/mind_large_submission.yaml
+#   python -m mindrec.cli build_item_age \
+#       --config configs/mind_large_submission_recency_alpha_002.yaml
+#   python -m mindrec.cli write_submission \
+#       --config configs/mind_large_submission_recency_alpha_002.yaml
+#
+# The completed Large Test submission produced AUC 0.6724. Its output artifact
+# is runs/mind_large_submission_recency_alpha_002_v1/submission/prediction.zip.
+#
 def recency_tiebreaker_config(cfg: dict[str, Any]) -> dict[str, Any]:
     raw = dict(cfg.get("posthoc_recency", {}))
     out = {
