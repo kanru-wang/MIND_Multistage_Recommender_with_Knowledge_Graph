@@ -39,9 +39,3 @@ runs/mind_large_submission_content_trend_*/
 runs/mind_large_semantic_burst_*/
 runs/mind_large_content_trend_*/
 runs/mind_large_recency_tiebreaker_tune_*/
-# Preserve the small checkpoint-bound taxonomy mask for the accepted baseline.
-!runs/mind_large_submission_hard_neg_v4/
-runs/mind_large_submission_hard_neg_v4/*
-!runs/mind_large_submission_hard_neg_v4/ranker/
-runs/mind_large_submission_hard_neg_v4/ranker/*
-!runs/mind_large_submission_hard_neg_v4/ranker/taxonomy_support.json

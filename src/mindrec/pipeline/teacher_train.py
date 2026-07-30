@@ -16,7 +16,6 @@ from tqdm import tqdm
 from mindrec.config import ensure_dir
 from mindrec.data.featurize import IdMaps
 from mindrec.data.kg import build_news_kg_feature_matrix_from_config
-from mindrec.data.mind_io import read_behaviors_tsv
 from mindrec.models.teacher import TeacherTwoTower
 from mindrec.utils import (
     behavior_artifact_path,
@@ -415,11 +414,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
         hidden_dim = item_base_dim
 
     train_beh_path = behavior_artifact_path(proc_root, "train")
-    if train_beh_path.exists():
-        beh_train = pd.read_parquet(train_beh_path)
-    else:
-        raw_root = Path(cfg["data"]["raw_root"]) / cfg["data"]["train_dir"]
-        beh_train = read_behaviors_tsv(raw_root / "behaviors.tsv")
+    beh_train = pd.read_parquet(train_beh_path)
     val_split = validation_split_name(cfg)
     val_beh_path = behavior_artifact_path(proc_root, val_split)
     data_mode = str(cfg["data"].get("mode", "standard"))

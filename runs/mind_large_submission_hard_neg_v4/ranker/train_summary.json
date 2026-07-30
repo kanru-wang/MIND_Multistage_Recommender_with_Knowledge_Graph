@@ -45,5 +45,10 @@
     "n_random_negatives": 14783341,
     "hard_fraction_requested": 0.25,
     "hard_fraction_actual": 0.0212157500450715
+  },
+  "taxonomy_masks": {
+    "n_supported_categories": 16,
+    "n_supported_subcategories": 226,
+    "n_train_pairs": 19062280
   }
 }

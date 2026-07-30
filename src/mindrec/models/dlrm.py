@@ -55,6 +55,16 @@ def mask_pooled_vector(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
 
 
 class DLRMStudent(nn.Module):
+    """DLRM ranker with fit-aware category and subcategory masks.
+
+    Category and subcategory IDs absent from the selected training pairs map to
+    neutral OOV ID 0. "Neutral" means that the padding embedding contributes
+    no taxonomy evidence or feature interactions; it does not force the final
+    score to zero because the other model branches remain active. The masks
+    are persistent buffers, so this training-time support is stored directly
+    in the ranker checkpoint.
+    """
+
     def __init__(
         self,
         n_users: int,
@@ -93,12 +103,10 @@ class DLRMStudent(nn.Module):
         self.register_buffer(
             "_supported_cat_mask",
             self._build_support_mask(n_cats, supported_cat_ids),
-            persistent=False,
         )
         self.register_buffer(
             "_supported_subcat_mask",
             self._build_support_mask(n_subcats, supported_subcat_ids),
-            persistent=False,
         )
 
         self.bottom = make_mlp(

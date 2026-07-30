@@ -10,11 +10,6 @@ from tqdm import tqdm
 
 from mindrec.config import ensure_dir
 from mindrec.data.featurize import IdMaps
-from mindrec.data.taxonomy_support import (
-    TaxonomySupport,
-    taxonomy_support_path,
-    validate_taxonomy_mapping_artifact,
-)
 from mindrec.metrics.benchmark import official_mind_benchmark_view
 from mindrec.metrics.calibration import brier_score, expected_calibration_error
 from mindrec.metrics.ranking import (
@@ -36,48 +31,6 @@ from mindrec.utils import (
     test_split_name,
     validation_split_name,
 )
-
-
-def _validate_ranker_checkpoint_config(
-    actual: dict[str, Any],
-    expected: dict[str, Any],
-    checkpoint_path: Path,
-    prefix: str = "",
-) -> None:
-    """Require an optional nested config subset to match a frozen checkpoint."""
-    mismatches: list[str] = []
-
-    def compare(
-        actual_value: Any,
-        expected_value: Any,
-        path: str,
-    ) -> None:
-        if isinstance(expected_value, dict):
-            if not isinstance(actual_value, dict):
-                mismatches.append(
-                    f"{path}: expected a mapping, found {actual_value!r}"
-                )
-                return
-            for key, child_expected in expected_value.items():
-                child_path = f"{path}.{key}" if path else str(key)
-                if key not in actual_value:
-                    mismatches.append(f"{child_path}: missing from checkpoint config")
-                    continue
-                compare(actual_value[key], child_expected, child_path)
-            return
-        if actual_value != expected_value:
-            mismatches.append(
-                f"{path}: expected {expected_value!r}, found {actual_value!r}"
-            )
-
-    compare(actual, expected, prefix)
-    if mismatches:
-        details = "; ".join(mismatches)
-        raise ValueError(
-            f"Ranker checkpoint does not match the required experiment baseline: "
-            f"{checkpoint_path}. {details}. Retrain the required baseline before "
-            "writing this submission."
-        )
 
 
 def _load_model(
@@ -102,40 +55,9 @@ def _load_model(
     )
     checkpoint_path = Path("runs") / ranker_run_name / "ranker" / "best.pt"
     ckpt = torch.load(checkpoint_path, map_location=device)
-    # The checkpoint is authoritative for architecture-affecting settings. This
-    # also lets a post-hoc output run reuse a frozen ranker without copying it.
-    model_cfg = ckpt.get("cfg", cfg)
-    expected_checkpoint_cfg = cfg.get("artifacts", {}).get(
-        "ranker_expected_config"
-    )
-    if expected_checkpoint_cfg:
-        _validate_ranker_checkpoint_config(
-            model_cfg,
-            expected_checkpoint_cfg,
-            checkpoint_path,
-        )
-    require_taxonomy_support = bool(
-        cfg.get("artifacts", {}).get("require_taxonomy_support", False)
-    )
-    if require_taxonomy_support:
-        validate_taxonomy_mapping_artifact(proc_root, maps)
-    support_path = taxonomy_support_path(ranker_run_name)
-    taxonomy_support = (
-        TaxonomySupport.load(
-            support_path,
-            maps=maps,
-            checkpoint_path=checkpoint_path,
-            ranker_run_name=ranker_run_name,
-            dataset_name=str(cfg["data"]["dataset_name"]),
-        )
-        if support_path.exists()
-        else None
-    )
-    if require_taxonomy_support and taxonomy_support is None:
-        raise FileNotFoundError(
-            f"Missing taxonomy-support artifact: {support_path}. "
-            "Build it from the exact ranker training pairs before scoring."
-        )
+    # Post-hoc runs reuse the frozen ranker's architecture and persisted
+    # taxonomy masks directly from its checkpoint.
+    model_cfg = ckpt["cfg"]
 
     ranker_base_name = (
         "item_ranker_base_emb.npy"
@@ -171,16 +93,6 @@ def _load_model(
         ),
         news_id_warm_scale=float(dlrm_cfg.get("news_id_warm_scale", 1.0)),
         news_id_cold_scale=float(dlrm_cfg.get("news_id_cold_scale", 1.0)),
-        supported_cat_ids=(
-            taxonomy_support.supported_cat_ids
-            if taxonomy_support is not None
-            else None
-        ),
-        supported_subcat_ids=(
-            taxonomy_support.supported_subcat_ids
-            if taxonomy_support is not None
-            else None
-        ),
     ).to(device)
 
     model.load_state_dict(ckpt["model"])

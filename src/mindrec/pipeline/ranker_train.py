@@ -14,10 +14,6 @@ from tqdm import tqdm
 from mindrec.config import ensure_dir
 from mindrec.data.datasets import PairDataset, collate_batch
 from mindrec.data.featurize import IdMaps
-from mindrec.data.taxonomy_support import (
-    TaxonomySupport,
-    taxonomy_support_path,
-)
 from mindrec.models.calibration import fit_temperature_scaler
 from mindrec.models.dlrm import DLRMStudent
 from mindrec.models.teacher import TeacherTwoTower
@@ -179,15 +175,16 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
 
     if pairs_train is None:
         raise RuntimeError("Ranker training pairs were not initialized.")
-    taxonomy_support = TaxonomySupport.from_pairs(
-        pairs_train,
-        source=(
-            "teacher_hard_negative_selected_pairs"
-            if hard_enabled
-            else "materialized_train_pairs"
-        ),
+    supported_cat_ids = tuple(
+        int(value)
+        for value in np.unique(pairs_train["cat_idx"].to_numpy())
+        if int(value) > 0
     )
-    taxonomy_support.validate_ids(maps)
+    supported_subcat_ids = tuple(
+        int(value)
+        for value in np.unique(pairs_train["subcat_idx"].to_numpy())
+        if int(value) > 0
+    )
     train_ds = PairDataset(pairs_train, dense_cols=dense_cols)
     val_ds = (
         PairDataset(pairs_val, dense_cols=dense_cols)
@@ -221,8 +218,8 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         ),
         news_id_warm_scale=float(dlrm_cfg.get("news_id_warm_scale", 1.0)),
         news_id_cold_scale=float(dlrm_cfg.get("news_id_cold_scale", 1.0)),
-        supported_cat_ids=taxonomy_support.supported_cat_ids,
-        supported_subcat_ids=taxonomy_support.supported_subcat_ids,
+        supported_cat_ids=supported_cat_ids,
+        supported_subcat_ids=supported_subcat_ids,
     ).to(device)
 
     emb_dim = int(dlrm_cfg["emb_dim"])
@@ -431,28 +428,15 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             "device_info": device_info(device),
             "teacher_artifact_run_name": teacher_artifact_run_name(cfg),
             "hard_negative_sampling": hard_stats,
-            "taxonomy_support": {
-                "n_supported_categories": len(
-                    taxonomy_support.supported_cat_ids
-                ),
-                "n_supported_subcategories": len(
-                    taxonomy_support.supported_subcat_ids
-                ),
-                "n_train_pairs": taxonomy_support.n_train_pairs,
-                "source": taxonomy_support.source,
+            "taxonomy_masks": {
+                "n_supported_categories": len(supported_cat_ids),
+                "n_supported_subcategories": len(supported_subcat_ids),
+                "n_train_pairs": int(len(pairs_train)),
             },
         },
     )
 
     checkpoint_path = art_root / "best.pt"
-    taxonomy_support.save(
-        taxonomy_support_path(str(cfg["run_name"])),
-        maps=maps,
-        checkpoint_path=checkpoint_path,
-        ranker_run_name=str(cfg["run_name"]),
-        dataset_name=ds,
-    )
-
     cal_cfg = dict(cfg["ranker"].get("calibration", {}))
     ckpt = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(ckpt["model"])
