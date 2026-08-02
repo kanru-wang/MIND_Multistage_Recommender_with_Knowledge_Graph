@@ -93,6 +93,9 @@ def _load_model(
         ),
         news_id_warm_scale=float(dlrm_cfg.get("news_id_warm_scale", 1.0)),
         news_id_cold_scale=float(dlrm_cfg.get("news_id_cold_scale", 1.0)),
+        num_interests=int(dlrm_cfg.get("num_interests", 1)),
+        interest_aggregation=str(dlrm_cfg.get("interest_aggregation", "softmax")),
+        interest_temperature=float(dlrm_cfg.get("interest_temperature", 0.1)),
     ).to(device)
 
     model.load_state_dict(ckpt["model"])

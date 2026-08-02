@@ -94,12 +94,13 @@ The student keeps a lighter semantic core than the teacher, but combines it with
 
 #### DLRM-style semantic additions
 - A classic DLRM usually combines sparse ID/category embeddings, dense numerical features, pairwise feature interactions, and a final top MLP. It usually does not include item text embeddings or user-history semantic embeddings directly; those are project-specific additions here.
-- In `DLRMStudent`, the candidate item's `item_ranker_base_emb.npy` vector is formed by concatenating its sentence-transformer text embedding with a KG feature vector. That KG vector aggregates the article's linked entity embeddings together with relation-aware one-hop neighbor context from the configured triples file. The candidate item's vector is projected into `item_sem`, and the corresponding clicked-history vectors are pooled/projected into `user_sem`. Both are mapped to the same `emb_dim` length as the other DLRM feature vectors.
+- In `DLRMStudent`, the candidate item's `item_ranker_base_emb.npy` vector is formed by concatenating its sentence-transformer text embedding with a KG feature vector. That KG vector aggregates the article's linked entity embeddings together with relation-aware one-hop neighbor context from the configured triples file. The candidate item's vector is projected into `item_sem`. In the multi-interest variant, learned poly-attention queries pool the clicked-history vectors into several interest vectors. Candidate-interest cosine similarity then selects or softly combines those interests into a normalized, candidate-conditioned `user_sem`. Both `user_sem` and `item_sem` have the same `emb_dim` length as the other DLRM feature vectors.
+- `ranker.dlrm.num_interests: 1` retains the legacy mean-pooled history representation. The isolated temporal experiment config uses four interests, softmax aggregation, and a small squared-cosine disagreement penalty to discourage the interests from collapsing.
 - These semantic vectors, plus `sem_fused`, are added to the DLRM feature list as extra feature vectors. They are then included in the pairwise dot-product interaction layer and concatenated into the final top MLP input.
 
 #### Distillation representation
 - In `DLRMStudent.forward()`, the student representation used for distillation is `rep = [user_sem, item_sem, sem_fused]`.
-- `user_sem`: student semantic user vector from pooled click-history KG-enhanced item-base features
+- `user_sem`: normalized candidate-conditioned combination of the student's poly-attention history interests
 - `item_sem`: student semantic item vector from the candidate item's KG-enhanced item-base feature
 - `sem_fused`: a lightweight attention-fusion summary that mixes the semantic user/item states with the structured query context
 - The teacher target is `concat(teacher_user_emb, teacher_item_emb)`. A projection head maps the student representation into the teacher space for representation distillation.
@@ -120,8 +121,8 @@ loss = binary_cross_entropy_with_logits(student_logits, click_label)
 |---|---|---|---|
 | Frozen text-only item-base input | Base text semantics for each news item | KG-enhanced `item_ranker_base_emb.npy` input | Retrieval stays text-only; the ranker receives extra entity/relation/neighbor context |
 | Teacher semantic item encoder | Refines each item into the teacher semantic space | Smaller student semantic item encoder | Student semantic dimension is much smaller than the teacher space |
-| Teacher sequence-aware user encoder | Contextualizes clicked history items with attention before pooling | Cheaper history aggregation path | Student uses a lighter history refinement and aggregation path |
-| Teacher attention pooling over history | Builds one semantic user vector from clicked history | Mean-style pooled semantic user path | Student pooling is cheaper and less sequence-aware |
+| Teacher sequence-aware user encoder | Contextualizes clicked history items with attention before pooling | Lightweight history refinement plus poly-attention | Student produces several interest vectors without contextual self-attention over the sequence |
+| Teacher attention pooling over history | Builds one semantic user vector from clicked history | Candidate-conditioned multi-interest pooling | Four learned queries summarize distinct interests; the candidate selects or softly combines them |
 | Teacher item embedding | Semantic representation of the candidate item | `item_sem` | Student item representation is trained to approximate teacher behavior |
 | Teacher user embedding | Semantic representation of the current user history | `user_sem` | Student user representation is cheaper to compute |
 | Teacher cosine-style user-item scorer | Measures semantic compatibility between user and item | Student top MLP ranker | Student scoring uses richer ranking signals beyond pure semantic similarity |
@@ -144,7 +145,7 @@ Category and clicked-item-popularity slices help check whether the model is robu
 
 #### Where the student ranker is simplified
 - teacher semantic item encoder -> smaller student semantic item encoder
-- teacher sequence-aware user encoder -> cheaper history aggregation path
+- teacher sequence-aware user encoder -> lightweight multi-interest history aggregation
 - teacher cosine scorer -> student MLP ranker with many extra inputs
 
 ## Re-ranking (Optional and outdated — not used by the current submission)

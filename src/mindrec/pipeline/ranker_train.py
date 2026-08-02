@@ -218,6 +218,9 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         ),
         news_id_warm_scale=float(dlrm_cfg.get("news_id_warm_scale", 1.0)),
         news_id_cold_scale=float(dlrm_cfg.get("news_id_cold_scale", 1.0)),
+        num_interests=int(dlrm_cfg.get("num_interests", 1)),
+        interest_aggregation=str(dlrm_cfg.get("interest_aggregation", "softmax")),
+        interest_temperature=float(dlrm_cfg.get("interest_temperature", 0.1)),
         supported_cat_ids=supported_cat_ids,
         supported_subcat_ids=supported_subcat_ids,
     ).to(device)
@@ -258,6 +261,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     hard_negative_distill_weight = float(
         hard_cfg.get("hard_negative_distill_weight", 0.0)
     )
+    disagreement_weight = float(dlrm_cfg.get("disagreement_weight", 0.0))
     es_cfg = dict(cfg["ranker"].get("early_stopping", {}))
     es_enabled = bool(es_cfg.get("enabled", True)) and has_validation
     es_patience = int(es_cfg.get("patience", 2))
@@ -292,7 +296,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                     )
                 ti = teacher_item_tensor[batch["news_idx"]]
 
-            logits, rep = model(
+            logits, rep, aux = model(
                 user_idx=batch["user_idx"],
                 news_idx=batch["news_idx"],
                 cat_idx=batch["cat_idx"],
@@ -303,6 +307,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                 history_mask=batch["hist_mask"],
                 is_new_item=batch["is_new_item"],
                 return_repr=True,
+                return_aux=True,
             )
             y = batch["label"]
             loss_rank = nn.functional.binary_cross_entropy_with_logits(logits, y)
@@ -333,7 +338,11 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             w = w.detach()
 
             distill_loss = (w * (lam_logit * loss_logit + lam_repr * loss_repr)).mean()
-            loss = loss_rank + distill_loss
+            loss = (
+                loss_rank
+                + distill_loss
+                + disagreement_weight * aux["disagreement_loss"]
+            )
 
             opt.zero_grad()
             loss.backward()

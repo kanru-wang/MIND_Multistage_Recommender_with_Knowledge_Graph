@@ -83,6 +83,9 @@ class DLRMStudent(nn.Module):
         semantic_dropout: float | None = None,
         news_id_warm_scale: float = 1.0,
         news_id_cold_scale: float = 1.0,
+        num_interests: int = 1,
+        interest_aggregation: str = "softmax",
+        interest_temperature: float = 0.1,
         supported_cat_ids: list[int] | tuple[int, ...] | None = None,
         supported_subcat_ids: list[int] | tuple[int, ...] | None = None,
     ) -> None:
@@ -93,6 +96,15 @@ class DLRMStudent(nn.Module):
         semantic_dropout = dropout if semantic_dropout is None else semantic_dropout
         self.news_id_warm_scale = float(news_id_warm_scale)
         self.news_id_cold_scale = float(news_id_cold_scale)
+        if num_interests < 1:
+            raise ValueError("num_interests must be at least 1.")
+        if interest_aggregation not in {"max", "softmax"}:
+            raise ValueError("interest_aggregation must be 'max' or 'softmax'.")
+        if interest_temperature <= 0.0:
+            raise ValueError("interest_temperature must be positive.")
+        self.num_interests = int(num_interests)
+        self.interest_aggregation = interest_aggregation
+        self.interest_temperature = float(interest_temperature)
 
         self.user_emb = nn.Embedding(n_users, id_emb_dim, padding_idx=0)
         self.news_emb = nn.Embedding(n_news, id_emb_dim, padding_idx=0)
@@ -130,6 +142,13 @@ class DLRMStudent(nn.Module):
             nn.Linear(semantic_hidden, emb_dim),
         )
         self.user_sem_proj = nn.Linear(emb_dim, emb_dim)
+        self.interest_queries = (
+            nn.Parameter(torch.empty(self.num_interests, emb_dim))
+            if self.num_interests > 1
+            else None
+        )
+        if self.interest_queries is not None:
+            nn.init.xavier_uniform_(self.interest_queries)
         self.item_sem_proj = nn.Linear(emb_dim, emb_dim)
         self.semantic_fusion = AttentionFusion(dim=emb_dim, heads=fusion_heads)
 
@@ -198,12 +217,78 @@ class DLRMStudent(nn.Module):
         encoded_history_items: torch.Tensor,
         history_mask: torch.Tensor,
     ) -> torch.Tensor:
-        """Pool pre-encoded history items into one semantic vector per history."""
+        """Encode history as one vector, or as K poly-attention interest vectors."""
         hist_sem = encoded_history_items + self.hist_refine(encoded_history_items)
+        if self.interest_queries is not None:
+            scale = hist_sem.size(-1) ** -0.5
+            attention_logits = torch.einsum(
+                "bhd,kd->bkh", hist_sem, self.interest_queries
+            ) * scale
+            attention_logits = attention_logits.masked_fill(
+                ~history_mask.unsqueeze(1), -torch.inf
+            )
+            # Softmax over an entirely masked history would produce NaNs.
+            has_history = history_mask.any(dim=1)
+            safe_logits = torch.where(
+                has_history[:, None, None],
+                attention_logits,
+                torch.zeros_like(attention_logits),
+            )
+            attention = torch.softmax(safe_logits, dim=-1)
+            interests = torch.einsum("bkh,bhd->bkd", attention, hist_sem)
+            interests = self.user_sem_proj(interests)
+            interests = interests * has_history[:, None, None].to(interests.dtype)
+            return F.normalize(interests, dim=-1)
+
         user_hist = masked_mean(hist_sem, history_mask)
         user_sem = self.user_sem_proj(user_hist)
         user_sem = mask_pooled_vector(user_sem, history_mask)
         return F.normalize(user_sem, dim=-1)
+
+    def select_candidate_interest(
+        self,
+        user_sem: torch.Tensor,
+        item_sem: torch.Tensor,
+    ) -> torch.Tensor:
+        """Select or softly combine K interests for each candidate."""
+        if user_sem.ndim == 2:
+            return user_sem
+        similarities = torch.einsum(
+            "bkd,bd->bk",
+            F.normalize(user_sem, dim=-1),
+            F.normalize(item_sem, dim=-1),
+        )
+        if self.interest_aggregation == "max":
+            selected = similarities.argmax(dim=1)
+            return user_sem[
+                torch.arange(user_sem.size(0), device=user_sem.device), selected
+            ]
+        weights = torch.softmax(similarities / self.interest_temperature, dim=1)
+        combined = torch.einsum("bk,bkd->bd", weights, user_sem)
+        return F.normalize(combined, dim=-1)
+
+    @staticmethod
+    def disagreement_loss(
+        interests: torch.Tensor,
+        history_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Penalize squared cosine similarity between distinct interest vectors."""
+        if interests.ndim != 3 or interests.size(1) < 2:
+            return interests.new_zeros(())
+        normalized = F.normalize(interests, dim=-1)
+        similarity = torch.matmul(normalized, normalized.transpose(1, 2))
+        pair_mask = torch.triu(
+            torch.ones(
+                interests.size(1),
+                interests.size(1),
+                dtype=torch.bool,
+                device=interests.device,
+            ),
+            diagonal=1,
+        )
+        per_history = similarity[:, pair_mask].square().mean(dim=1)
+        eligible = (history_mask.sum(dim=1) >= 2).to(per_history.dtype)
+        return (per_history * eligible).sum() / eligible.sum().clamp_min(1.0)
 
     def score_from_semantics(
         self,
@@ -248,6 +333,7 @@ class DLRMStudent(nn.Module):
         return_repr: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """Complete scoring from precomputed dense and semantic branches."""
+        user_sem = self.select_candidate_interest(user_sem, item_sem)
 
         cat_idx = self._mask_unsupported_ids(cat_idx, self._supported_cat_mask)
         subcat_idx = self._mask_unsupported_ids(
@@ -302,7 +388,11 @@ class DLRMStudent(nn.Module):
         history_mask: torch.Tensor,
         is_new_item: torch.Tensor | None = None,
         return_repr: bool = False,
-    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        return_aux: bool = False,
+    ) -> (
+        tuple[torch.Tensor, torch.Tensor | None]
+        | tuple[torch.Tensor, torch.Tensor | None, dict[str, torch.Tensor]]
+    ):
         # Preserve the original training-time module/dropout call order.
         xd = self.bottom(dense)
         xd_emb = self.xd_proj(xd)
@@ -316,7 +406,7 @@ class DLRMStudent(nn.Module):
             encoded_history,
             history_mask,
         )
-        return self._score_from_semantics_with_dense(
+        result = self._score_from_semantics_with_dense(
             user_idx=user_idx,
             news_idx=news_idx,
             cat_idx=cat_idx,
@@ -328,3 +418,8 @@ class DLRMStudent(nn.Module):
             is_new_item=is_new_item,
             return_repr=return_repr,
         )
+        if return_aux:
+            return result[0], result[1], {
+                "disagreement_loss": self.disagreement_loss(user_sem, history_mask)
+            }
+        return result

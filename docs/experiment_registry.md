@@ -10,6 +10,9 @@ This registry names the split protocol behind each major result set. Use it befo
 | Large dev only | Train on all `MINDlarge_train`; validate on official `MINDlarge_dev` only, Nov 15. | Commit `b83a9308123fa196cf6be627762f01845545b123` | `configs/mind_large_tune.yaml` | `data/processed/MINDlarge_tune` | `runs/mind_large_tune` | `runs/mind_large_tune/eval/ranker_eval_val.json` |
 | Large temporal baseline | Train on `MINDlarge_train` before Nov 14; validate on Nov 14 tail from `MINDlarge_train` plus all `MINDlarge_dev`; use random ranker negatives. | Current repo | `configs/mind_large_temporal_baseline.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_tune` | `runs/mind_large_temporal_tune/eval/ranker_eval_val.json` |
 | Large temporal hard-negative v4 | Use the Large temporal split and baseline teacher; mine hard negatives only for cold users with usable history. | Current repo | `configs/mind_large_temporal_tune.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_hard_neg_v4` | `runs/mind_large_temporal_hard_neg_v4/eval/ranker_eval_val.json` |
+| Large temporal current-code single-interest control | Reproduce hard-negative v4 under the multi-interest branch's current code with one mean-pooled user vector. | Branch `feature/multi_interest_user_representation` | `configs/mind_large_temporal_single_interest_current.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_single_interest_current` | `runs/mind_large_temporal_single_interest_current/eval/ranker_eval_val.json` |
+| Large temporal four-interest, disagreement `0.01` | Replace the single pooled user vector with four candidate-conditioned poly-attention interests and squared-cosine disagreement regularization. | Branch `feature/multi_interest_user_representation` | `configs/mind_large_temporal_multi_interest.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_multi_interest` | `runs/mind_large_temporal_multi_interest/eval/ranker_eval_val.json` |
+| Large temporal four-interest, no disagreement | Use the same four-interest model with `disagreement_weight: 0.0`. | Branch `feature/multi_interest_user_representation` | `configs/mind_large_temporal_multi_interest_no_disagreement.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_multi_interest_no_disagreement` | `runs/mind_large_temporal_multi_interest_no_disagreement/eval/ranker_eval_val.json` |
 | Small temporal | Train on `MINDsmall_train` before Nov 14; validate on Nov 14 tail from `MINDsmall_train` plus all `MINDsmall_dev`. | Current repo | `configs/mind_small_temporal_tune.yaml` | `data/processed/MINDsmall_temporal_tune` | `runs/mind_small_temporal_tune` | `runs/mind_small_temporal_tune/eval/ranker_eval_val.json` |
 
 ## Latest Completed Large Temporal Baseline
@@ -36,6 +39,75 @@ This result uses the same 807,988 validation impressions as the baseline.
 V4 uses `configs/mind_large_temporal_tune.yaml`. Its zero-history groups use
 four random negatives; cold users with usable history use one teacher-hard
 plus three random negatives.
+
+## Multi-Interest User Representation Experiment
+
+Completed on branch `feature/multi_interest_user_representation` on 2026-08-02.
+The experiment tested whether replacing the student's single mean-pooled
+history vector with four candidate-conditioned interest vectors improves the
+Large temporal ranker. Four learned poly-attention queries summarize the
+clicked history. Candidate-interest cosine similarity and temperature-`0.1`
+softmax weighting produce the normalized `user_sem` consumed by the unchanged
+DLRM interaction, fusion, and distillation paths.
+
+All comparable runs reused:
+
+- processed data `data/processed/MINDlarge_temporal_tune`;
+- teacher artifacts `runs/mind_large_temporal_tune/teacher`;
+- validation split of 807,988 impressions and 31,485,663 scored candidates;
+- seed 13, hard-negative v4 sampling, ranker LR `1.0e-4`, weight decay
+  `3.0e-5`, and validation-AUC early stopping;
+- the same DLRM, distillation, KG, and dense-feature settings apart from the
+  explicitly named multi-interest fields.
+
+### Overall results
+
+| Variant | Interests | Disagreement weight | Best pair-val AUC | Best epoch | Full AUC | MRR | nDCG@5 | nDCG@10 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Current-code control | 1 | 0.0 | **0.657270** | 5 | **0.654162** | **0.304436** | 0.331108 | **0.394604** |
+| Four-interest | 4 | 0.01 | 0.649636 | 3 | 0.644329 | 0.298329 | 0.326131 | 0.388352 |
+| Four-interest, no disagreement | 4 | 0.0 | 0.653072 | 3 | 0.648444 | 0.303849 | **0.332026** | 0.393941 |
+
+The disagreement penalty harmed every overall ranking metric. Removing it
+recovered most of the nDCG/MRR loss, but the four-interest model still lost
+`0.005719` AUC, `0.000587` MRR, and `0.000663` nDCG@10 relative to the matched
+current-code control. Its `0.000917` nDCG@5 gain was insufficient to offset
+the other official-metric regressions.
+
+### Diagnostic slices: four interests without disagreement versus control
+
+| Slice | Impressions | AUC delta | MRR delta | nDCG@5 delta | nDCG@10 delta |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Cold user | 109,447 | +0.002054 | +0.003594 | +0.004974 | +0.005318 |
+| History length 0 | 22,663 | +0.008342 | +0.006931 | +0.006224 | +0.008240 |
+| History length 1-4 | 86,784 | +0.000412 | +0.002722 | +0.004648 | +0.004555 |
+| History length 5-20 | 309,696 | -0.004701 | -0.000300 | +0.001547 | +0.000122 |
+| History length 21+ | 388,845 | -0.008716 | -0.001992 | -0.000726 | -0.002972 |
+| Impression has clicked new item | 686,516 | -0.000859 | +0.004647 | +0.006964 | +0.005029 |
+| Impression has clicked warm item | 203,658 | -0.026818 | -0.021869 | -0.025327 | -0.025296 |
+
+The original hypothesis predicted the clearest benefit for longer histories,
+but the largest history-dependent regression occurred for length 21+. The
+apparent zero-history gain cannot be caused by interest selection because the
+semantic history vector is forced to zero for those users. Query initialization
+also consumed RNG state before later shared layers were initialized, so some
+slice differences include a shared-initialization confound.
+
+### Provenance correction and decision
+
+The older `runs/mind_large_temporal_hard_neg_v4` evaluation used the same
+dataset, split, counts, and embedded configuration, but its checkpoint predates
+later source changes and does not contain the current taxonomy-support buffers.
+A fresh single-interest control was therefore trained with current code. It
+reproduced the historical full metrics to within `0.000037` AUC and
+`0.000005` nDCG@10, empirically validating the old record while providing the
+proper matched control for this experiment.
+
+Decision: do not promote the four-interest architecture, do not use the
+disagreement penalty, and do not run the proposed two-interest follow-up. Keep
+the current single-interest representation for the final submission path. The
+multi-interest implementation, configs, and result JSONs are retained on the
+feature branch as a documented negative result.
 
 ## Additional Current Metrics
 
