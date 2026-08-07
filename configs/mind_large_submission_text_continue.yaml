@@ -1,0 +1,12 @@
+extends: "mind_large_temporal_text_adapt.yaml"
+
+run_name: "mind_large_submission_text_adapt_v1"
+
+teacher:
+  text_adaptation:
+    initial_model_from_run: "mind_large_temporal_text_adapt_v1"
+    expected_initial_update: 6000
+    training_split: "val"
+    max_optimizer_updates: 2000
+    early_stopping:
+      enabled: false

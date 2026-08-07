@@ -11,7 +11,7 @@ from mindrec.data.featurize import IdMaps, is_cold_user
 from mindrec.models.teacher import TeacherTwoTower
 
 
-def _choose_negative_offsets(
+def choose_negative_offsets(
     scores: np.ndarray,
     n_select: int,
     hard_fraction: float,
@@ -206,7 +206,7 @@ def build_teacher_hard_negative_pairs(
                     n_hard_ineligible_pool_negatives += int(
                         len(hard_eligible_mask) - np.count_nonzero(hard_eligible_mask)
                     )
-                chosen_offsets, n_hard, n_random = _choose_negative_offsets(
+                chosen_offsets, n_hard, n_random = choose_negative_offsets(
                     scores=scores,
                     n_select=min(negatives_per_positive, len(pool_positions)),
                     hard_fraction=hard_fraction,

@@ -477,6 +477,13 @@ def _run_multi_source_preprocess(cfg: dict[str, Any]) -> None:
             validation_start=validation_start,
         )
         val_beh = pd.concat([train_tail_val, beh_dev], axis=0).reset_index(drop=True)
+        val_times = pd.to_datetime(
+            val_beh["time"],
+            format="%m/%d/%Y %I:%M:%S %p",
+            errors="coerce",
+        )
+        if val_times.isna().any():
+            raise ValueError("Large Temporal Val contains unparseable timestamps.")
         holdout_meta.update(
             {
                 "strategy": "temporal_model_selection",
@@ -488,6 +495,8 @@ def _run_multi_source_preprocess(cfg: dict[str, Any]) -> None:
                 "n_train_tail_validation_impressions": int(len(train_tail_val)),
                 "n_dev_validation_impressions": int(len(beh_dev)),
                 "n_validation_impressions": int(len(val_beh)),
+                "val_time_min": str(val_times.min()),
+                "val_time_max": str(val_times.max()),
                 "test_source": None,
             }
         )

@@ -10,6 +10,7 @@ This registry names the split protocol behind each major result set. Use it befo
 | Large dev only | Train on all `MINDlarge_train`; validate on official `MINDlarge_dev` only, Nov 15. | Commit `b83a9308123fa196cf6be627762f01845545b123` | `configs/mind_large_tune.yaml` | `data/processed/MINDlarge_tune` | `runs/mind_large_tune` | `runs/mind_large_tune/eval/ranker_eval_val.json` |
 | Large temporal baseline | Train on `MINDlarge_train` before Nov 14; validate on Nov 14 tail from `MINDlarge_train` plus all `MINDlarge_dev`; use random ranker negatives. | Current repo | `configs/mind_large_temporal_baseline.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_tune` | `runs/mind_large_temporal_tune/eval/ranker_eval_val.json` |
 | Large temporal hard-negative v4 | Use the Large temporal split and baseline teacher; mine hard negatives only for cold users with usable history. | Current repo | `configs/mind_large_temporal_tune.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_hard_neg_v4` | `runs/mind_large_temporal_hard_neg_v4/eval/ranker_eval_val.json` |
+| Large temporal text-adapt v1 | Adapt MiniLM on Large Temporal Train, select its update count on Large Temporal Val, and train the temporal teacher/ranker with the selected encoder. | Current repo | `configs/mind_large_temporal_text_adapt.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_v1` | `runs/mind_large_temporal_text_adapt_v1/eval/ranker_eval_val.json` |
 | Small temporal | Train on `MINDsmall_train` before Nov 14; validate on Nov 14 tail from `MINDsmall_train` plus all `MINDsmall_dev`. | Current repo | `configs/mind_small_temporal_tune.yaml` | `data/processed/MINDsmall_temporal_tune` | `runs/mind_small_temporal_tune` | `runs/mind_small_temporal_tune/eval/ranker_eval_val.json` |
 
 ## Latest Completed Large Temporal Baseline
@@ -31,11 +32,43 @@ This result uses the same 807,988 validation impressions as the baseline.
 
 | AUC | MRR | nDCG@5 | nDCG@10 |
 | ---: | ---: | ---: | ---: |
-| 0.645785 | 0.305195 | 0.332726 | 0.394743 |
+| 0.654199 | 0.304433 | 0.331107 | 0.394609 |
 
 V4 uses `configs/mind_large_temporal_tune.yaml`. Its zero-history groups use
 four random negatives; cold users with usable history use one teacher-hard
 plus three random negatives.
+
+The previously recorded `0.645785` AUC belongs to the separate
+`mind_large_temporal_hard_neg_v4_ranker_lr_3em04` run, not the canonical
+`mind_large_temporal_hard_neg_v4` artifact.
+
+## Completed MiniLM Text Adaptation V1
+
+Phase 1 adapted `sentence-transformers/all-MiniLM-L6-v2` on Large Temporal
+Train and evaluated the raw history-mean/candidate-cosine objective every 1,000
+optimizer updates on 785,325 evaluable Large Temporal Val impressions. The
+base encoder scored `0.623156` AUC. Update 6,000 was selected at `0.670009`
+AUC; update 7,000 reached `0.670094`, but its `+0.000084` change did not meet
+the configured `1e-4` minimum improvement. Early stopping fired at update
+9,000.
+
+Phase 2 froze the selected update-6,000 encoder and trained the temporal
+teacher/ranker. These metrics use the full 807,988-impression Large Temporal
+Val evaluation and are directly comparable with the canonical frozen-MiniLM
+hard-negative v4 run:
+
+| Model | AUC | MRR | nDCG@5 | nDCG@10 |
+| --- | ---: | ---: | ---: | ---: |
+| Frozen MiniLM hard-negative v4 | 0.654199 | 0.304433 | 0.331107 | 0.394609 |
+| Adapted MiniLM v1 | 0.664328 | 0.311520 | 0.341145 | 0.403632 |
+| Absolute gain | +0.010130 | +0.007087 | +0.010038 | +0.009023 |
+
+Phase 3 loaded the selected update-6,000 encoder and continued adaptation for
+exactly 2,000 updates on Large Temporal Val with a fresh optimizer. The final
+encoder therefore records 8,000 cumulative staged updates. The maximum-data
+teacher and ranker were then fitted on `MINDlarge_train + MINDlarge_dev` with
+four teacher epochs and one ranker epoch. No labeled local validation split was
+retained for this final fit.
 
 ## Additional Current Metrics
 
@@ -65,12 +98,17 @@ users, including zero-history groups.
 
 ## Current Large Submission
 
-| Label | Fit data | Teacher epochs | Ranker epochs | Test impressions | Submission artifact |
-| --- | --- | ---: | ---: | ---: | --- |
-| Hard-negative v4 | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 2,370,727 | `runs/mind_large_submission_hard_neg_v4/submission/prediction.zip` |
+| Label | Text encoder | Fit data | Teacher epochs | Ranker epochs | Recency alpha | Large Test AUC | Test impressions | Submission artifact |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| Frozen-MiniLM hard-negative v4 | Frozen `all-MiniLM-L6-v2` | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6724 | 2,370,727 | `runs/mind_large_submission_recency_alpha_002_v1/submission/prediction.zip` |
+| Text-adapt v1 | Phase 1 update 6,000 + 2,000 Phase 3 updates | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | **0.6848** | 2,370,727 | `runs/mind_large_submission_text_adapt_recency_alpha_002_v1/submission/prediction.zip` |
 
-The hidden test labels are unavailable locally, so this row records generation metadata
-rather than ranking metrics.
+The adapted-text submission improved Large Test AUC from `0.6724` to `0.6848`,
+an absolute gain of `+0.0124`. The Large Test scores were returned by the
+competition platform; hidden test labels remain unavailable locally. The
+adapted score was reported on 2026-08-07. Local artifact validation confirmed
+2,370,727 unique impression IDs, complete candidate-rank permutations, and a
+valid submission ZIP.
 
 ## Sanity Rules
 

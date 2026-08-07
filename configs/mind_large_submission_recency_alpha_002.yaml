@@ -1,8 +1,8 @@
-run_name: "mind_large_submission_recency_alpha_002_v1"
+run_name: "mind_large_submission_text_adapt_recency_alpha_002_v1"
 
 artifacts:
-  ranker_run_name: "mind_large_submission_hard_neg_v4"
-  teacher_run_name: "mind_large_submission_hard_neg_v4"
+  ranker_run_name: "mind_large_submission_text_adapt_v1"
+  teacher_run_name: "mind_large_submission_text_adapt_v1"
 
 data:
   raw_root: "data/raw"

@@ -463,23 +463,68 @@ Then copy the selected fixed epoch counts into `configs/mind_large_submission.ya
 
 For the completed baseline above, use `teacher.epochs: 4` and `ranker.epochs: 1`.
 
-The base submission config disables early stopping and calibration because no labeled validation split is held out in the final fit. The recency config then reuses that frozen ranker. Run:
+The adapted-text workflow has three phases. Phase 1 reuses the already-created
+**Large Temporal Train** split, validates every 1,000 optimizer
+updates on the complete November 14–15 Large Temporal Val, and early-stops with
+patience 3. Phase 2 trains the temporal teacher/ranker once with that selected
+encoder and reports full validation metrics. Phase 3 loads the selected Phase 1
+update-6,000 encoder, continues it for exactly 2,000 updates on Large Temporal
+Val with a fresh AdamW optimizer, and then performs the maximum-data teacher and
+ranker fit on Large Train + Dev. The final encoder therefore represents 8,000
+cumulative staged updates. Fixed MiniLM settings are `lr=2e-5`, hard-negative
+fraction `0.25` for cold users, and maximum history length `10`.
+
+Run one phase at a time:
+
 ```powershell
-python -m mindrec.cli preprocess --config configs/mind_large_submission.yaml
+.\scripts\run_text_adaptation.ps1 -Phase phase1
+.\scripts\run_text_adaptation.ps1 -Phase phase2
+.\scripts\run_text_adaptation.ps1 -Phase phase3
+```
+
+The phase script checks for the existing Large Temporal Train/Val artifacts and
+does not preprocess them again unless required files are missing. Likewise,
+Phase 3 reuses the existing maximum-data processed artifacts and item-age index
+when present.
+
+The existing split names map to files as follows:
+
+- Large Temporal Train: `data/processed/MINDlarge_temporal_tune/train_behaviors.parquet`
+- Large Temporal Val: `data/processed/MINDlarge_temporal_tune/val_behaviors.parquet`
+
+The adapted-text submission config disables early stopping and calibration because no labeled validation split is held out in the final fit. It writes to the separate `mind_large_submission_text_adapt_v1` run, preserving the frozen-MiniLM `mind_large_submission_hard_neg_v4` baseline. The recency config then reuses the adapted run's frozen ranker. If the maximum-data processed artifacts and item-age index already exist, the equivalent individual Phase 3 commands are:
+```powershell
+python -m mindrec.cli adapt_text_encoder --config configs/mind_large_submission_text_continue.yaml
 python -m mindrec.cli train_teacher --config configs/mind_large_submission.yaml
 python -m mindrec.cli train_ranker --config configs/mind_large_submission.yaml
-python -m mindrec.cli build_item_age --config configs/mind_large_submission_recency_alpha_002.yaml
 python -m mindrec.cli write_submission --config configs/mind_large_submission_recency_alpha_002.yaml
 ```
 
-The last two commands apply a label-free recency tiebreaker (`alpha=0.02`) to the frozen ranker before writing the submission.
+Phase 1 `adapt_text_encoder` starts from the same local MiniLM checkpoint and
+fine-tunes it only on Large Temporal Train. Phase 3 loads that selected encoder
+and continues on Large Temporal Val. Both stages contrast each clicked
+candidate with impression negatives against the mean of up to 10 recent-history
+article embeddings. Samples are generated lazily rather than retained as a
+second MINDlarge-sized object graph. For cold users it applies the same
+hard/random selection policy as ranker training: 25% hard negatives, positive-score
+consistency filtering, and 75% random negatives. Warm users use random negatives.
+Because the teacher is trained after adaptation, hard-negative bootstrap scores
+come from a frozen snapshot of each stage's initial encoder: base MiniLM in
+Phase 1 and the selected update-6,000 encoder in Phase 3. Ranker training later
+uses the adapted trained teacher with the same selection policy. It saves the checkpoint under
+`runs/mind_large_submission_text_adapt_v1/text_encoder/model`; `train_teacher`
+then freezes and caches that adapted encoder's article vectors. Hidden test
+impressions are not read by the adaptation stage.
+
+The recency submission config applies the existing label-free tiebreaker
+(`alpha=0.02`) to the frozen final ranker before writing the submission.
 
 The submission command does not use the optional reranker. It writes:
 
-- `runs/mind_large_submission_recency_alpha_002_v1/submission/prediction.txt`
-- `runs/mind_large_submission_recency_alpha_002_v1/submission/prediction.zip`
+- `runs/mind_large_submission_text_adapt_recency_alpha_002_v1/submission/prediction.txt`
+- `runs/mind_large_submission_text_adapt_recency_alpha_002_v1/submission/prediction.zip`
 
-To write an unmodified baseline submission instead, use `python -m mindrec.cli write_submission --config configs/mind_large_submission.yaml`; that path does not require `build_item_age`.
+To write the adapted model without the recency tiebreaker, use `python -m mindrec.cli write_submission --config configs/mind_large_submission.yaml`; that path does not require `build_item_age`.
 
 The official MIND evaluator reads `prediction.txt` lines as `impression_id [rank,...]`, where rank `1` is the highest-scored candidate. Local MIND metrics report AUC, MRR, nDCG@5, and nDCG@10 using the same per-impression ranking definitions as the official evaluator; leaderboard rank is primarily by AUC.
 

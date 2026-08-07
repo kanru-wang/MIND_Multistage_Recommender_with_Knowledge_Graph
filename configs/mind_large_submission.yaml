@@ -1,4 +1,4 @@
-run_name: "mind_large_submission_hard_neg_v4"
+run_name: "mind_large_submission_text_adapt_v1"
 
 data:
   raw_root: "data/raw"
@@ -36,6 +36,8 @@ knowledge_graph:
 
 teacher:
   model_name: "sentence-transformers/all-MiniLM-L6-v2"
+  text_adaptation:
+    enabled: true
   text:
     include_category_prefix: false
   batch_size: 128

@@ -241,21 +241,9 @@ def _encode_news_text(
     batch_size: int,
     include_category_prefix: bool,
 ) -> np.ndarray:
-    if include_category_prefix:
-        texts = (
-            "Category: "
-            + news["category"].fillna("").astype(str)
-            + ". Subcategory: "
-            + news["subcategory"].fillna("").astype(str)
-            + ". Title: "
-            + news["title"].fillna("").astype(str)
-            + " [SEP] Abstract: "
-            + news["abstract"].fillna("").astype(str)
-        ).str.strip().tolist()
-    else:
-        texts = news["text"].fillna("").tolist()
+    texts = format_news_texts(news, include_category_prefix)
     news_idx = news["news_idx"].astype(int).tolist()
-    dim = int(st.get_sentence_embedding_dimension())
+    dim = int(st.get_embedding_dimension())
     item_emb = np.zeros((max(news_idx) + 1, dim), dtype=np.float32)
 
     for i in tqdm(range(0, len(texts), batch_size), desc="Encode news"):
@@ -270,6 +258,24 @@ def _encode_news_text(
         for j, vec in enumerate(emb):
             item_emb[int(news_idx[i + j])] = vec.astype(np.float32)
     return item_emb
+
+
+def format_news_texts(
+    news: pd.DataFrame, include_category_prefix: bool
+) -> list[str]:
+    """Build the exact article text consumed by frozen or adapted encoders."""
+    if include_category_prefix:
+        return (
+            "Category: "
+            + news["category"].fillna("").astype(str)
+            + ". Subcategory: "
+            + news["subcategory"].fillna("").astype(str)
+            + ". Title: "
+            + news["title"].fillna("").astype(str)
+            + " [SEP] Abstract: "
+            + news["abstract"].fillna("").astype(str)
+        ).str.strip().tolist()
+    return news["text"].fillna("").astype(str).tolist()
 
 
 def _build_item_base_features(
@@ -395,8 +401,17 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
     es_min_delta = float(es_cfg.get("min_delta", 1.0e-4))
     monitor_name = str(es_cfg.get("monitor", "retrieval_recall@k"))
 
+    adaptation_cfg = dict(teacher_cfg.get("text_adaptation", {}))
+    adapted_model_path = Path("runs") / cfg["run_name"] / "text_encoder" / "model"
+    use_adapted = bool(adaptation_cfg.get("enabled", False))
+    if use_adapted and not adapted_model_path.exists():
+        raise FileNotFoundError(
+            f"Adapted text encoder not found at {adapted_model_path}. Run "
+            "`python -m mindrec.cli adapt_text_encoder --config ...` first."
+        )
+    encoder_source = str(adapted_model_path) if use_adapted else teacher_cfg["model_name"]
     st = SentenceTransformer(
-        teacher_cfg["model_name"],
+        encoder_source,
         device=device_str,
         local_files_only=True,
     )
@@ -624,6 +639,8 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
 
     meta = {
         "model_name": teacher_cfg["model_name"],
+        "text_encoder_source": encoder_source,
+        "text_encoder_adapted": use_adapted,
         "device": device_str,
         "device_info": device_info(device),
         "item_base_dim": int(item_base.shape[1]),
@@ -658,7 +675,11 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
         "stop_reason": stop_reason,
         "lr": lr,
         "train_loss_mean": train_loss_mean,
-        "item_encoder": "sentence_transformer_frozen_plus_projection",
+        "item_encoder": (
+            "mind_adapted_sentence_transformer_frozen_plus_projection"
+            if use_adapted
+            else "sentence_transformer_frozen_plus_projection"
+        ),
         "user_encoder": "attention_pool_over_history",
     }
     save_json(art_root / "meta.json", meta)

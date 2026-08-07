@@ -1,0 +1,40 @@
+extends: "mind_large_temporal_baseline.yaml"
+
+run_name: "mind_large_temporal_text_adapt_v1"
+
+teacher:
+  text_adaptation:
+    enabled: true
+    batch_size: 16
+    gradient_accumulation_steps: 4
+    encode_batch_size: 256
+    lr: 2.0e-5
+    weight_decay: 0.01
+    temperature: 0.05
+    max_history: 10
+    negatives_per_positive: 4
+    hard_pool_size: 20
+    hard_fraction: 0.25
+    teacher_consistent_hard_only: true
+    max_score_above_positive: 0.0
+    hard_for_cold_users_only: true
+    max_optimizer_updates: 10000
+    early_stopping:
+      enabled: true
+      validation_interval_updates: 1000
+      patience: 3
+      min_delta: 1.0e-4
+    device: "cuda"
+
+ranker:
+  lr: 1.0e-4
+  weight_decay: 3.0e-5
+  hard_negative_sampling:
+    enabled: true
+    pool_size: 20
+    hard_fraction: 0.25
+    score_batch_size: 512
+    teacher_consistent_hard_only: true
+    max_score_above_positive: 0.0
+    hard_for_cold_users_only: true
+    hard_negative_distill_weight: 0.0
