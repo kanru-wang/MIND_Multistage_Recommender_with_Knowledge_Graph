@@ -43,6 +43,43 @@ class AttentionFusion(nn.Module):
         return self.out(out.squeeze(1))
 
 
+class CandidateAwareHistoryAttention(nn.Module):
+    """Use each candidate as the query over its impression-time click history."""
+
+    def __init__(self, dim: int, heads: int = 4, dropout: float = 0.0) -> None:
+        super().__init__()
+        self.attn = nn.MultiheadAttention(
+            embed_dim=dim,
+            num_heads=heads,
+            dropout=dropout,
+            batch_first=True,
+        )
+
+    def forward(
+        self,
+        candidate: torch.Tensor,
+        history: torch.Tensor,
+        mask: torch.Tensor,
+    ) -> torch.Tensor:
+        # MultiheadAttention produces NaNs when every key is masked. Temporarily
+        # expose one zero vector for empty histories, then force their result to
+        # zero after attention.
+        if history.size(1) < 1:
+            raise ValueError("Candidate-aware attention requires a history axis.")
+        has_history = mask.any(dim=1)
+        safe_mask = mask.clone()
+        safe_mask[~has_history, 0] = True
+        safe_history = history.masked_fill(~mask.unsqueeze(-1), 0.0)
+        attended, _ = self.attn(
+            candidate.unsqueeze(1),
+            safe_history,
+            safe_history,
+            key_padding_mask=~safe_mask,
+            need_weights=False,
+        )
+        return attended.squeeze(1) * has_history.unsqueeze(1).to(history.dtype)
+
+
 def masked_mean(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     weights = mask.unsqueeze(-1).to(dtype=x.dtype)
     denom = weights.sum(dim=1).clamp_min(1.0)
@@ -81,6 +118,9 @@ class DLRMStudent(nn.Module):
         fusion_heads: int = 4,
         semantic_ff_mult: int = 1,
         semantic_dropout: float | None = None,
+        history_pooling: str = "mean",
+        candidate_attention_heads: int = 4,
+        candidate_attention_dropout: float = 0.0,
         news_id_warm_scale: float = 1.0,
         news_id_cold_scale: float = 1.0,
         supported_cat_ids: list[int] | tuple[int, ...] | None = None,
@@ -91,6 +131,12 @@ class DLRMStudent(nn.Module):
         top_mlp = top_mlp or [256, 128, 1]
         id_emb_dim = id_emb_dim or emb_dim
         semantic_dropout = dropout if semantic_dropout is None else semantic_dropout
+        if history_pooling not in {"mean", "candidate_attention"}:
+            raise ValueError(
+                "ranker.dlrm.history_pooling must be 'mean' or "
+                "'candidate_attention'."
+            )
+        self.history_pooling = history_pooling
         self.news_id_warm_scale = float(news_id_warm_scale)
         self.news_id_cold_scale = float(news_id_cold_scale)
 
@@ -131,6 +177,15 @@ class DLRMStudent(nn.Module):
         )
         self.user_sem_proj = nn.Linear(emb_dim, emb_dim)
         self.item_sem_proj = nn.Linear(emb_dim, emb_dim)
+        self.candidate_history_attention = (
+            CandidateAwareHistoryAttention(
+                dim=emb_dim,
+                heads=candidate_attention_heads,
+                dropout=candidate_attention_dropout,
+            )
+            if history_pooling == "candidate_attention"
+            else None
+        )
         self.semantic_fusion = AttentionFusion(dim=emb_dim, heads=fusion_heads)
 
         # DLRM interaction features:
@@ -197,10 +252,44 @@ class DLRMStudent(nn.Module):
         self,
         encoded_history_items: torch.Tensor,
         history_mask: torch.Tensor,
+        candidate_item_semantics: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """Pool pre-encoded history items into one semantic vector per history."""
-        hist_sem = encoded_history_items + self.hist_refine(encoded_history_items)
-        user_hist = masked_mean(hist_sem, history_mask)
+        """Refine and pool history, optionally conditioned on each candidate."""
+        history_semantics = self.encode_history_semantics(encoded_history_items)
+        return self.pool_history_semantics(
+            history_semantics,
+            history_mask,
+            candidate_item_semantics=candidate_item_semantics,
+        )
+
+    def encode_history_semantics(
+        self,
+        encoded_history_items: torch.Tensor,
+    ) -> torch.Tensor:
+        """Refine reusable, pre-encoded history item states before pooling."""
+        return encoded_history_items + self.hist_refine(encoded_history_items)
+
+    def pool_history_semantics(
+        self,
+        history_semantics: torch.Tensor,
+        history_mask: torch.Tensor,
+        candidate_item_semantics: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Build a user vector with mean or candidate-aware history pooling."""
+        if self.history_pooling == "candidate_attention":
+            if candidate_item_semantics is None:
+                raise ValueError(
+                    "candidate_item_semantics is required for candidate-aware "
+                    "history pooling."
+                )
+            assert self.candidate_history_attention is not None
+            user_hist = self.candidate_history_attention(
+                candidate_item_semantics,
+                history_semantics,
+                history_mask,
+            )
+        else:
+            user_hist = masked_mean(history_semantics, history_mask)
         user_sem = self.user_sem_proj(user_hist)
         user_sem = mask_pooled_vector(user_sem, history_mask)
         return F.normalize(user_sem, dim=-1)
@@ -315,6 +404,7 @@ class DLRMStudent(nn.Module):
         user_sem = self.encode_user_semantics_from_history(
             encoded_history,
             history_mask,
+            candidate_item_semantics=item_sem,
         )
         return self._score_from_semantics_with_dense(
             user_idx=user_idx,

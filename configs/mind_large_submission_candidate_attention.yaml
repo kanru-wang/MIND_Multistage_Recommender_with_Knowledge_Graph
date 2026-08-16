@@ -1,0 +1,23 @@
+extends: "mind_large_submission.yaml"
+
+run_name: "mind_large_submission_text_adapt_candidate_attention_low_lr_2ep_v1"
+
+# Reuse the verified adapted text encoder and teacher. Candidate attention's
+# temporal run selected lr=1e-4, weight_decay=3e-5, and epoch 3; two epochs on
+# the larger maximum-data split provide approximately the same example count.
+artifacts:
+  teacher_run_name: "mind_large_submission_text_adapt_v1"
+
+ranker:
+  lr: 1.0e-4
+  weight_decay: 3.0e-5
+  epochs: 2
+  dlrm:
+    history_pooling: "candidate_attention"
+    candidate_attention_heads: 4
+    candidate_attention_dropout: 0.0
+
+submission:
+  # Candidate-conditioned pooling materializes one history view per candidate
+  # in each scoring batch. Keep peak GPU memory below the mean-pooling path.
+  batch_size: 2048

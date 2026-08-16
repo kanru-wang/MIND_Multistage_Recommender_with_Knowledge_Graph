@@ -21,6 +21,10 @@ from mindrec.metrics.ranking import (
 )
 from mindrec.models.calibration import TemperatureScaler
 from mindrec.models.dlrm import DLRMStudent
+from mindrec.pipeline.ranker_scoring import (
+    precompute_item_semantics,
+    score_prepared_groups,
+)
 from mindrec.utils import (
     behavior_artifact_path,
     impression_artifact_path,
@@ -36,7 +40,6 @@ from mindrec.utils import (
 def _load_model(
     cfg: dict[str, Any],
     proc_root: Path,
-    runs_root: Path,
     device: torch.device,
     *,
     load_teacher_item: bool = True,
@@ -90,6 +93,13 @@ def _load_model(
         semantic_ff_mult=int(dlrm_cfg.get("semantic_ff_mult", 1)),
         semantic_dropout=float(
             dlrm_cfg.get("semantic_dropout", dlrm_cfg.get("dropout", 0.0))
+        ),
+        history_pooling=str(dlrm_cfg.get("history_pooling", "mean")),
+        candidate_attention_heads=int(
+            dlrm_cfg.get("candidate_attention_heads", 4)
+        ),
+        candidate_attention_dropout=float(
+            dlrm_cfg.get("candidate_attention_dropout", 0.0)
         ),
         news_id_warm_scale=float(dlrm_cfg.get("news_id_warm_scale", 1.0)),
         news_id_cold_scale=float(dlrm_cfg.get("news_id_cold_scale", 1.0)),
@@ -246,13 +256,14 @@ def _finalize_metric_accumulator(acc: dict[str, list[float]]) -> dict[str, float
 def _evaluate_split(
     cfg: dict[str, Any],
     proc_root: Path,
-    runs_root: Path,
     out_root: Path,
     split_name: str,
     device: torch.device,
     device_str: str,
     model: DLRMStudent,
-    item_base: np.ndarray,
+    encoded_items: torch.Tensor,
+    item_semantics: torch.Tensor,
+    score_batch_size: int,
     scaler: TemperatureScaler | None,
 ) -> dict[str, Any]:
     news = pd.read_parquet(proc_root / "news.parquet")
@@ -314,47 +325,24 @@ def _evaluate_split(
                 [np.full_like(cand_clicks_log1p, hlen), cand_clicks_log1p], axis=1
             )
 
-            logits = []
-            bs = 2048
-            for i in range(0, len(cand_news_idx), bs):
-                sl = slice(i, i + bs)
-                batch_size = len(cand_news_idx[sl])
-                b_user = torch.tensor(
-                    [user_idx] * batch_size, dtype=torch.long, device=device
-                )
-                b_news = torch.tensor(
-                    cand_news_idx[sl], dtype=torch.long, device=device
-                )
-                b_cat = torch.tensor(cand_cat_idx[sl], dtype=torch.long, device=device)
-                b_sub = torch.tensor(
-                    cand_subcat_idx[sl], dtype=torch.long, device=device
-                )
-                b_is_new = torch.tensor(
-                    cand_is_new[sl], dtype=torch.long, device=device
-                )
-                b_dense = torch.tensor(dense[sl], dtype=torch.float32, device=device)
-                b_item_base = torch.tensor(
-                    item_base[cand_news_idx[sl]], dtype=torch.float32, device=device
-                )
-                b_hist_base, b_hist_mask = _expand_history_base(
-                    item_base=item_base,
-                    hist_idx=hist_news_idx,
-                    batch_size=batch_size,
-                    device=device,
-                )
-                logit, _ = model(
-                    user_idx=b_user,
-                    news_idx=b_news,
-                    cat_idx=b_cat,
-                    subcat_idx=b_sub,
-                    dense=b_dense,
-                    item_base=b_item_base,
-                    history_item_base=b_hist_base,
-                    history_mask=b_hist_mask,
-                    is_new_item=b_is_new,
-                )
-                logits.append(logit.detach().cpu().numpy())
-            scores = np.concatenate(logits, axis=0)
+            scores = score_prepared_groups(
+                model=model,
+                groups=[
+                    {
+                        "user_idx": user_idx,
+                        "hist_news_idx": hist_news_idx,
+                        "cand_news_idx": cand_news_idx,
+                        "cand_cat_idx": cand_cat_idx,
+                        "cand_subcat_idx": cand_subcat_idx,
+                        "cand_is_new": cand_is_new,
+                        "dense": dense,
+                    }
+                ],
+                encoded_items=encoded_items,
+                item_semantics=item_semantics,
+                batch_size=score_batch_size,
+                device=device,
+            )[0]
             probs_raw = 1.0 / (1.0 + np.exp(-scores))
             probs = scaler.predict_proba(scores) if scaler is not None else probs_raw
 
@@ -449,6 +437,8 @@ def _evaluate_split(
         "n_scored_pairs": int(len(y)),
         "device": device_str,
         "eval_split": split_name,
+        "scoring_mode": "cached_item_and_history_semantics",
+        "score_batch_size": score_batch_size,
     }
     save_json(out_root / f"ranker_eval_{split_name}.json", out)
     return out
@@ -467,12 +457,28 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
     model, item_base, _ = _load_model(
         cfg,
         proc_root,
-        runs_root,
         device,
         load_teacher_item=False,
     )
     calib_path = runs_root / "ranker" / "calibration.json"
     scaler = TemperatureScaler.load(calib_path) if calib_path.exists() else None
+    eval_splits = _resolve_eval_splits(cfg)
+    if not eval_splits:
+        return
+    eval_cfg = dict(cfg.get("eval", {}))
+    score_batch_size = int(eval_cfg.get("batch_size", 2048))
+    item_encoding_batch_size = int(
+        eval_cfg.get("item_encoding_batch_size", max(score_batch_size, 8192))
+    )
+    if score_batch_size < 1:
+        raise ValueError("eval.batch_size must be at least 1.")
+    encoded_items, item_semantics = precompute_item_semantics(
+        model=model,
+        item_base=item_base,
+        device=device,
+        batch_size=item_encoding_batch_size,
+        description="Pre-encode evaluation items",
+    )
 
     # Temporal-evaluation consistency check:
     # ranker_eval_val.json:n_impressions should equal
@@ -480,16 +486,17 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
     # evaluation artifact is stale and must be regenerated before its metrics
     # are treated as a baseline.
     split_results = {}
-    for split_name in _resolve_eval_splits(cfg):
+    for split_name in eval_splits:
         split_results[split_name] = _evaluate_split(
             cfg=cfg,
             proc_root=proc_root,
-            runs_root=runs_root,
             out_root=out_root,
             split_name=split_name,
             device=device,
             device_str=device_str,
             model=model,
-            item_base=item_base,
+            encoded_items=encoded_items,
+            item_semantics=item_semantics,
+            score_batch_size=score_batch_size,
             scaler=scaler,
         )

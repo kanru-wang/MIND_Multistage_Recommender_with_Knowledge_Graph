@@ -89,7 +89,7 @@ def _score_impressions(
     device: torch.device,
     split_name: str,
 ) -> tuple[list[ImpressionScores], dict[str, Any]]:
-    model, item_base, teacher_item = _load_model(cfg, proc_root, runs_root, device)
+    model, item_base, teacher_item = _load_model(cfg, proc_root, device)
     impr = pd.read_parquet(impression_artifact_path(proc_root, split_name))
 
     scored: list[ImpressionScores] = []

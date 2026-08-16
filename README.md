@@ -94,7 +94,7 @@ The student keeps a lighter semantic core than the teacher, but combines it with
 
 #### DLRM-style semantic additions
 - A classic DLRM usually combines sparse ID/category embeddings, dense numerical features, pairwise feature interactions, and a final top MLP. It usually does not include item text embeddings or user-history semantic embeddings directly; those are project-specific additions here.
-- In `DLRMStudent`, the candidate item's `item_ranker_base_emb.npy` vector is formed by concatenating its sentence-transformer text embedding with a KG feature vector. That KG vector aggregates the article's linked entity embeddings together with relation-aware one-hop neighbor context from the configured triples file. The candidate item's vector is projected into `item_sem`, and the corresponding clicked-history vectors are pooled/projected into `user_sem`. Both are mapped to the same `emb_dim` length as the other DLRM feature vectors.
+- In `DLRMStudent`, the candidate item's `item_ranker_base_emb.npy` vector is formed by concatenating its sentence-transformer text embedding with a KG feature vector. That KG vector aggregates the article's linked entity embeddings together with relation-aware one-hop neighbor context from the configured triples file. The candidate item's vector is projected into `item_sem`, and the corresponding clicked-history vectors are pooled/projected into `user_sem`. Both are mapped to the same `emb_dim` length as the other DLRM feature vectors. `ranker.dlrm.history_pooling` selects the original candidate-independent `mean` or the opt-in `candidate_attention` path, where the current candidate queries the clicked-history states before `user_sem` is formed.
 - These semantic vectors, plus `sem_fused`, are added to the DLRM feature list as extra feature vectors. They are then included in the pairwise dot-product interaction layer and concatenated into the final top MLP input.
 
 #### Distillation representation
@@ -121,7 +121,7 @@ loss = binary_cross_entropy_with_logits(student_logits, click_label)
 | Frozen text-only item-base input | Base text semantics for each news item | KG-enhanced `item_ranker_base_emb.npy` input | Retrieval stays text-only; the ranker receives extra entity/relation/neighbor context |
 | Teacher semantic item encoder | Refines each item into the teacher semantic space | Smaller student semantic item encoder | Student semantic dimension is much smaller than the teacher space |
 | Teacher sequence-aware user encoder | Contextualizes clicked history items with attention before pooling | Cheaper history aggregation path | Student uses a lighter history refinement and aggregation path |
-| Teacher attention pooling over history | Builds one semantic user vector from clicked history | Mean-style pooled semantic user path | Student pooling is cheaper and less sequence-aware |
+| Teacher attention pooling over history | Builds one semantic user vector from clicked history | Mean pooling by default; optional candidate-aware multi-head attention | Candidate-aware pooling recomputes `user_sem` for each candidate |
 | Teacher item embedding | Semantic representation of the candidate item | `item_sem` | Student item representation is trained to approximate teacher behavior |
 | Teacher user embedding | Semantic representation of the current user history | `user_sem` | Student user representation is cheaper to compute |
 | Teacher cosine-style user-item scorer | Measures semantic compatibility between user and item | Student top MLP ranker | Student scoring uses richer ranking signals beyond pure semantic similarity |
@@ -518,6 +518,51 @@ impressions are not read by the adaptation stage.
 
 The recency submission config applies the existing label-free tiebreaker
 (`alpha=0.02`) to the frozen final ranker before writing the submission.
+
+#### Candidate-aware history-attention experiment
+
+The candidate-aware ranker reuses the already-adapted text encoder and teacher
+from the verified `0.6848` workflow. It changes only student history pooling,
+so Phase 1 is intentionally not repeated and the earlier artifacts are not
+overwritten. First train and evaluate on Large Temporal Val:
+
+```powershell
+.\scripts\run_candidate_attention.ps1 -Phase phase2
+```
+
+Phase 2 is also the script default, so omitting `-Phase` stops after validation
+instead of continuing automatically into the maximum-data fit.
+`-Phase all` runs Phase 2 followed by the selected maximum-data fit.
+
+Review
+`runs/mind_large_temporal_text_adapt_candidate_attention_v1/eval/ranker_eval_val.json`
+against the `0.664328` temporal AUC of the text-adapt v1 ranker. The completed
+candidate-attention run reached `0.671593` (`+0.007264`) and selected epoch 3
+with `lr=1e-4` and `weight_decay=3e-5`.
+
+The final fit transfers that optimizer schedule and uses two maximum-data
+epochs. Two epochs process `38,124,560` examples, close to the `38,970,126`
+examples processed before the temporal checkpoint selected at epoch 3:
+
+```powershell
+.\scripts\run_candidate_attention.ps1 -Phase phase3
+```
+
+This writes
+`runs/mind_large_submission_text_adapt_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.zip`.
+It achieved Large Test AUC **`0.6869`**, an absolute improvement of `+0.0021`
+over text-adapt v1 (`0.6848`) and `+0.0145` over the frozen-MiniLM baseline
+(`0.6724`). This is the current verified champion.
+
+For comparison, the earlier candidate-attention maximum-data fit reused the
+mean-pooling ranker's one-epoch schedule (`lr=3.25e-4`, `weight_decay=1e-5`)
+and scored `0.6848`. That historical neutral result is retained in the
+experiment registry; its superseded CLI/config path has been removed.
+
+Candidate attention is evaluated for every candidate, but temporal evaluation
+and submission both cache item encodings and refine each distinct history only
+once. The experiment uses a smaller submission batch (`2048`) to bound peak GPU
+memory.
 
 The submission command does not use the optional reranker. It writes:
 

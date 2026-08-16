@@ -11,6 +11,7 @@ This registry names the split protocol behind each major result set. Use it befo
 | Large temporal baseline | Train on `MINDlarge_train` before Nov 14; validate on Nov 14 tail from `MINDlarge_train` plus all `MINDlarge_dev`; use random ranker negatives. | Current repo | `configs/mind_large_temporal_baseline.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_tune` | `runs/mind_large_temporal_tune/eval/ranker_eval_val.json` |
 | Large temporal hard-negative v4 | Use the Large temporal split and baseline teacher; mine hard negatives only for cold users with usable history. | Current repo | `configs/mind_large_temporal_tune.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_hard_neg_v4` | `runs/mind_large_temporal_hard_neg_v4/eval/ranker_eval_val.json` |
 | Large temporal text-adapt v1 | Adapt MiniLM on Large Temporal Train, select its update count on Large Temporal Val, and train the temporal teacher/ranker with the selected encoder. | Current repo | `configs/mind_large_temporal_text_adapt.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_v1` | `runs/mind_large_temporal_text_adapt_v1/eval/ranker_eval_val.json` |
+| Large temporal candidate-attention v1 | Reuse the text-adapt v1 teacher and replace only student mean history pooling with candidate-aware attention. | Current repo; completed | `configs/mind_large_temporal_candidate_attention.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_candidate_attention_v1` | `runs/mind_large_temporal_text_adapt_candidate_attention_v1/eval/ranker_eval_val.json` |
 | Small temporal | Train on `MINDsmall_train` before Nov 14; validate on Nov 14 tail from `MINDsmall_train` plus all `MINDsmall_dev`. | Current repo | `configs/mind_small_temporal_tune.yaml` | `data/processed/MINDsmall_temporal_tune` | `runs/mind_small_temporal_tune` | `runs/mind_small_temporal_tune/eval/ranker_eval_val.json` |
 
 ## Latest Completed Large Temporal Baseline
@@ -137,8 +138,9 @@ recorded 8,500 cumulative staged updates. The maximum-data teacher/ranker and
 post-hoc recency settings remained fixed at four teacher epochs, one ranker
 epoch, and `alpha=0.02`.
 
-Large Test AUC was `0.6842`, which is `-0.0006` versus the 2,000-update champion
-at `0.6848` (and `+0.0118` versus the frozen-MiniLM baseline). Downstream
+Large Test AUC was `0.6842`, which is `-0.0006` versus the then-current
+2,000-update text-adapt v1 result at `0.6848` (and `+0.0118` versus the
+frozen-MiniLM baseline). Downstream
 training losses improved slightly despite the hidden-test regression: teacher
 loss moved from `6.139574` to `6.138398`, and ranker loss from `0.834028` to
 `0.833814`. This is consistent with mild overfitting or overshooting during the
@@ -162,11 +164,12 @@ Temporal Val, 2,000 updates, `lr=2e-5`, cold-user-only policy, hard fraction
 fixed. MiniLM still optimized the original history-mean/clicked-article
 contrastive objective.
 
-Large Test AUC was `0.6835`, which is `-0.0013` versus the snapshot-mined
-champion at `0.6848` (and `+0.0111` versus the frozen-MiniLM baseline). The
+Large Test AUC was `0.6835`, which is `-0.0013` versus the then-current
+snapshot-mined text-adapt v1 result at `0.6848` (and `+0.0111` versus the
+frozen-MiniLM baseline). The
 teacher changed hard-negative identity rather than quantity: both runs mined
 11,809 groups, while the teacher-guided run selected 10,632 hard negatives
-versus 10,635 for the champion. Its consistency guard rejected 63,876 of
+versus 10,635 for the reference run. Its consistency guard rejected 63,876 of
 177,471 scored pool negatives because the teacher placed them above the
 clicked positive.
 
@@ -193,13 +196,14 @@ Large Temporal Val data, 2,000 continuation updates (128,000 samples), original
 snapshot-mined hard negatives, maximum-data teacher/ranker fit, and post-hoc
 recency `alpha=0.02`.
 
-Large Test AUC was `0.6797`, which is `-0.0051` versus the `lr=2e-5` champion
-at `0.6848` (but still `+0.0073` versus the frozen-MiniLM baseline). The run
+Large Test AUC was `0.6797`, which is `-0.0051` versus the then-current
+`lr=2e-5` text-adapt v1 result at `0.6848` (but still `+0.0073` versus the
+frozen-MiniLM baseline). The run
 used the intended data and artifact routing, and its sample and negative-policy
-counts matched the champion. Its teacher loss was marginally lower (`6.139317`
+counts matched the reference run. Its teacher loss was marginally lower (`6.139317`
 versus `6.139574`), while ranker loss was slightly worse (`0.834304` versus
 `0.834028`); neither suggests an operational failure. Compared with the
-champion submission, only 283,858 of 2,370,727 impressions (11.97%) retained
+reference submission, only 283,858 of 2,370,727 impressions (11.97%) retained
 an identical full ranking, and 1,646,229 (69.44%) retained the same top-ranked
 candidate, confirming that the learning-rate change materially propagated
 through the downstream pipeline.
@@ -248,21 +252,29 @@ users, including zero-history groups.
 | Label | Text encoder | Fit data | Teacher epochs | Ranker epochs | Recency alpha | Large Test AUC | Test impressions | Submission artifact |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
 | Frozen-MiniLM hard-negative v4 | Frozen `all-MiniLM-L6-v2` | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6724 | 2,370,727 | `runs/mind_large_submission_recency_alpha_002_v1/submission/prediction.zip` |
-| Text-adapt v1 | Phase 1 update 6,000 + 2,000 Phase 3 updates | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | **0.6848** | 2,370,727 | `runs/mind_large_submission_text_adapt_recency_alpha_002_v1/submission/prediction.zip` |
+| Text-adapt v1 | Phase 1 update 6,000 + 2,000 Phase 3 updates | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6848 | 2,370,727 | `runs/mind_large_submission_text_adapt_recency_alpha_002_v1/submission/prediction.zip` |
+| Candidate attention, original schedule | Same as text-adapt v1; candidate-aware student history pooling | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6848 | 2,370,727 | `runs/mind_large_submission_text_adapt_candidate_attention_recency_alpha_002_v1/submission/prediction.zip` |
+| Candidate attention, selected schedule | Same as text-adapt v1; candidate-aware student history pooling | `MINDlarge_train + MINDlarge_dev` | 4 | 2 | 0.02 | **0.6869** | 2,370,727 | `runs/mind_large_submission_text_adapt_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.zip` |
 | Rejected replay 85/10/5 | Phase 1 update 6,000 + 2,000 replay-mixture updates | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6800 | 2,370,727 | `runs/mind_large_submission_text_adapt_replay_85_10_5_recency_alpha_002_v1/submission/prediction.zip` |
 | Rejected Nov 15 overweight 45/55 | Phase 1 update 6,000 + 2,000 date-weighted updates | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6796 | 2,370,727 | `runs/mind_large_submission_text_adapt_nov15_weighted_recency_alpha_002_v1/submission/prediction.zip` |
 | Rejected 2,500 updates | Phase 1 update 6,000 + 2,500 Phase 3 updates | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6842 | 2,370,727 | `runs/mind_large_submission_text_adapt_updates_2500_recency_alpha_002_v1/submission/prediction.zip` |
 | Rejected teacher-guided negatives | Phase 1 update 6,000 + 2,000 teacher-mined Phase 3 updates | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6835 | 2,370,727 | `runs/mind_large_submission_text_adapt_teacher_guided_recency_alpha_002_v1/submission/prediction.zip` |
 | Rejected Phase 3 `lr=1.5e-5` | Phase 1 update 6,000 + 2,000 lower-learning-rate Phase 3 updates | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6797 | 2,370,727 | `runs/mind_large_submission_text_adapt_lr_1p5em05_recency_alpha_002_v1/submission/prediction.zip` |
 
-The adapted-text submission improved Large Test AUC from `0.6724` to `0.6848`,
-an absolute gain of `+0.0124`. The Large Test scores were returned by the
-competition platform; hidden test labels remain unavailable locally. The
-adapted score was reported on 2026-08-07. Local artifact validation confirmed
-2,370,727 unique impression IDs, complete candidate-rank permutations, and a
-valid submission ZIP. The `0.6848` pure-Temporal-Val model remains the current
-champion; the replay, Nov 15 overweight, 2,500-update, teacher-guided, and
-learning-rate `1.5e-5` rows are retained only as negative experimental evidence.
+The adapted-text submission first improved Large Test AUC from `0.6724` to
+`0.6848` (`+0.0124`). Candidate-aware pooling then improved matched temporal
+validation AUC from `0.664328` to `0.671593`. Its original one-epoch
+maximum-data schedule remained at `0.6848`, while transferring the selected
+`lr=1e-4`, `weight_decay=3e-5` schedule for two maximum-data epochs reached
+**`0.6869`**. The new champion gains `+0.0021` over text-adapt v1 and `+0.0145`
+over the frozen-MiniLM baseline.
+
+Large Test scores were returned by the competition platform; hidden test
+labels remain unavailable locally. The candidate-attention champion was
+reported on 2026-08-16. Local artifact validation confirmed 2,370,727
+impressions and a valid submission ZIP. The replay, Nov 15 overweight,
+2,500-update, teacher-guided, and learning-rate `1.5e-5` rows are retained only
+as negative experimental evidence.
 
 ## Sanity Rules
 
@@ -272,6 +284,8 @@ learning-rate `1.5e-5` rows are retained only as negative experimental evidence.
 - Use `configs/mind_large_temporal_baseline.yaml` to reproduce the random-negative
   baseline and `configs/mind_large_temporal_tune.yaml` to reproduce hard-negative v4.
 - Use `configs/mind_large_submission.yaml` only after choosing fixed settings; it trains on `MINDlarge_train + MINDlarge_dev` and writes hidden-test submission ranks.
+- Use `configs/mind_large_submission_candidate_attention.yaml` and its recency
+  companion to reproduce the current `0.6869` champion.
 
 ## Known Metadata Note
 

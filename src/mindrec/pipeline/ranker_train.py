@@ -216,6 +216,13 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         semantic_dropout=float(
             dlrm_cfg.get("semantic_dropout", dlrm_cfg.get("dropout", 0.0))
         ),
+        history_pooling=str(dlrm_cfg.get("history_pooling", "mean")),
+        candidate_attention_heads=int(
+            dlrm_cfg.get("candidate_attention_heads", 4)
+        ),
+        candidate_attention_dropout=float(
+            dlrm_cfg.get("candidate_attention_dropout", 0.0)
+        ),
         news_id_warm_scale=float(dlrm_cfg.get("news_id_warm_scale", 1.0)),
         news_id_cold_scale=float(dlrm_cfg.get("news_id_cold_scale", 1.0)),
         supported_cat_ids=supported_cat_ids,
@@ -427,6 +434,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             "device": device_str,
             "device_info": device_info(device),
             "teacher_artifact_run_name": teacher_artifact_run_name(cfg),
+            "history_pooling": model.history_pooling,
             "hard_negative_sampling": hard_stats,
             "taxonomy_masks": {
                 "n_supported_categories": len(supported_cat_ids),

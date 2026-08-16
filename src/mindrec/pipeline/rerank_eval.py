@@ -73,7 +73,7 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
     device_str = str(device)
     log_device(device, "Rerank eval")
 
-    model, item_base, teacher_item = _load_model(cfg, proc_root, runs_root, device)
+    model, item_base, teacher_item = _load_model(cfg, proc_root, device)
 
     news = pd.read_parquet(proc_root / "news.parquet")
     news_meta = build_news_meta(news)

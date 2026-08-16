@@ -1,0 +1,18 @@
+extends: "mind_large_temporal_text_adapt.yaml"
+
+run_name: "mind_large_temporal_text_adapt_candidate_attention_v1"
+
+# Reuse the selected/adapted teacher so this experiment isolates the ranker
+# history-pooling change.
+artifacts:
+  teacher_run_name: "mind_large_temporal_text_adapt_v1"
+
+ranker:
+  dlrm:
+    history_pooling: "candidate_attention"
+    candidate_attention_heads: 4
+    candidate_attention_dropout: 0.0
+
+eval:
+  batch_size: 2048
+  item_encoding_batch_size: 8192
