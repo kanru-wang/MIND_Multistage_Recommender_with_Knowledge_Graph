@@ -566,10 +566,12 @@ memory.
 
 The submission command does not use the optional reranker. It writes:
 
-- `runs/mind_large_submission_text_adapt_recency_alpha_002_v1/submission/prediction.txt`
-- `runs/mind_large_submission_text_adapt_recency_alpha_002_v1/submission/prediction.zip`
+- `runs/mind_large_submission_text_adapt_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.txt`
+- `runs/mind_large_submission_text_adapt_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.zip`
 
-To write the adapted model without the recency tiebreaker, use `python -m mindrec.cli write_submission --config configs/mind_large_submission.yaml`; that path does not require `build_item_age`.
+To write the candidate-attention model without the recency tiebreaker, use
+`python -m mindrec.cli write_submission --config configs/mind_large_submission_candidate_attention.yaml`;
+that path does not require `build_item_age`.
 
 The official MIND evaluator reads `prediction.txt` lines as `impression_id [rank,...]`, where rank `1` is the highest-scored candidate. Local MIND metrics report AUC, MRR, nDCG@5, and nDCG@10 using the same per-impression ranking definitions as the official evaluator; leaderboard rank is primarily by AUC.
 

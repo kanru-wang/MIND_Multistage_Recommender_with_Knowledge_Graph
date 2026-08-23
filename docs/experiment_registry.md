@@ -221,6 +221,34 @@ artifacts, if kept, are under
 is under
 `runs/mind_large_submission_text_adapt_lr_1p5em05_recency_alpha_002_v1/submission/prediction.zip`.
 
+## Rejected Candidate-Attention Follow-ups
+
+All temporal results below use the same 807,988-impression validation protocol
+and retain the 4-head, zero-dropout direct candidate-attention run at
+`0.671593` AUC as the reference. Their experimental implementations and
+configs were discarded; the listed run artifacts remain historical evidence.
+
+| Experiment | Temporal AUC | Delta vs direct | Decision |
+| --- | ---: | ---: | --- |
+| Impression-AUC checkpoint selection | 0.671593 | 0.000000 | Neutral: selected the same epoch and tensor-identical checkpoint; no model promotion |
+| Gated residual between mean and direct attention | 0.669548 | -0.002044 | Rejected; also reduced MRR by 0.002766 and both nDCG metrics by about 0.0028 |
+| 7 heads, dropout 0.00 | 0.672090 | +0.000497 | Rejected; gain was below 0.001 and MRR/nDCG regressed by more than 0.002 |
+| 4 heads, dropout 0.05 | 0.668253 | -0.003339 | Rejected |
+| 4 heads, dropout 0.10 | 0.669441 | -0.002151 | Rejected |
+| 1 head, dropout 0.00 | 0.670408 | -0.001185 | Rejected |
+| 2 heads, dropout 0.00 | 0.670967 | -0.000625 | Rejected |
+| Four learned history interests with candidate conditioning | 0.669808 | -0.001784 | Rejected; MRR fell 0.003929, nDCG@5 fell 0.005053, and nDCG@10 fell 0.004460 |
+
+The head/dropout comparison is preserved in
+`runs/mind_large_temporal_text_adapt_candidate_attention_impression_auc_v1/tuning/candidate_attention_sweep/sweep.json`.
+The gated and four-interest evaluations remain under
+`runs/mind_large_temporal_text_adapt_gated_candidate_attention_v1` and
+`runs/mind_large_temporal_text_adapt_multi_interest_candidate_attention_v1`.
+No variant was promoted to maximum-data training. Separately, the original
+one-epoch candidate-attention maximum-data schedule tied text-adapt v1 at
+`0.6848` Large Test AUC; the selected two-epoch lower-learning-rate schedule
+superseded it at `0.6869`.
+
 ## Additional Current Metrics
 
 Values below were read from the listed local evaluation artifacts on 2026-07-03.
