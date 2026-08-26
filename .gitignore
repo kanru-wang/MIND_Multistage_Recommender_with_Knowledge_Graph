@@ -41,3 +41,8 @@ runs/mind_large_submission_content_trend_*/
 runs/mind_large_semantic_burst_*/
 runs/mind_large_content_trend_*/
 runs/mind_large_recency_tiebreaker_tune_*/
+
+# Ignore presentation files
+docs/presentation/*
+scripts/build_mind_presentation.py
+scripts/render_pptx.ps1

@@ -12,6 +12,8 @@ This registry names the split protocol behind each major result set. Use it befo
 | Large temporal hard-negative v4 | Use the Large temporal split and baseline teacher; mine hard negatives only for cold users with usable history. | Current repo | `configs/mind_large_temporal_tune.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_hard_neg_v4` | `runs/mind_large_temporal_hard_neg_v4/eval/ranker_eval_val.json` |
 | Large temporal text-adapt v1 | Adapt MiniLM on Large Temporal Train, select its update count on Large Temporal Val, and train the temporal teacher/ranker with the selected encoder. | Current repo | `configs/mind_large_temporal_text_adapt.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_v1` | `runs/mind_large_temporal_text_adapt_v1/eval/ranker_eval_val.json` |
 | Large temporal candidate-attention v1 | Reuse the text-adapt v1 teacher and replace only student mean history pooling with candidate-aware attention. | Current repo; completed | `configs/mind_large_temporal_candidate_attention.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_candidate_attention_v1` | `runs/mind_large_temporal_text_adapt_candidate_attention_v1/eval/ranker_eval_val.json` |
+| Large temporal attentive multi-view v1 | Reuse the adapted MiniLM, encode title/abstract separately, and learn attentive field fusion with the candidate-attention student. | Current repo; completed | `configs/mind_large_temporal_multiview.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_multiview_v1` | `runs/mind_large_temporal_text_adapt_multiview_v1/eval/ranker_eval_val.json` |
+| Rejected temporal multi-view gate-1/teacher-4 v2 | Train the title/abstract gate in epoch 1, freeze it, and continue the teacher through fixed epoch 4. | Current repo; completed/rejected | `configs/mind_large_temporal_multiview_gate1_teacher4.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_multiview_gate1_teacher4_v2` | `runs/mind_large_temporal_text_adapt_multiview_gate1_teacher4_v2/eval/ranker_eval_val.json` |
 | Small temporal | Train on `MINDsmall_train` before Nov 14; validate on Nov 14 tail from `MINDsmall_train` plus all `MINDsmall_dev`. | Current repo | `configs/mind_small_temporal_tune.yaml` | `data/processed/MINDsmall_temporal_tune` | `runs/mind_small_temporal_tune` | `runs/mind_small_temporal_tune/eval/ranker_eval_val.json` |
 
 ## Latest Completed Large Temporal Baseline
@@ -238,6 +240,18 @@ configs were discarded; the listed run artifacts remain historical evidence.
 | 1 head, dropout 0.00 | 0.670408 | -0.001185 | Rejected |
 | 2 heads, dropout 0.00 | 0.670967 | -0.000625 | Rejected |
 | Four learned history interests with candidate conditioning | 0.669808 | -0.001784 | Rejected; MRR fell 0.003929, nDCG@5 fell 0.005053, and nDCG@10 fell 0.004460 |
+| Learned reverse-position embeddings (`0` = newest click) | 0.672423 | +0.000830 | Mixed/rejected: AUC improved by less than 0.001, while MRR fell 0.002318, nDCG@5 fell 0.002771, and nDCG@10 fell 0.002278 |
+
+The reverse-position run selected epoch 3 and learned a substantial newest-click
+signal, but its gains were not stable across history lengths. Relative to direct
+attention, AUC changed by `-0.004674` for empty history, `-0.003251` for history
+length 1--4, `+0.002937` for length 5--20, and only `+0.000384` for length 21+.
+Its sampled-pair validation AUC also fell from `0.674491` to `0.672318`.
+Because the small overall impression-AUC gain came with broad top-ranking and
+short/cold-history regressions, neither the model nor a further recency-logit
+bias was promoted. The implementation and config were discarded; historical
+artifacts, if kept, are under
+`runs/mind_large_temporal_text_adapt_candidate_attention_reverse_position_v1`.
 
 The head/dropout comparison is preserved in
 `runs/mind_large_temporal_text_adapt_candidate_attention_impression_auc_v1/tuning/candidate_attention_sweep/sweep.json`.
@@ -283,6 +297,7 @@ users, including zero-history groups.
 | Text-adapt v1 | Phase 1 update 6,000 + 2,000 Phase 3 updates | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6848 | 2,370,727 | `runs/mind_large_submission_text_adapt_recency_alpha_002_v1/submission/prediction.zip` |
 | Candidate attention, original schedule | Same as text-adapt v1; candidate-aware student history pooling | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6848 | 2,370,727 | `runs/mind_large_submission_text_adapt_candidate_attention_recency_alpha_002_v1/submission/prediction.zip` |
 | Candidate attention, selected schedule | Same as text-adapt v1; candidate-aware student history pooling | `MINDlarge_train + MINDlarge_dev` | 4 | 2 | 0.02 | **0.6869** | 2,370,727 | `runs/mind_large_submission_text_adapt_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.zip` |
+| Rejected attentive multi-view v1 | Separate title/abstract encoding with a jointly trained attentive gate | `MINDlarge_train + MINDlarge_dev` | 1 | 3 | 0.02 | 0.6746 | 2,370,727 | `runs/mind_large_submission_text_adapt_multiview_low_lr_3ep_recency_alpha_002_v1/submission/prediction.zip` |
 | Rejected replay 85/10/5 | Phase 1 update 6,000 + 2,000 replay-mixture updates | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6800 | 2,370,727 | `runs/mind_large_submission_text_adapt_replay_85_10_5_recency_alpha_002_v1/submission/prediction.zip` |
 | Rejected Nov 15 overweight 45/55 | Phase 1 update 6,000 + 2,000 date-weighted updates | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6796 | 2,370,727 | `runs/mind_large_submission_text_adapt_nov15_weighted_recency_alpha_002_v1/submission/prediction.zip` |
 | Rejected 2,500 updates | Phase 1 update 6,000 + 2,500 Phase 3 updates | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6842 | 2,370,727 | `runs/mind_large_submission_text_adapt_updates_2500_recency_alpha_002_v1/submission/prediction.zip` |
@@ -296,6 +311,44 @@ maximum-data schedule remained at `0.6848`, while transferring the selected
 `lr=1e-4`, `weight_decay=3e-5` schedule for two maximum-data epochs reached
 **`0.6869`**. The new champion gains `+0.0021` over text-adapt v1 and `+0.0145`
 over the frozen-MiniLM baseline.
+
+The attentive multi-view promotion is rejected. Its encouraging temporal AUC
+of `0.675783` did not transfer: Large Test AUC was `0.6746`, which is `-0.0123`
+versus the candidate-attention champion and only `+0.0022` over frozen MiniLM.
+The submission was structurally valid. Post-result analysis found that its
+one-epoch maximum-data teacher remained less mature than the champion's
+four-epoch teacher, while the hidden ranking over-promoted sports and weather,
+two categories that had already regressed in temporal slices. The retained
+artifacts are historical negative evidence and must not be treated as the
+active submission workflow.
+
+The follow-up temporal-only diagnostic used
+`configs/mind_large_temporal_multiview_gate1_teacher4.yaml`. It trained the
+title/abstract gate during epoch 1, froze it, then continued the teacher
+through fixed epoch 4 before validation-selected ranker training.
+
+That redesigned temporal schedule is also rejected. The implementation behaved
+as configured: its saved gate and attention arrays are tensor-identical to the
+original epoch-1 gate, the gate was frozen for epochs 2--4, and the fixed
+teacher checkpoint records epoch 4. Against the matched candidate-attention
+reference, results were:
+
+| Metric | Candidate-attention reference | Gate-1/teacher-4 v2 | Delta |
+| --- | ---: | ---: | ---: |
+| Teacher Recall@200 | 0.041199 | 0.034746 | -0.006453 |
+| Full-impression AUC | 0.671593 | 0.672267 | +0.000675 |
+| MRR | 0.321535 | 0.320110 | -0.001426 |
+| nDCG@5 | 0.352780 | 0.351188 | -0.001592 |
+| nDCG@10 | 0.414064 | 0.412651 | -0.001413 |
+
+The AUC gain remained below the required `+0.001`, teacher Recall@200 fell by
+`15.7%`, and all three top-ranking metrics regressed. Although zero-popularity,
+period-4, and sports slices recovered, the errors shifted to new items
+(`-0.000868` AUC), popularity 1--4 (`-0.009515`), period 1 (`-0.008519`), and
+weather (`-0.047077`). This is distribution instability rather than a robust
+improvement. The pure attentive multi-view branch is closed: do not promote
+this schedule to maximum-data training and do not proceed to cross-field
+contrastive adaptation.
 
 Large Test scores were returned by the competition platform; hidden test
 labels remain unavailable locally. The candidate-attention champion was
