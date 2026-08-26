@@ -12,8 +12,7 @@ This registry names the split protocol behind each major result set. Use it befo
 | Large temporal hard-negative v4 | Use the Large temporal split and baseline teacher; mine hard negatives only for cold users with usable history. | Current repo | `configs/mind_large_temporal_tune.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_hard_neg_v4` | `runs/mind_large_temporal_hard_neg_v4/eval/ranker_eval_val.json` |
 | Large temporal text-adapt v1 | Adapt MiniLM on Large Temporal Train, select its update count on Large Temporal Val, and train the temporal teacher/ranker with the selected encoder. | Current repo | `configs/mind_large_temporal_text_adapt.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_v1` | `runs/mind_large_temporal_text_adapt_v1/eval/ranker_eval_val.json` |
 | Large temporal candidate-attention v1 | Reuse the text-adapt v1 teacher and replace only student mean history pooling with candidate-aware attention. | Current repo; completed | `configs/mind_large_temporal_candidate_attention.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_candidate_attention_v1` | `runs/mind_large_temporal_text_adapt_candidate_attention_v1/eval/ranker_eval_val.json` |
-| Large temporal attentive multi-view v1 | Reuse the adapted MiniLM, encode title/abstract separately, and learn attentive field fusion with the candidate-attention student. | Current repo; completed | `configs/mind_large_temporal_multiview.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_multiview_v1` | `runs/mind_large_temporal_text_adapt_multiview_v1/eval/ranker_eval_val.json` |
-| Rejected temporal multi-view gate-1/teacher-4 v2 | Train the title/abstract gate in epoch 1, freeze it, and continue the teacher through fixed epoch 4. | Current repo; completed/rejected | `configs/mind_large_temporal_multiview_gate1_teacher4.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_multiview_gate1_teacher4_v2` | `runs/mind_large_temporal_text_adapt_multiview_gate1_teacher4_v2/eval/ranker_eval_val.json` |
+| Rejected large temporal candidate-attention item-only distillation v1 | Reuse candidate-attention v1 and change representation distillation from the full user/item target to `item_sem -> teacher_item`, including zero-history rows; teacher-logit distillation and all configured weights remain fixed. | Current repo; completed/rejected | `configs/mind_large_temporal_candidate_attention_item_only_distill.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_candidate_attention_item_only_distill_v1` | `runs/mind_large_temporal_text_adapt_candidate_attention_item_only_distill_v1/eval/ranker_eval_val.json` |
 | Small temporal | Train on `MINDsmall_train` before Nov 14; validate on Nov 14 tail from `MINDsmall_train` plus all `MINDsmall_dev`. | Current repo | `configs/mind_small_temporal_tune.yaml` | `data/processed/MINDsmall_temporal_tune` | `runs/mind_small_temporal_tune` | `runs/mind_small_temporal_tune/eval/ranker_eval_val.json` |
 
 ## Latest Completed Large Temporal Baseline
@@ -227,8 +226,9 @@ is under
 
 All temporal results below use the same 807,988-impression validation protocol
 and retain the 4-head, zero-dropout direct candidate-attention run at
-`0.671593` AUC as the reference. Their experimental implementations and
-configs were discarded; the listed run artifacts remain historical evidence.
+`0.671593` AUC as the reference. Most earlier experimental implementations and
+configs were discarded; the item-only distillation config is retained so its
+negative result remains reproducible.
 
 | Experiment | Temporal AUC | Delta vs direct | Decision |
 | --- | ---: | ---: | --- |
@@ -241,6 +241,37 @@ configs were discarded; the listed run artifacts remain historical evidence.
 | 2 heads, dropout 0.00 | 0.670967 | -0.000625 | Rejected |
 | Four learned history interests with candidate conditioning | 0.669808 | -0.001784 | Rejected; MRR fell 0.003929, nDCG@5 fell 0.005053, and nDCG@10 fell 0.004460 |
 | Learned reverse-position embeddings (`0` = newest click) | 0.672423 | +0.000830 | Mixed/rejected: AUC improved by less than 0.001, while MRR fell 0.002318, nDCG@5 fell 0.002771, and nDCG@10 fell 0.002278 |
+| Item-only representation distillation | 0.666388 | -0.005205 | Rejected; MRR fell 0.004828, nDCG@5 fell 0.006241, and nDCG@10 fell 0.005455 |
+
+The item-only representation-distillation run completed on 2026-08-27. It
+kept candidate-aware scoring, teacher-logit distillation, the teacher and data
+artifacts, optimizer schedule, and all configured loss weights unchanged. It
+replaced the joint projection from `[user_sem, item_sem, sem_fused]` to
+`[teacher_user, teacher_item]` with `item_sem -> teacher_item`; item
+representation loss also remained active for zero-history rows. The selected
+sampled-pair checkpoint moved from epoch 3 and `0.674491` AUC to epoch 2 and
+`0.671052` AUC, and the full-impression result regressed across every primary
+ranking metric:
+
+| Metric | Direct candidate attention | Item-only distillation | Delta |
+| --- | ---: | ---: | ---: |
+| AUC | 0.671593 | 0.666388 | -0.005205 |
+| MRR | 0.321535 | 0.316708 | -0.004828 |
+| nDCG@5 | 0.352780 | 0.346539 | -0.006241 |
+| nDCG@10 | 0.414064 | 0.408609 | -0.005455 |
+| Recall@5 | 0.489773 | 0.482717 | -0.007056 |
+| Recall@10 | 0.664185 | 0.659521 | -0.004665 |
+
+The intended cold slices did not recover: AUC changed by `-0.003285` for empty
+history, `-0.003851` for cold users, and `-0.002040` for impressions whose
+clicked item was new. Larger losses on clicked warm items (`-0.016775` AUC),
+popularity 20+ (`-0.016911`), and history length 21+ (`-0.006257`) indicate
+that removing user/fused representation supervision discarded useful signal.
+Item-only distillation still exceeded the older mean-pooling text-adapt model
+by `+0.002060` AUC, so candidate-aware pooling remains beneficial; the failed
+component is the item-only objective. This variant is not promoted to
+maximum-data training or submission, and the verified full-distillation
+candidate-attention workflow remains the active champion.
 
 The reverse-position run selected epoch 3 and learned a substantial newest-click
 signal, but its gains were not stable across history lengths. Relative to direct
@@ -322,10 +353,9 @@ two categories that had already regressed in temporal slices. The retained
 artifacts are historical negative evidence and must not be treated as the
 active submission workflow.
 
-The follow-up temporal-only diagnostic used
-`configs/mind_large_temporal_multiview_gate1_teacher4.yaml`. It trained the
-title/abstract gate during epoch 1, froze it, then continued the teacher
-through fixed epoch 4 before validation-selected ranker training.
+The follow-up temporal-only diagnostic used a now-removed experimental config.
+It trained the title/abstract gate during epoch 1, froze it, then continued the
+teacher through fixed epoch 4 before validation-selected ranker training.
 
 That redesigned temporal schedule is also rejected. The implementation behaved
 as configured: its saved gate and attention arrays are tensor-identical to the
