@@ -94,6 +94,7 @@ ranker:
     top_mlp: [128, 64, 1]
     dropout: 0.15
   distill:
+    representation_target: "full"
     temperature: 2.0
     lambda_logit: 0.7
     lambda_repr: 0.05

@@ -1,0 +1,34 @@
+extends: "mind_large_temporal_text_adapt.yaml"
+
+# Controlled backbone experiment: keep the proven temporal data, adaptation
+# objective, negative policy, teacher, and candidate-aware ranker fixed while
+# replacing only MiniLM with the stronger 768-dimensional MPNet encoder.
+run_name: "mind_large_temporal_mpnet_candidate_attention_v1"
+
+teacher:
+  model_name: "sentence-transformers/all-mpnet-base-v2"
+  # Text encoding is separate from the unchanged teacher-training batch size.
+  encode_batch_size: 64
+  text_adaptation:
+    # Preserve MiniLM's exact logical and physical training-batch schedule.
+    batch_size: 16
+    gradient_accumulation_steps: 4
+    # Permit only the initial backbone load to populate the Hugging Face cache.
+    local_files_only: false
+    # Reduce activation memory without changing batch membership or the loss.
+    gradient_checkpointing: true
+    mixed_precision: "fp16"
+    # Chunk only article encoding inside each logical batch of 16 users. The
+    # contrastive loss still sees all 16 users and the original in-batch set.
+    encoder_forward_batch_size: 8
+    encode_batch_size: 64
+
+ranker:
+  dlrm:
+    history_pooling: "candidate_attention"
+    candidate_attention_heads: 4
+    candidate_attention_dropout: 0.0
+
+eval:
+  batch_size: 2048
+  item_encoding_batch_size: 8192

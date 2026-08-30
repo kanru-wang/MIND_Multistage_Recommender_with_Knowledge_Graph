@@ -1,0 +1,10 @@
+extends: "mind_large_temporal_candidate_attention.yaml"
+
+# Historical rejected ablation retained only to reproduce the result recorded
+# in docs/experiment_registry.md. The active candidate-attention pipeline keeps
+# the inherited full representation-distillation target.
+run_name: "mind_large_temporal_text_adapt_candidate_attention_item_only_distill_v1"
+
+ranker:
+  distill:
+    representation_target: "item_only"

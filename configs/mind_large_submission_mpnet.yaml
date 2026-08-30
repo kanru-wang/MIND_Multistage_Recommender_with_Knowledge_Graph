@@ -1,0 +1,15 @@
+extends: "mind_large_submission.yaml"
+
+# Encoder/teacher artifact run. The adapted encoder is produced by
+# mind_large_submission_mpnet_text_continue.yaml before this config is used.
+run_name: "mind_large_submission_mpnet_v1"
+
+teacher:
+  model_name: "sentence-transformers/all-mpnet-base-v2"
+  # MPNet is twice MiniLM's width; keep the proven 6 GB-safe encoding batch.
+  encode_batch_size: 64
+
+ranker:
+  distill:
+    # Preserve the established full teacher-target objective explicitly.
+    representation_target: "full"

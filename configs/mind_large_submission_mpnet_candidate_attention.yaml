@@ -1,0 +1,20 @@
+extends: "mind_large_submission_mpnet.yaml"
+
+run_name: "mind_large_submission_mpnet_candidate_attention_low_lr_2ep_v1"
+
+artifacts:
+  teacher_run_name: "mind_large_submission_mpnet_v1"
+
+ranker:
+  lr: 0.0001
+  weight_decay: 0.00003
+  epochs: 2
+  dlrm:
+    history_pooling: "candidate_attention"
+    candidate_attention_heads: 4
+    candidate_attention_dropout: 0.0
+
+submission:
+  # Candidate-aware scoring retains history states and therefore uses the
+  # already proven lower 6 GB-safe submission batch.
+  batch_size: 2048

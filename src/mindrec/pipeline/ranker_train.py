@@ -16,6 +16,11 @@ from mindrec.data.datasets import PairDataset, collate_batch
 from mindrec.data.featurize import IdMaps
 from mindrec.models.calibration import fit_temperature_scaler
 from mindrec.models.dlrm import DLRMStudent
+from mindrec.models.distill import (
+    distillation_history_masks,
+    representation_distillation_dims,
+    select_representation_distillation_inputs,
+)
 from mindrec.models.teacher import TeacherTwoTower
 from mindrec.pipeline.hard_negative_sampling import build_teacher_hard_negative_pairs
 from mindrec.utils import (
@@ -44,6 +49,11 @@ class StudentProjHead(nn.Module):
 
 
 def run_train_ranker(cfg: dict[str, Any]) -> None:
+    dist_cfg = dict(cfg.get("ranker", {}).get("distill", {}))
+    representation_target = str(dist_cfg.get("representation_target", "full"))
+    # Resolve this before data access so invalid experiment configs fail fast.
+    representation_distillation_dims(1, 1, representation_target)
+
     seed = int(cfg["data"].get("sub_sample", {}).get("seed", 13))
     set_seed(seed)
 
@@ -230,8 +240,11 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     ).to(device)
 
     emb_dim = int(dlrm_cfg["emb_dim"])
-    student_repr_dim = 3 * emb_dim
-    teacher_repr_dim = 2 * teacher_dim
+    student_repr_dim, teacher_repr_dim = representation_distillation_dims(
+        emb_dim,
+        teacher_dim,
+        representation_target,
+    )
     proj = StudentProjHead(student_repr_dim, teacher_repr_dim).to(device)
 
     opt = torch.optim.AdamW(
@@ -256,7 +269,6 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
         else None
     )
 
-    dist_cfg = cfg["ranker"]["distill"]
     temp = float(dist_cfg.get("temperature", 2.0))
     lam_logit = float(dist_cfg.get("lambda_logit", 1.0))
     lam_repr = float(dist_cfg.get("lambda_repr", 0.1))
@@ -321,15 +333,20 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                 logits, target, reduction="none"
             )
 
-            t_repr = torch.cat([tu, ti], dim=1)
-            s_repr = proj(rep)
+            student_repr_input, t_repr = select_representation_distillation_inputs(
+                rep,
+                tu,
+                ti,
+                student_emb_dim=emb_dim,
+                target=representation_target,
+            )
+            s_repr = proj(student_repr_input)
             loss_repr = ((s_repr - t_repr) ** 2).mean(dim=1)
 
             cold_mask = (
                 (batch["is_cold_user"] == 1) | (batch["is_new_item"] == 1)
             ).float()
             w = (cold_mask * w_cold) + ((1.0 - cold_mask) * w_warm)
-            w = w * has_hist.float()
             if hard_enabled:
                 hard_distill_scale = torch.where(
                     batch["is_hard_negative"] == 1,
@@ -337,9 +354,23 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                     torch.ones_like(w),
                 )
                 w = w * hard_distill_scale
-            w = w.detach()
-
-            distill_loss = (w * (lam_logit * loss_logit + lam_repr * loss_repr)).mean()
+            if representation_target == "full":
+                # Preserve the verified full-distillation arithmetic exactly.
+                w = (w * has_hist.float()).detach()
+                distill_loss = (
+                    w * (lam_logit * loss_logit + lam_repr * loss_repr)
+                ).mean()
+            else:
+                logit_mask, representation_mask = distillation_history_masks(
+                    has_hist,
+                    representation_target,
+                )
+                logit_w = (w * logit_mask).detach()
+                representation_w = (w * representation_mask).detach()
+                distill_loss = (
+                    (lam_logit * logit_w * loss_logit)
+                    + (lam_repr * representation_w * loss_repr)
+                ).mean()
             loss = loss_rank + distill_loss
 
             opt.zero_grad()
@@ -435,6 +466,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             "device_info": device_info(device),
             "teacher_artifact_run_name": teacher_artifact_run_name(cfg),
             "history_pooling": model.history_pooling,
+            "representation_distillation_target": representation_target,
             "hard_negative_sampling": hard_stats,
             "taxonomy_masks": {
                 "n_supported_categories": len(supported_cat_ids),

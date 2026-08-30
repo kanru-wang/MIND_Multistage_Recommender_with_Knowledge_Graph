@@ -10,6 +10,7 @@ import torch
 import torch.nn.functional as F
 from sentence_transformers import SentenceTransformer
 from torch.utils.data import DataLoader, IterableDataset
+from torch.utils.checkpoint import checkpoint as activation_checkpoint
 from tqdm import tqdm
 
 from mindrec.config import ensure_dir
@@ -32,6 +33,46 @@ class TextAdaptSample:
     history: list[int]
     positive: int
     negatives: list[int]
+
+
+def _enable_gradient_checkpointing(model: SentenceTransformer) -> str:
+    """Select native or whole-encoder activation checkpointing."""
+    for module in model:
+        auto_model = getattr(module, "auto_model", None)
+        enable = getattr(auto_model, "gradient_checkpointing_enable", None)
+        supports_native = bool(
+            getattr(auto_model, "supports_gradient_checkpointing", False)
+        )
+        if callable(enable) and supports_native:
+            enable()
+            config = getattr(auto_model, "config", None)
+            if config is not None and hasattr(config, "use_cache"):
+                config.use_cache = False
+            return f"native:{type(auto_model).__name__}"
+        if auto_model is not None:
+            # PyTorch's non-reentrant checkpoint can wrap the complete encoder
+            # even when the Transformers model has no per-layer implementation.
+            return f"whole_encoder:{type(auto_model).__name__}"
+    return "whole_encoder:SentenceTransformer"
+
+
+def _resolve_mixed_precision(value: Any, device: torch.device) -> str:
+    precision = str(value or "none").lower()
+    if precision not in {"none", "fp16", "bf16"}:
+        raise ValueError("mixed_precision must be one of: none, fp16, bf16")
+    if precision != "none" and device.type != "cuda":
+        raise ValueError("mixed_precision requires a CUDA device")
+    if precision == "bf16" and not torch.cuda.is_bf16_supported():
+        raise ValueError("bf16 mixed precision is not supported by this CUDA device")
+    return precision
+
+
+def _make_grad_scaler(enabled: bool):
+    """Build a CUDA scaler across the supported PyTorch API transition."""
+    amp_scaler = getattr(torch.amp, "GradScaler", None)
+    if amp_scaler is not None:
+        return amp_scaler("cuda", enabled=enabled)
+    return torch.cuda.amp.GradScaler(enabled=enabled)
 
 
 class TextAdaptIterableDataset(IterableDataset):
@@ -202,16 +243,52 @@ def _encode_indices(
     indices: torch.Tensor,
     texts_by_idx: list[str],
     device: torch.device,
+    gradient_checkpointing_strategy: str | None = None,
+    encoder_forward_batch_size: int | None = None,
 ) -> torch.Tensor:
     texts = [texts_by_idx[int(i)] for i in indices.detach().cpu().tolist()]
-    # SentenceTransformers 5.x includes non-tensor metadata such as
-    # ``modality: "text"`` in preprocessing output. Preserve that metadata and
-    # move only tensors to the training device.
-    features = {
-        key: value.to(device) if torch.is_tensor(value) else value
-        for key, value in model.preprocess(texts).items()
-    }
-    return F.normalize(model(features)["sentence_embedding"], dim=-1)
+    chunk_size = encoder_forward_batch_size or len(texts)
+    embeddings: list[torch.Tensor] = []
+    for start in range(0, len(texts), chunk_size):
+        text_chunk = texts[start : start + chunk_size]
+        # SentenceTransformers 5.x includes non-tensor metadata such as
+        # ``modality: "text"`` in preprocessing output. Preserve that metadata
+        # and move only tensors to the training device.
+        features = {
+            key: value.to(device) if torch.is_tensor(value) else value
+            for key, value in model.preprocess(text_chunk).items()
+        }
+        if gradient_checkpointing_strategy is not None and (
+            gradient_checkpointing_strategy.startswith("whole_encoder:")
+        ):
+            tensor_keys = [
+                key for key, value in features.items() if torch.is_tensor(value)
+            ]
+            tensor_values = tuple(features[key] for key in tensor_keys)
+            static_features = {
+                key: value
+                for key, value in features.items()
+                if not torch.is_tensor(value)
+            }
+
+            def encode_with_tensors(
+                *values: torch.Tensor,
+                _static_features: dict[str, Any] = static_features,
+                _tensor_keys: tuple[str, ...] = tuple(tensor_keys),
+            ) -> torch.Tensor:
+                checkpoint_features = dict(_static_features)
+                checkpoint_features.update(zip(_tensor_keys, values))
+                return model(checkpoint_features)["sentence_embedding"]
+
+            sentence_embedding = activation_checkpoint(
+                encode_with_tensors,
+                *tensor_values,
+                use_reentrant=False,
+            )
+        else:
+            sentence_embedding = model(features)["sentence_embedding"]
+        embeddings.append(F.normalize(sentence_embedding, dim=-1))
+    return torch.cat(embeddings, dim=0)
 
 
 def _batch_loss(
@@ -220,15 +297,38 @@ def _batch_loss(
     texts_by_idx: list[str],
     temperature: float,
     device: torch.device,
+    gradient_checkpointing_strategy: str | None = None,
+    encoder_forward_batch_size: int | None = None,
 ) -> torch.Tensor:
     history_shape = batch["history"].shape
     negative_shape = batch["negatives"].shape
-    history_z = _encode_indices(model, batch["history"].reshape(-1), texts_by_idx, device).reshape(*history_shape, -1)
+    history_z = _encode_indices(
+        model,
+        batch["history"].reshape(-1),
+        texts_by_idx,
+        device,
+        gradient_checkpointing_strategy,
+        encoder_forward_batch_size,
+    ).reshape(*history_shape, -1)
     history_mask = batch["history_mask"].to(device)
     user_z = (history_z * history_mask.unsqueeze(-1)).sum(1) / history_mask.sum(1, keepdim=True).clamp_min(1)
     user_z = F.normalize(user_z, dim=-1)
-    positive_z = _encode_indices(model, batch["positive"], texts_by_idx, device)
-    negative_z = _encode_indices(model, batch["negatives"].reshape(-1), texts_by_idx, device).reshape(*negative_shape, -1)
+    positive_z = _encode_indices(
+        model,
+        batch["positive"],
+        texts_by_idx,
+        device,
+        gradient_checkpointing_strategy,
+        encoder_forward_batch_size,
+    )
+    negative_z = _encode_indices(
+        model,
+        batch["negatives"].reshape(-1),
+        texts_by_idx,
+        device,
+        gradient_checkpointing_strategy,
+        encoder_forward_batch_size,
+    ).reshape(*negative_shape, -1)
     positive_logits = (user_z * positive_z).sum(-1, keepdim=True)
     negative_logits = (user_z.unsqueeze(1) * negative_z).sum(-1)
     negative_logits = negative_logits.masked_fill(
@@ -291,7 +391,7 @@ def _evaluate_impression_auc(
     for row in tqdm(
         behaviors.itertuples(index=False),
         total=len(behaviors),
-        desc="Validate adapted MiniLM",
+        desc="Validate adapted text encoder",
     ):
         history = [
             maps.news2idx.get(str(news_id), 0)
@@ -369,10 +469,44 @@ def run_adapt_text_encoder(cfg: dict[str, Any]) -> None:
     initial_model_source, initial_model_update = _resolve_initial_model(
         cfg, adaptation
     )
-    model = SentenceTransformer(
-        initial_model_source, device=str(device), local_files_only=True
+    configured_local_files_only = bool(
+        adaptation.get(
+            "local_files_only",
+            cfg["teacher"].get("local_files_only", True),
+        )
     )
+    initial_model_local_files_only = (
+        True if initial_model_update > 0 else configured_local_files_only
+    )
+    model = SentenceTransformer(
+        initial_model_source,
+        device=str(device),
+        local_files_only=initial_model_local_files_only,
+    )
+    gradient_checkpointing = bool(adaptation.get("gradient_checkpointing", False))
+    checkpointed_transformer = (
+        _enable_gradient_checkpointing(model) if gradient_checkpointing else None
+    )
+    mixed_precision = _resolve_mixed_precision(
+        adaptation.get("mixed_precision", "none"),
+        device,
+    )
+    encoder_forward_batch_size_value = adaptation.get("encoder_forward_batch_size")
+    encoder_forward_batch_size = (
+        int(encoder_forward_batch_size_value)
+        if encoder_forward_batch_size_value is not None
+        else None
+    )
+    if encoder_forward_batch_size is not None and encoder_forward_batch_size < 1:
+        raise ValueError("encoder_forward_batch_size must be at least 1")
+    autocast_dtype = {
+        "none": torch.float32,
+        "fp16": torch.float16,
+        "bf16": torch.bfloat16,
+    }[mixed_precision]
     encode_batch_size = int(adaptation.get("encode_batch_size", 256))
+    if encode_batch_size < 1:
+        raise ValueError("encode_batch_size must be at least 1")
     baseline = np.zeros(
         (max_idx + 1, int(model.get_embedding_dimension())), dtype=np.float32
     )
@@ -380,7 +514,7 @@ def run_adapt_text_encoder(cfg: dict[str, Any]) -> None:
     training_behavior_path = behavior_artifact_path(proc_root, training_split)
     if not training_behavior_path.exists():
         raise FileNotFoundError(
-            f"MiniLM training split {training_split!r} was not found at "
+            f"Text-encoder training split {training_split!r} was not found at "
             f"{training_behavior_path}."
         )
     behaviors = pd.read_parquet(training_behavior_path)
@@ -418,21 +552,27 @@ def run_adapt_text_encoder(cfg: dict[str, Any]) -> None:
     sample_dataset = TextAdaptIterableDataset(
         behaviors, maps, baseline, sampling_kwargs
     )
+    batch_size = int(adaptation.get("batch_size", 16))
+    if batch_size < 1:
+        raise ValueError("batch_size must be at least 1")
     loader = DataLoader(
         sample_dataset,
-        batch_size=int(adaptation.get("batch_size", 16)),
+        batch_size=batch_size,
         collate_fn=_collate,
         num_workers=0,
     )
+    learning_rate = float(adaptation.get("lr", 2.0e-5))
+    weight_decay = float(adaptation.get("weight_decay", 0.01))
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=float(adaptation.get("lr", 2.0e-5)),
-        weight_decay=float(adaptation.get("weight_decay", 0.01)),
+        lr=learning_rate,
+        weight_decay=weight_decay,
     )
     temperature = float(adaptation.get("temperature", 0.05))
     accumulation = int(adaptation.get("gradient_accumulation_steps", 1))
     if accumulation < 1:
         raise ValueError("gradient_accumulation_steps must be at least 1")
+    scaler = _make_grad_scaler(enabled=mixed_precision == "fp16")
     max_updates = _resolve_max_updates(adaptation)
     early_cfg = dict(adaptation.get("early_stopping", {}))
     early_enabled = bool(early_cfg.get("enabled", False))
@@ -440,7 +580,9 @@ def run_adapt_text_encoder(cfg: dict[str, Any]) -> None:
     patience = int(early_cfg.get("patience", 3))
     min_delta = float(early_cfg.get("min_delta", 1.0e-4))
     if validation_interval < 1 or patience < 1:
-        raise ValueError("MiniLM validation interval and patience must be at least 1")
+        raise ValueError(
+            "Text-encoder validation interval and patience must be at least 1"
+        )
     val_path = behavior_artifact_path(proc_root, "val")
     if early_enabled and not val_path.exists():
         raise FileNotFoundError(
@@ -487,7 +629,7 @@ def run_adapt_text_encoder(cfg: dict[str, Any]) -> None:
         )
         save_json(art_root / "validation_history.json", history_rows)
         print(
-            f"MiniLM validation at update {update:,}: AUC={val_auc:.6f} "
+            f"Text-encoder validation at update {update:,}: AUC={val_auc:.6f} "
             f"(best={best_auc:.6f} at {best_update:,})"
         )
         model.train()
@@ -498,12 +640,15 @@ def run_adapt_text_encoder(cfg: dict[str, Any]) -> None:
     if early_enabled:
         validate(0, None)
     optimizer_updates = 0
+    attempted_optimizer_steps = 0
+    skipped_optimizer_steps = 0
     microbatches = 0
+    training_examples = 0
     losses_since_validation: list[float] = []
     stop = False
     progress = tqdm(
         total=max_updates,
-        desc="Adapt MiniLM optimizer updates",
+        desc="Adapt text encoder optimizer updates",
         unit="update",
         dynamic_ncols=True,
     )
@@ -511,14 +656,43 @@ def run_adapt_text_encoder(cfg: dict[str, Any]) -> None:
         yielded = False
         for batch in loader:
             yielded = True
-            loss = _batch_loss(model, batch, texts_by_idx, temperature, device)
-            (loss / accumulation).backward()
+            with torch.autocast(
+                device_type=device.type,
+                dtype=autocast_dtype,
+                enabled=mixed_precision != "none",
+            ):
+                loss = _batch_loss(
+                    model,
+                    batch,
+                    texts_by_idx,
+                    temperature,
+                    device,
+                    checkpointed_transformer,
+                    encoder_forward_batch_size,
+                )
+            scaler.scale(loss / accumulation).backward()
             microbatches += 1
+            training_examples += int(batch["positive"].shape[0])
             losses_since_validation.append(float(loss.detach().cpu()))
             if microbatches % accumulation == 0:
+                attempted_optimizer_steps += 1
+                previous_scale = scaler.get_scale() if scaler.is_enabled() else None
+                if scaler.is_enabled():
+                    scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                optimizer.step()
+                scaler.step(optimizer)
+                scaler.update()
                 optimizer.zero_grad()
+                step_succeeded = (
+                    previous_scale is None or scaler.get_scale() >= previous_scale
+                )
+                if not step_succeeded:
+                    skipped_optimizer_steps += 1
+                    progress.set_postfix(
+                        loss=f"{np.mean(losses_since_validation[-20:]):.4f}",
+                        skipped=skipped_optimizer_steps,
+                    )
+                    continue
                 optimizer_updates += 1
                 progress.update(1)
                 progress.set_postfix(
@@ -554,6 +728,9 @@ def run_adapt_text_encoder(cfg: dict[str, Any]) -> None:
         art_root / "meta.json",
         {
             "base_model_name": cfg["teacher"]["model_name"],
+            "embedding_dimension": int(model.get_embedding_dimension()),
+            "configured_local_files_only": configured_local_files_only,
+            "initial_model_local_files_only": initial_model_local_files_only,
             "objective": "history_mean_clicked_article_contrastive",
             "negative_policy": "shared_ranker_hard_random_policy",
             "hard_negative_scorer": "initial_encoder_snapshot_bootstrap",
@@ -567,9 +744,42 @@ def run_adapt_text_encoder(cfg: dict[str, Any]) -> None:
             "validation_metric": "history_mean_candidate_cosine_impression_auc" if early_enabled else None,
             "hidden_test_used": False,
             "device_info": device_info(device),
-            "lr": float(adaptation.get("lr", 2.0e-5)),
+            "lr": learning_rate,
+            "weight_decay": weight_decay,
             "temperature": temperature,
+            "batch_size": batch_size,
+            "gradient_accumulation_steps": accumulation,
+            "nominal_samples_per_optimizer_update": batch_size * accumulation,
+            "nominal_max_microbatches_without_fp16_skips": (
+                max_updates * accumulation
+            ),
+            "nominal_max_training_examples_without_fp16_skips": (
+                max_updates * batch_size * accumulation
+            ),
+            "completed_microbatches": microbatches,
+            "completed_training_examples": training_examples,
+            "attempted_optimizer_steps": attempted_optimizer_steps,
+            "skipped_optimizer_steps": skipped_optimizer_steps,
+            "encode_batch_size": encode_batch_size,
+            "gradient_checkpointing": gradient_checkpointing,
+            "gradient_checkpointing_strategy": checkpointed_transformer,
+            "encoder_forward_batch_size": encoder_forward_batch_size,
+            "mixed_precision": mixed_precision,
             "max_history": int(adaptation.get("max_history", 10)),
+            "negatives_per_positive": sampling_kwargs["negatives_per_positive"],
+            "hard_pool_size": sampling_kwargs["hard_pool_size"],
+            "hard_fraction": sampling_kwargs["hard_fraction"],
+            "teacher_consistent_hard_only": sampling_kwargs[
+                "teacher_consistent_hard_only"
+            ],
+            "max_score_above_positive": sampling_kwargs[
+                "max_score_above_positive"
+            ],
+            "hard_for_cold_users_only": sampling_kwargs[
+                "hard_for_cold_users_only"
+            ],
+            "min_user_hist_for_warm": sampling_kwargs["min_user_hist_for_warm"],
+            "seed": seed,
             "max_optimizer_updates": max_updates,
             "completed_optimizer_updates": optimizer_updates,
             "cumulative_optimizer_updates": cumulative_updates,
@@ -583,7 +793,7 @@ def run_adapt_text_encoder(cfg: dict[str, Any]) -> None:
         },
     )
     print(
-        f"MiniLM adaptation complete: {optimizer_updates:,} local updates, "
+        f"Text-encoder adaptation complete: {optimizer_updates:,} local updates, "
         f"{cumulative_updates:,} cumulative updates; "
         f"model saved to {art_root / 'model'}"
     )

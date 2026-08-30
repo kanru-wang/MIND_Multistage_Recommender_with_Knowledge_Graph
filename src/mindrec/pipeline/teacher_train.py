@@ -385,6 +385,9 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
 
     teacher_cfg = dict(cfg["teacher"])
     batch_size = int(teacher_cfg["batch_size"])
+    encode_batch_size = int(teacher_cfg.get("encode_batch_size", batch_size))
+    if encode_batch_size < 1:
+        raise ValueError("teacher.encode_batch_size must be at least 1")
     epochs = int(teacher_cfg.get("epochs", 1))
     lr = float(teacher_cfg.get("lr", 2.0e-4))
     hidden_dim = int(teacher_cfg.get("user_attn_dim", 256))
@@ -421,7 +424,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
         cfg=cfg,
         st=st,
         news=news,
-        batch_size=batch_size,
+        batch_size=encode_batch_size,
         include_category_prefix=include_category_prefix,
     )
     item_base_dim = int(item_base.shape[1])
@@ -646,6 +649,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
         "item_base_dim": int(item_base.shape[1]),
         "teacher_dim": int(item_teacher_emb.shape[1]),
         "hidden_dim": hidden_dim,
+        "text_encode_batch_size": encode_batch_size,
         "user_pooling": "attention",
         "dropout": dropout,
         "temperature": temperature,

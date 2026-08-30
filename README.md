@@ -552,7 +552,68 @@ This writes
 `runs/mind_large_submission_text_adapt_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.zip`.
 It achieved Large Test AUC **`0.6869`**, an absolute improvement of `+0.0021`
 over text-adapt v1 (`0.6848`) and `+0.0145` over the frozen-MiniLM baseline
-(`0.6724`). This is the current verified champion.
+(`0.6724`). This was the previous verified champion and remains the MiniLM
+fallback.
+
+#### Promoted MPNet backbone and submission
+
+One stronger text backbone is wired as a controlled temporal experiment in
+`configs/mind_large_temporal_mpnet.yaml`. It replaces MiniLM with
+`sentence-transformers/all-mpnet-base-v2` while retaining the adaptation
+objective, natural Large Temporal Train/Val distribution, cold-user
+1-hard/3-random policy, teacher settings, and selected candidate-aware ranker.
+The first Phase 1 run may download the model into the Hugging Face cache.
+It preserves the tuned MiniLM schedule of batch size 16, four accumulation
+steps, and at most 10,000 optimizer updates. FP16 autocasting and transformer
+gradient checkpointing bound MPNet memory without changing batch membership;
+article encoding is internally chunked before all embeddings are reassembled
+for the original 16-user contrastive loss. The smaller offline encoding batches
+affect inference/bootstrap encoding only.
+
+The completed temporal run selected update 9,000 and reached full-validation
+AUC `0.688880` (MRR `0.336397`, nDCG@5 `0.371215`, nDCG@10 `0.431291`),
+passing the matched MiniLM candidate-attention AUC gate of `0.671593`.
+
+Run the phases independently:
+
+```powershell
+.\scripts\run_mpnet_backbone.ps1 -Phase phase1
+.\scripts\run_mpnet_backbone.ps1 -Phase phase2
+.\scripts\run_mpnet_backbone.ps1 -Phase phase3
+```
+
+Phase 2 writes
+`runs/mind_large_temporal_mpnet_candidate_attention_v1/eval/ranker_eval_val.json`.
+Phase 3 has a strict preflight for that evaluation and the selected update-9,000
+checkpoint. It also requires at least 6 GB of free workspace-drive capacity
+before starting the multi-hour continuation, preventing a completed training run
+from failing only when its final MPNet weights are serialized. It then performs
+exactly 2,000 successful continuation optimizer updates on Large Temporal Val,
+trains the teacher for four fixed epochs, trains
+the candidate-attention ranker for two fixed maximum-data epochs, builds/reuses
+the item-age index, and writes the hidden-test submission with recency
+`alpha=0.02`. Completed compatible stages are reused, while incompatible
+metadata is rejected instead of overwritten.
+
+The final archive is
+`runs/mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.zip`.
+MPNet artifacts use their own run names and cannot silently fall back to the
+existing MiniLM teacher or ranker.
+
+The completed Phase 3 submission achieved Large Test AUC **`0.6948`**, making
+it the current verified champion. This is `+0.0079` over the selected MiniLM
+candidate-attention submission (`0.6869`), `+0.0100` over text-adapt v1
+(`0.6848`), and `+0.0224` over frozen MiniLM (`0.6724`). The controlled temporal
+gain over candidate-attention MiniLM was `+0.017287`; the hidden-test gain is
+smaller but clearly positive, so the stronger-backbone result transferred.
+
+The continuation retained the configured batch size 16, four accumulation
+steps, and exactly 2,000 successful optimizer updates. FP16 overflow detection
+skipped four attempted steps and automatically replaced them, resulting in
+8,016 microbatches instead of the nominal 8,000 without changing the selected
+optimizer-update count. The final ZIP contains 2,370,727 sequential impression
+IDs, passed its CRC check, and exactly matches the generated prediction text by
+SHA-256.
 
 For comparison, the earlier candidate-attention maximum-data fit reused the
 mean-pooling ranker's one-epoch schedule (`lr=3.25e-4`, `weight_decay=1e-5`)
@@ -564,7 +625,8 @@ and submission both cache item encodings and refine each distinct history only
 once. The experiment uses a smaller submission batch (`2048`) to bound peak GPU
 memory.
 
-The submission command does not use the optional reranker. It writes:
+The earlier MiniLM candidate-attention submission command does not use the
+optional reranker. It writes:
 
 - `runs/mind_large_submission_text_adapt_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.txt`
 - `runs/mind_large_submission_text_adapt_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.zip`
