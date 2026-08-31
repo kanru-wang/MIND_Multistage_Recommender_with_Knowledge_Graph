@@ -401,6 +401,23 @@ one-epoch candidate-attention maximum-data schedule tied text-adapt v1 at
 `0.6848` Large Test AUC; the selected two-epoch lower-learning-rate schedule
 superseded it at `0.6869`.
 
+## Rejected Historical Retrieval Experiments
+
+These experiments predate the Large temporal architecture-search protocol and
+do not have directly comparable Large temporal metrics. They are retained as
+historical evidence for the current text-only retrieval design.
+
+| Experiment | Change | Outcome and decision |
+| --- | --- | --- |
+| Full-strength KG in retrieval/item base | Concatenated a strongly weighted KG vector with the text vector used by the teacher and base retrieval index, allowing entity embeddings, one-hop neighbors, and relation messages to affect nearest-neighbor retrieval directly. | Did not generalize reliably; rejected. |
+| Weakened KG in retrieval | Retained text-plus-KG retrieval but reduced the KG, neighbor, and relation weights so text remained dominant. | Did not generalize reliably; rejected. |
+| Reserved KG candidate slots | Generated candidates from entities and their one-hop neighbors, then reserved a fixed quota for them in the final top-`K` set. | Did not generalize reliably; rejected. |
+| KG-aware retrieval score bonus | Kept candidate generation unchanged and added a small bonus when candidate entities matched or neighbored entities in the clicked history. | Did not generalize reliably; rejected. |
+| Category/subcategory prefixes in teacher text | Added category and subcategory prefixes to the teacher's article text input. | Improved teacher retrieval validation `Recall@200` in the historical Small demo but hurt downstream student-ranker quality; rejected. Keep `teacher.text.include_category_prefix = false`. |
+
+The selected architecture keeps retrieval text-only and uses KG features only
+in the downstream ranker.
+
 ## Additional Current Metrics
 
 Values below were read from the listed local evaluation artifacts on 2026-07-03.

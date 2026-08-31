@@ -292,16 +292,9 @@ How this repo uses MIND entity annotations:
 - During greedy reranking, the reranker tracks covered entities for the entity coverage bonus.
 - Reranker entity coverage is separate from the neural KG feature path: coverage decides list diversity, while KG features affect the learned ranker representation.
 
-#### Rejected KG retrieval experiments
-
-KG is kept in the downstream ranker because the retrieval-stage KG experiments did not generalize reliably:
-
-1. **Full-strength KG in retrieval/item base** concatenated a strongly weighted KG vector with the text vector used by the teacher and base retrieval index. This allowed entity embeddings, one-hop neighbors, and relation messages to directly influence nearest-neighbor retrieval.
-2. **Weakened KG in retrieval** kept the same text-plus-KG retrieval design but reduced the KG, neighbor, and relation weights so text remained the dominant retrieval signal.
-3. **Reserved KG candidate slots** generated candidates from entities and their one-hop neighbors, then forced a fixed quota of those candidates into the final top-`K` retrieval set.
-4. **KG-aware retrieval score bonus** left candidate generation unchanged, but added a small score bonus to candidates whose linked entities matched or neighbored entities found in the user's clicked history.
-
-The accepted design is therefore **text-only retrieval plus a KG-enhanced ranker**.
+The accepted design is **text-only retrieval plus a KG-enhanced ranker**. Rejected
+retrieval variants are recorded in the
+[experiment registry](docs/experiment_registry.md#rejected-historical-retrieval-experiments).
 
 ---
 
@@ -615,11 +608,6 @@ optimizer-update count. The final ZIP contains 2,370,727 sequential impression
 IDs, passed its CRC check, and exactly matches the generated prediction text by
 SHA-256.
 
-For comparison, the earlier candidate-attention maximum-data fit reused the
-mean-pooling ranker's one-epoch schedule (`lr=3.25e-4`, `weight_decay=1e-5`)
-and scored `0.6848`. That historical neutral result is retained in the
-experiment registry; its superseded CLI/config path has been removed.
-
 Candidate attention is evaluated for every candidate, but temporal evaluation
 and submission both cache item encodings and refine each distinct history only
 once. The experiment uses a smaller submission batch (`2048`) to bound peak GPU
@@ -723,7 +711,6 @@ Teacher retrieval:
 - Teacher retrieval test `Recall@200 = 0.042396`
 - Early stopping monitor: `retrieval_recall@200`
 - Best teacher epoch: `2`
-- Rejected experiment: adding category/subcategory prefixes to the teacher text input improved Teacher retrieval validation `Recall@200`, but hurt downstream Student ranker quality, so the default remains `teacher.text.include_category_prefix = false`.
 
 Student ranker:
 - Historical semantic input was `item_ranker_base_emb.npy`, a `484`-dimensional text-plus-KG vector:
