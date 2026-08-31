@@ -14,6 +14,7 @@ This registry names the split protocol behind each major result set. Use it befo
 | Large temporal candidate-attention v1 | Reuse the text-adapt v1 teacher and replace only student mean history pooling with candidate-aware attention. | Current repo; completed | `configs/mind_large_temporal_candidate_attention.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_candidate_attention_v1` | `runs/mind_large_temporal_text_adapt_candidate_attention_v1/eval/ranker_eval_val.json` |
 | Large temporal MPNet backbone v1 | Replace MiniLM with adapted `all-mpnet-base-v2` in the selected candidate-attention pipeline; keep the temporal split, objective, negative policy, and downstream settings fixed. | Completed; promoted to Phase 3 | `configs/mind_large_temporal_mpnet.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_mpnet_candidate_attention_v1` | `runs/mind_large_temporal_mpnet_candidate_attention_v1/eval/ranker_eval_val.json` |
 | Large submission MPNet candidate attention + recency | Continue selected MPNet on Large Temporal Val, then fixed four-epoch teacher, fixed two-epoch candidate-attention ranker, and recency `alpha=0.02`. | Completed; current champion, Large Test AUC `0.6948` | `configs/mind_large_submission_mpnet_candidate_attention_recency_alpha_002.yaml` | `data/processed/MINDlarge_submission` | `runs/mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1` | `runs/mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.zip` |
+| Rejected Large temporal MPNet student width 96 | Reuse the selected MPNet encoder and 384-dimensional teacher; change only the learned student width from 56 to 96. | Completed/rejected on 2026-08-31; Phase 3 not run | Removed after rejection | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_mpnet_candidate_attention_student_width_96_v1` | `runs/mind_large_temporal_mpnet_candidate_attention_student_width_96_v1/eval/ranker_eval_val.json` |
 | Rejected large temporal candidate-attention item-only distillation v1 | Reuse candidate-attention v1 and change representation distillation from the full user/item target to `item_sem -> teacher_item`, including zero-history rows; teacher-logit distillation and all configured weights remain fixed. | Current repo; completed/rejected | `configs/mind_large_temporal_candidate_attention_item_only_distill.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_candidate_attention_item_only_distill_v1` | `runs/mind_large_temporal_text_adapt_candidate_attention_item_only_distill_v1/eval/ranker_eval_val.json` |
 | Small temporal | Train on `MINDsmall_train` before Nov 14; validate on Nov 14 tail from `MINDsmall_train` plus all `MINDsmall_dev`. | Current repo | `configs/mind_small_temporal_tune.yaml` | `data/processed/MINDsmall_temporal_tune` | `runs/mind_small_temporal_tune` | `runs/mind_small_temporal_tune/eval/ranker_eval_val.json` |
 
@@ -132,6 +133,51 @@ Local structural validation confirmed one `prediction.txt` entry in the ZIP,
 rank permutations, a clean ZIP CRC, and an exact hash match between zipped and
 external prediction text. The prediction SHA-256 is
 `1705ef49e0ecec2492cd5d25890bc566b1ce9f0c98d07630c533f966013cc68c`.
+
+### Rejected controlled student-width 56 -> 96 experiment
+
+This ranker-only experiment reused the selected temporal MPNet encoder and
+384-dimensional teacher and changed the learned student width from 56 to 96.
+The corresponding full student representation grew from 168 to 288 dimensions,
+while the full teacher target remained 768-dimensional. Data, hard/random
+negative selection, batch size, learning rate, weight decay, ID width,
+bottom/top MLPs, semantic feed-forward settings, candidate attention, full
+distillation weights, epoch cap, and early-stopping rule were unchanged.
+
+The resolved training data was identical to width 56: 12,990,042 selected rows
+per epoch, including 10,277,430 negatives (219,513 hard and 10,057,917 random),
+at batch size 1,024. This retained 12,686 batches per epoch and the configured
+eight-epoch maximum of 101,488 batches. The unchanged early-stopping rule chose
+epoch 5 and stopped after epoch 7 for width 96 (88,802 completed batches),
+versus epoch 4 and epoch 6 for width 56 (76,116 completed batches). Thus the
+configured schedule was unchanged, while the metric-driven completed count
+differed by one epoch.
+
+Full 807,988-impression Large Temporal Val results were:
+
+| Model | AUC | MRR | nDCG@5 | nDCG@10 |
+| --- | ---: | ---: | ---: | ---: |
+| Selected MPNet student width 56 | **0.688880** | **0.336397** | **0.371215** | **0.431291** |
+| MPNet student width 96 | 0.688316 | 0.329523 | 0.362792 | 0.424056 |
+| Width-96 delta | -0.000564 | -0.006873 | -0.008423 | -0.007235 |
+
+Width 96 marginally improved the sampled-pair early-stopping AUC
+(`0.687490` versus `0.686866`) but regressed every full-impression headline
+metric. This indicates that the extra capacity fitted the sampled pairwise
+objective better without improving listwise ranking.
+
+The time-period AUC deltas were `+0.007366`, `-0.001730`, `+0.001355`, and
+`-0.009245` from the earliest to latest quarter. The severe latest-period
+regression was especially unfavorable for hidden-test transfer. Width 96 also
+improved the 22,663 zero-history impressions, but MRR and nDCG regressed for
+the much larger history-bearing population.
+
+The promotion rule required at least `+0.001` over width 56, or AUC
+`0.689879567`. Width 96 instead trailed width 56 and missed that threshold by
+`0.001563523`. Phase 3 was therefore not run, the width-56 MPNet submission
+remained the `0.6948` champion, and the experimental config/script/code were
+removed. The local rejected-run metrics remain under
+`runs/mind_large_temporal_mpnet_candidate_attention_student_width_96_v1`.
 
 ### Rejected Phase 3 replay experiment
 
