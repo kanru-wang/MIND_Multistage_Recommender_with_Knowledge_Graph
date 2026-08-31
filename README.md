@@ -80,9 +80,9 @@ Retrieval evaluation currently skips users with no history.
 
 History-length slices show how much the retrieval and ranking stages depend on having enough prior clicks to describe the user:
 
-![Recall@200 by user history length bucket](images/recall_by_user_history_len_bucket.png)
+![images/AUC_by_user_history_len_bucket.png](images/AUC_by_user_history_len_bucket.png)
 
-![nDCG@10 by user history length bucket](images/nDCG_by_user_history_len_bucket.png)
+![images/nDCG_by_user_history_len_bucket.png](images/nDCG_by_user_history_len_bucket.png)
 
 ## Student model
 
@@ -134,13 +134,13 @@ loss = binary_cross_entropy_with_logits(student_logits, click_label)
 
 Category and clicked-item-popularity slices help check whether the model is robust across content verticals and between new, low-click, and high-click items:
 
-![Recall@200 by clicked category](images/recall_by_clicked_category.png)
+![images/AUC_by_clicked_category.png](images/AUC_by_clicked_category.png)
 
-![nDCG@10 by clicked category](images/nDCG_by_clicked_category.png)
+![images/nDCG_by_clicked_category.png](images/nDCG_by_clicked_category.png)
 
-![Recall@200 by clicked item popularity](images/recall_by_clicked_item_popularity.png)
+![images/AUC_by_clicked_item_popularity.png](images/AUC_by_clicked_item_popularity.png)
 
-![nDCG@10 by clicked item popularity](images/nDCG_by_clicked_item_popularity.png)
+![images/nDCG_by_clicked_item_popularity.png](images/nDCG_by_clicked_item_popularity.png)
 
 #### Where the student ranker is simplified
 - teacher semantic item encoder -> smaller student semantic item encoder
@@ -337,9 +337,9 @@ Validation split note:
 
 The evaluation JSONs also split each evaluated holdout window into chronological `time_period__...` slices, so regressions can be checked against the actual temporal order of impressions:
 
-![Recall@200 over time](images/recall_over_time.png)
+![images/AUC_over_time.png](images/AUC_over_time.png)
 
-![nDCG@10 over time](images/nDCG_over_time.png)
+![images/nDCG_over_time.png](images/nDCG_over_time.png)
 
 Temporal MINDsmall raw split sizes:
 - Training before Nov 14 from `MINDsmall_train`: `126,695` impressions
@@ -416,6 +416,9 @@ The ranker evaluation includes additional slice families:
 - `impressions_with_clicked_subcategory__...` slices
 
 For new/cold item ranking evaluation, each impression contains many candidate items, and ranking metrics are calculated for the whole impression. Therefore `impressions_with_clicked_new_item` means: evaluate whole impressions where at least one clicked positive item is new. It does not mean evaluating only the new candidate items inside all impressions.
+
+![images/AUC_by_cold_warm_user.png](images/AUC_by_cold_warm_user.png)
+![images/nDCG_by_cold_warm_user.png](images/nDCG_by_cold_warm_user.png)
 
 ### 3.5 Build a MIND-large leaderboard submission
 Use four MIND-large configs:
