@@ -18,6 +18,7 @@ from mindrec.data.mind_io import (
 from mindrec.utils import (
     behavior_artifact_path,
     impression_artifact_path,
+    load_json,
     pair_artifact_path,
     save_json,
     set_seed,
@@ -263,9 +264,183 @@ def _split_behaviors_from_time(
     return train, val, meta
 
 
+def _split_temporal_rerank_holdout(
+    beh: pd.DataFrame,
+    reporting_start: str,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    """Split a labeled temporal holdout into reranker tuning and reporting rows."""
+
+    parsed = pd.to_datetime(
+        beh["time"], format="%m/%d/%Y %I:%M:%S %p", errors="coerce"
+    )
+    if parsed.isna().any():
+        raise ValueError("Reranker holdout split found unparseable timestamps.")
+
+    reporting_start_ts = pd.Timestamp(reporting_start)
+    if reporting_start_ts.tzinfo is not None:
+        reporting_start_ts = reporting_start_ts.tz_convert(None)
+
+    tuning = beh.loc[parsed < reporting_start_ts].reset_index(drop=True)
+    reporting = beh.loc[parsed >= reporting_start_ts].reset_index(drop=True)
+    if tuning.empty or reporting.empty:
+        raise ValueError(
+            "Reranker holdout split produced an empty tuning or reporting set. "
+            f"reporting_start={reporting_start!r}, "
+            f"n_tuning={len(tuning)}, n_reporting={len(reporting)}"
+        )
+
+    tuning_times = parsed.loc[parsed < reporting_start_ts]
+    reporting_times = parsed.loc[parsed >= reporting_start_ts]
+    meta = {
+        "strategy": "chronological_reranker_tuning_reporting",
+        "reporting_start": str(reporting_start_ts),
+        "n_tuning_impressions": int(len(tuning)),
+        "n_reporting_impressions": int(len(reporting)),
+        "tuning_time_min": str(tuning_times.min()),
+        "tuning_time_max": str(tuning_times.max()),
+        "reporting_time_min": str(reporting_times.min()),
+        "reporting_time_max": str(reporting_times.max()),
+    }
+    return tuning, reporting, meta
+
+
 def _materialize_train_pairs(cfg: dict[str, Any]) -> bool:
-    hard_cfg = cfg.get("ranker", {}).get("hard_negative_sampling", {})
-    return not bool(hard_cfg.get("enabled", False))
+    explicit = cfg.get("data", {}).get("materialize_train_pairs")
+    if explicit is not None:
+        return bool(explicit)
+    # Preprocessing artifacts must not change merely because the active ranker
+    # protocol changes. Hard-negative training may ignore this file, while a
+    # baseline run sharing the same processed root still needs it.
+    return True
+
+
+def _resolve_temporal_rerank_holdout_settings(
+    cfg: dict[str, Any],
+) -> tuple[str, str, str] | None:
+    temporal_cfg = dict(cfg["data"].get("temporal_validation", {}))
+    reporting_start = temporal_cfg.get("rerank_reporting_start")
+    if reporting_start is None:
+        return None
+
+    tuning_split = str(
+        temporal_cfg.get("rerank_tuning_split_name", "rerank_tune")
+    )
+    reporting_split = str(
+        temporal_cfg.get("rerank_reporting_split_name", "rerank_test")
+    )
+    reserved_split_names = {
+        "train",
+        "val",
+        "submission",
+        "submission_test",
+        str(cfg.get("submission", {}).get("split_name", "submission_test")),
+    }
+    if (
+        not tuning_split
+        or not reporting_split
+        or tuning_split == reporting_split
+        or tuning_split in reserved_split_names
+        or reporting_split in reserved_split_names
+    ):
+        raise ValueError(
+            "Temporal reranker split names must be non-empty, distinct, and "
+            "different from train, val, and the submission split."
+        )
+    return str(reporting_start), tuning_split, reporting_split
+
+
+def run_prepare_rerank_holdout(cfg: dict[str, Any]) -> None:
+    """Backfill reranker day splits from an existing combined temporal val."""
+
+    if str(cfg["data"].get("mode", "standard")) != "temporal_tune":
+        raise ValueError("prepare_rerank_holdout requires data.mode: temporal_tune.")
+    rerank_settings = _resolve_temporal_rerank_holdout_settings(cfg)
+    if rerank_settings is None:
+        raise ValueError(
+            "prepare_rerank_holdout requires "
+            "data.temporal_validation.rerank_reporting_start."
+        )
+    reporting_start, tuning_split, reporting_split = rerank_settings
+
+    proc_root = Path(cfg["data"]["processed_root"]) / cfg["data"]["dataset_name"]
+    val_behaviors_path = behavior_artifact_path(proc_root, "val")
+    val_impressions_path = impression_artifact_path(proc_root, "val")
+    meta_path = proc_root / "preprocess_meta.json"
+    for required_path in (val_behaviors_path, val_impressions_path, meta_path):
+        if not required_path.exists():
+            raise FileNotFoundError(
+                f"Required combined validation artifact not found: {required_path}. "
+                "Run preprocess first."
+            )
+
+    val_behaviors = pd.read_parquet(val_behaviors_path)
+    _, _, split_meta = _split_temporal_rerank_holdout(
+        val_behaviors, reporting_start=str(reporting_start)
+    )
+    val_impressions = pd.read_parquet(val_impressions_path)
+    if "time" not in val_impressions.columns:
+        behavior_ids = (
+            val_behaviors["impression_id"].astype(str).reset_index(drop=True)
+        )
+        impression_ids = (
+            val_impressions["impression_id"].astype(str).reset_index(drop=True)
+        )
+        if len(behavior_ids) != len(impression_ids) or not behavior_ids.equals(
+            impression_ids
+        ):
+            raise ValueError(
+                "Cannot backfill impression timestamps because the historical val "
+                "behavior and impression artifacts are not row-aligned. Rerun full "
+                "preprocessing instead."
+            )
+        val_impressions["time"] = val_behaviors["time"].reset_index(drop=True)
+        if val_impressions["time"].isna().any():
+            raise ValueError(
+                "Could not recover every validation impression timestamp from "
+                "val_behaviors.parquet. Rerun full preprocessing instead."
+            )
+    tuning_impr, reporting_impr, _ = _split_temporal_rerank_holdout(
+        val_impressions, reporting_start=str(reporting_start)
+    )
+    tuning_impr.to_parquet(
+        impression_artifact_path(proc_root, tuning_split), index=False
+    )
+    reporting_impr.to_parquet(
+        impression_artifact_path(proc_root, reporting_split), index=False
+    )
+
+    split_meta.update(
+        {
+            "tuning_split_name": tuning_split,
+            "reporting_split_name": reporting_split,
+            "n_tuning_eval_impressions": int(len(tuning_impr)),
+            "n_reporting_eval_impressions": int(len(reporting_impr)),
+        }
+    )
+    meta = dict(load_json(meta_path))
+    train_pairs_materialized = (proc_root / "train_pairs.parquet").exists()
+    holdout_meta = dict(meta.get("holdout", {}))
+    holdout_meta["rerank_holdout"] = split_meta
+    meta.update(
+        {
+            "rerank_tuning_split_name": tuning_split,
+            "rerank_reporting_split_name": reporting_split,
+            "n_rerank_tuning_eval_impressions": int(len(tuning_impr)),
+            "n_rerank_reporting_eval_impressions": int(len(reporting_impr)),
+            "train_pairs_materialized": train_pairs_materialized,
+            "ranker_train_pair_source": (
+                "train_pairs.parquet"
+                if train_pairs_materialized
+                else "train_behaviors.parquet"
+            ),
+            "holdout": holdout_meta,
+        }
+    )
+    save_json(meta_path, meta)
+    print(
+        "Prepared reranker holdout artifacts: "
+        f"{tuning_split}={len(tuning_impr)}, {reporting_split}={len(reporting_impr)}"
+    )
 
 
 def _run_standard_preprocess(cfg: dict[str, Any]) -> None:
@@ -454,6 +629,11 @@ def _run_multi_source_preprocess(cfg: dict[str, Any]) -> None:
 
     news_parts = [news_train]
     n_submission_impressions = 0
+    rerank_tuning_beh = None
+    rerank_reporting_beh = None
+    rerank_holdout_meta = None
+    rerank_tuning_split = None
+    rerank_reporting_split = None
     if mode == "leaderboard_tune":
         assert news_dev is not None and beh_dev is not None
         news_parts.append(news_dev)
@@ -484,6 +664,27 @@ def _run_multi_source_preprocess(cfg: dict[str, Any]) -> None:
         )
         if val_times.isna().any():
             raise ValueError("Large Temporal Val contains unparseable timestamps.")
+        rerank_settings = _resolve_temporal_rerank_holdout_settings(cfg)
+        if rerank_settings is not None:
+            (
+                rerank_reporting_start,
+                rerank_tuning_split,
+                rerank_reporting_split,
+            ) = rerank_settings
+            (
+                rerank_tuning_beh,
+                rerank_reporting_beh,
+                rerank_holdout_meta,
+            ) = _split_temporal_rerank_holdout(
+                val_beh,
+                reporting_start=str(rerank_reporting_start),
+            )
+            rerank_holdout_meta.update(
+                {
+                    "tuning_split_name": rerank_tuning_split,
+                    "reporting_split_name": rerank_reporting_split,
+                }
+            )
         holdout_meta.update(
             {
                 "strategy": "temporal_model_selection",
@@ -500,6 +701,8 @@ def _run_multi_source_preprocess(cfg: dict[str, Any]) -> None:
                 "test_source": None,
             }
         )
+        if rerank_holdout_meta is not None:
+            holdout_meta["rerank_holdout"] = rerank_holdout_meta
     elif mode == "leaderboard_submission":
         if test_dir is None:
             raise ValueError("leaderboard_submission mode requires data.test_dir.")
@@ -528,7 +731,17 @@ def _run_multi_source_preprocess(cfg: dict[str, Any]) -> None:
     maps = build_id_maps(news_all, fit_beh)
     proc_root = ensure_dir(Path(cfg["data"]["processed_root"]) / ds)
     submission_split = str(cfg.get("submission", {}).get("split_name", "submission_test"))
-    for split_name in ["val", submission_split]:
+    artifact_splits = {
+        "val",
+        submission_split,
+        "rerank_tune",
+        "rerank_test",
+    }
+    if rerank_tuning_split is not None:
+        artifact_splits.add(rerank_tuning_split)
+    if rerank_reporting_split is not None:
+        artifact_splits.add(rerank_reporting_split)
+    for split_name in artifact_splits:
         _remove_if_exists(pair_artifact_path(proc_root, split_name))
         _remove_if_exists(impression_artifact_path(proc_root, split_name))
         _remove_if_exists(behavior_artifact_path(proc_root, split_name))
@@ -563,6 +776,8 @@ def _run_multi_source_preprocess(cfg: dict[str, Any]) -> None:
 
     pairs_val = None
     impr_val = None
+    impr_rerank_tuning = None
+    impr_rerank_reporting = None
     if val_beh is not None:
         pairs_val = build_pairs(
             beh=val_beh,
@@ -591,6 +806,30 @@ def _run_multi_source_preprocess(cfg: dict[str, Any]) -> None:
         )
         impr_val.to_parquet(impression_artifact_path(proc_root, "val"), index=False)
         val_beh.to_parquet(behavior_artifact_path(proc_root, "val"), index=False)
+        if rerank_tuning_beh is not None and rerank_reporting_beh is not None:
+            assert rerank_tuning_split is not None
+            assert rerank_reporting_split is not None
+            assert rerank_holdout_meta is not None
+            (
+                impr_rerank_tuning,
+                impr_rerank_reporting,
+                _,
+            ) = _split_temporal_rerank_holdout(
+                impr_val,
+                reporting_start=str(rerank_holdout_meta["reporting_start"]),
+            )
+            impr_rerank_tuning.to_parquet(
+                impression_artifact_path(proc_root, rerank_tuning_split), index=False
+            )
+            impr_rerank_reporting.to_parquet(
+                impression_artifact_path(proc_root, rerank_reporting_split), index=False
+            )
+            rerank_holdout_meta.update(
+                {
+                    "n_tuning_eval_impressions": int(len(impr_rerank_tuning)),
+                    "n_reporting_eval_impressions": int(len(impr_rerank_reporting)),
+                }
+            )
 
     fit_beh.to_parquet(behavior_artifact_path(proc_root, "train"), index=False)
 
@@ -615,6 +854,14 @@ def _run_multi_source_preprocess(cfg: dict[str, Any]) -> None:
         "n_validation_pairs": int(len(pairs_val)) if pairs_val is not None else 0,
         "ranker_negatives_per_positive": ranker_neg_per_pos,
         "n_validation_eval_impressions": int(len(impr_val)) if impr_val is not None else 0,
+        "rerank_tuning_split_name": rerank_tuning_split,
+        "rerank_reporting_split_name": rerank_reporting_split,
+        "n_rerank_tuning_eval_impressions": (
+            int(len(impr_rerank_tuning)) if impr_rerank_tuning is not None else 0
+        ),
+        "n_rerank_reporting_eval_impressions": (
+            int(len(impr_rerank_reporting)) if impr_rerank_reporting is not None else 0
+        ),
         "n_submission_eval_impressions": 0,
         "submission_eval_mode": "stream_raw_behaviors",
         "holdout": holdout_meta,

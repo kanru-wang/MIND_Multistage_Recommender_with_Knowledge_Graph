@@ -23,7 +23,7 @@ MIND_BENCHMARK_REFERENCES: list[dict[str, Any]] = [
             "nDCG@5": 0.4162,
             "nDCG@10": 0.4722,
         },
-        "note": "Official leaderboard values are from the MIND-large's hidden test dataset and are not directly comparable to local MIND-small dev dataset (which is split into our validation/test).",
+        "note": "Official leaderboard values are from MIND-large's hidden test dataset and are not directly comparable to this repository's local validation or test protocols.",
     },
     {
         "name": "CAUM, SIGIR 2022",
@@ -49,5 +49,5 @@ def official_mind_benchmark_view(ranking: dict[str, float]) -> dict[str, Any]:
     return {
         "metrics": model_metrics,
         "references": MIND_BENCHMARK_REFERENCES,
-        "note": "These references are not directly comparable to this repo's time-split MIND-small dev evaluation.",
+        "note": "These references are not directly comparable to this repository's local validation or test protocols.",
     }

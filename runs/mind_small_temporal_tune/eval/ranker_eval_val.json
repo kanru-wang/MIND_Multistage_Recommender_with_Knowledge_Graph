@@ -28,7 +28,7 @@
           "nDCG@5": 0.4162,
           "nDCG@10": 0.4722
         },
-        "note": "Official leaderboard values are from the MIND-large's hidden test dataset and are not directly comparable to local MIND-small dev dataset (which is split into our validation/test)."
+        "note": "Official leaderboard values are from MIND-large's hidden test dataset and are not directly comparable to this repository's local validation or test protocols."
       },
       {
         "name": "CAUM, SIGIR 2022",
@@ -43,7 +43,7 @@
         "note": "Paper does not explicitly identify the dataset, but most likely used MIND-large's hidden test dataset."
       }
     ],
-    "note": "These references are not directly comparable to this repo's time-split MIND-small dev evaluation."
+    "note": "These references are not directly comparable to this repository's local validation or test protocols."
   },
   "calibration": {
     "method": "temperature",

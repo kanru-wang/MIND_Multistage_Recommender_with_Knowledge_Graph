@@ -110,20 +110,6 @@ def _load_model(
     return model, item_base, teacher_item
 
 
-def _expand_history_base(
-    item_base: np.ndarray, hist_idx: list[int], batch_size: int, device: torch.device
-) -> tuple[torch.Tensor, torch.Tensor]:
-    if hist_idx:
-        hist_np = item_base[np.asarray(hist_idx, dtype=np.int64)]
-        hist = torch.tensor(hist_np, dtype=torch.float32, device=device).unsqueeze(0)
-        hist = hist.repeat(batch_size, 1, 1)
-        mask = torch.ones((batch_size, len(hist_idx)), dtype=torch.bool, device=device)
-        return hist, mask
-    hist = torch.zeros((batch_size, 1, item_base.shape[1]), dtype=torch.float32, device=device)
-    mask = torch.zeros((batch_size, 1), dtype=torch.bool, device=device)
-    return hist, mask
-
-
 def _sanitize_slice_value(value: str) -> str:
     text = str(value).strip().lower()
     if not text:

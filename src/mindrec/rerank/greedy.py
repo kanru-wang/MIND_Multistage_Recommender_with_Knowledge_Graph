@@ -75,9 +75,13 @@ def _build_novelty_similarity(
     novelty_sim: str,
     pool: list[str],
     news_meta: dict[str, NewsMeta],
-    item_teacher_emb: np.ndarray,
+    item_teacher_emb: np.ndarray | None,
 ) -> np.ndarray | None:
     if novelty_sim == "teacher_cosine":
+        if item_teacher_emb is None:
+            raise ValueError(
+                "item_teacher_emb is required when novelty_sim='teacher_cosine'."
+            )
         x = item_teacher_emb.astype(np.float32)
         x = x / (np.linalg.norm(x, axis=1, keepdims=True) + 1e-12)
         return cosine_sim_matrix(x)
@@ -99,11 +103,100 @@ def _build_novelty_similarity(
         ents = [news_meta.get(nid, NewsMeta(0, 0, set())).ent for nid in pool]
         for i in range(n):
             for j in range(i + 1, n):
-                score = float(jaccard(ents[i], ents[j]))
+                # Empty annotations are missing evidence, not proof that two
+                # articles cover exactly the same entities.
+                score = (
+                    float(jaccard(ents[i], ents[j]))
+                    if ents[i] or ents[j]
+                    else 0.0
+                )
                 sim[i, j] = score
                 sim[j, i] = score
         return sim
     raise ValueError(f"Unknown novelty_sim: {novelty_sim}")
+
+
+def _normalize_relevance(scores: np.ndarray, mode: str) -> np.ndarray:
+    values = np.asarray(scores, dtype=np.float32)
+    if mode == "none":
+        return values
+    if mode == "minmax":
+        lo = float(values.min()) if len(values) else 0.0
+        hi = float(values.max()) if len(values) else 0.0
+        if hi - lo <= 1e-12:
+            return np.zeros_like(values)
+        return (values - lo) / (hi - lo)
+    raise ValueError(
+        f"Unknown relevance_normalization: {mode!r}; expected 'minmax' or 'none'."
+    )
+
+
+def validate_rerank_config(rr_cfg: dict[str, Any]) -> None:
+    """Fail early on invalid or silently ineffective reranker settings."""
+
+    k_out = int(rr_cfg.get("k_out", 0))
+    pool_size = int(rr_cfg.get("pool_size", 0))
+    if k_out < 1:
+        raise ValueError("rerank.k_out must be at least 1.")
+    if pool_size < k_out:
+        raise ValueError("rerank.pool_size must be greater than or equal to k_out.")
+
+    position_bias = str(rr_cfg.get("position_bias", "log"))
+    if position_bias not in {"log", "linear"}:
+        raise ValueError("rerank.position_bias must be 'log' or 'linear'.")
+    novelty_sim = str(rr_cfg.get("novelty_sim", "teacher_cosine"))
+    if novelty_sim not in {"teacher_cosine", "category", "entity_jaccard"}:
+        raise ValueError(
+            "rerank.novelty_sim must be 'teacher_cosine', 'category', or "
+            "'entity_jaccard'."
+        )
+    relevance_normalization = str(
+        rr_cfg.get("relevance_normalization", "none")
+    )
+    if relevance_normalization not in {"minmax", "none"}:
+        raise ValueError(
+            "rerank.relevance_normalization must be 'minmax' or 'none'."
+        )
+
+    weights = [
+        float(rr_cfg.get("relevance_weight", 0.85)),
+        float(rr_cfg.get("novelty_weight", 0.10)),
+        float(rr_cfg.get("coverage_weight", 0.05)),
+    ]
+    if not all(np.isfinite(weight) and weight >= 0.0 for weight in weights):
+        raise ValueError(
+            "Reranker relevance/novelty/coverage weights must be finite and "
+            "non-negative."
+        )
+    if sum(weights) <= 0.0:
+        raise ValueError("At least one reranker objective weight must be positive.")
+
+    coverage_cfg = dict(rr_cfg.get("coverage", {}))
+    if int(coverage_cfg.get("max_new_entities_per_item", 3)) < 0:
+        raise ValueError(
+            "rerank.coverage.max_new_entities_per_item cannot be negative."
+        )
+    for key in ("category_bonus", "entity_bonus"):
+        value = float(coverage_cfg.get(key, 0.0))
+        if not np.isfinite(value) or value < 0.0:
+            raise ValueError(f"rerank.coverage.{key} must be finite and non-negative.")
+
+    fairness_cfg = dict(rr_cfg.get("fairness", {}))
+    if str(fairness_cfg.get("category_target", "catalog")) not in {
+        "catalog",
+        "uniform",
+    }:
+        raise ValueError(
+            "rerank.fairness.category_target must be 'catalog' or 'uniform'."
+        )
+    floor = float(fairness_cfg.get("new_item_floor", 0.0))
+    penalty = float(fairness_cfg.get("penalty_weight", 0.0))
+    if not np.isfinite(floor) or not 0.0 <= floor <= 1.0:
+        raise ValueError("rerank.fairness.new_item_floor must be between 0 and 1.")
+    if not np.isfinite(penalty) or penalty < 0.0:
+        raise ValueError(
+            "rerank.fairness.penalty_weight must be finite and non-negative."
+        )
 
 
 def greedy_rerank(
@@ -111,7 +204,7 @@ def greedy_rerank(
     cand_scores: np.ndarray,
     cand_is_new: list[int],
     news_meta: dict[str, NewsMeta],
-    item_teacher_emb: np.ndarray,
+    item_teacher_emb: np.ndarray | None,
     k_out: int,
     pool_size: int,
     relevance_weight: float,
@@ -120,12 +213,25 @@ def greedy_rerank(
     novelty_sim: str,
     coverage_cfg: dict[str, Any],
     fairness_cfg: dict[str, Any],
+    relevance_normalization: str = "none",
 ) -> dict[str, Any]:
+    cand_scores = np.asarray(cand_scores, dtype=np.float32)
+    n_candidates = len(cand_news_id)
+    if cand_scores.ndim != 1 or len(cand_scores) != n_candidates:
+        raise ValueError("cand_scores must be one-dimensional and align with cand_news_id.")
+    if len(cand_is_new) != n_candidates:
+        raise ValueError("cand_is_new must align with cand_news_id.")
+    if not np.isfinite(cand_scores).all():
+        raise ValueError("cand_scores must contain only finite values.")
+    if k_out < 1 or pool_size < k_out:
+        raise ValueError("Expected pool_size >= k_out >= 1.")
+
     # Work on top pool_size by relevance
-    order = np.argsort(-cand_scores)[:pool_size]
+    order = np.argsort(-cand_scores, kind="stable")[:pool_size]
     pool = [cand_news_id[i] for i in order]
-    pool_index = {nid: i for i, nid in enumerate(pool)}
-    pool_scores = cand_scores[order]
+    pool_scores = _normalize_relevance(
+        cand_scores[order], relevance_normalization
+    )
     pool_is_new = [int(cand_is_new[i]) for i in order]
     # news_meta example {"N12345": NewsMeta(cat_idx=4, subcat_idx=12, ent={101, 202}), ...}
     # pool_cats is a list of such news_meta.
@@ -138,10 +244,14 @@ def greedy_rerank(
         news_meta=news_meta,
         item_teacher_emb=item_teacher_emb,
     )
+    if sim_mat is not None and sim_mat.shape != (len(pool), len(pool)):
+        raise ValueError(
+            "item_teacher_emb must contain one row per candidate in the relevance pool."
+        )
 
     chosen = []
     chosen_idx = []
-    chosen_set = set()
+    chosen_mask = np.zeros(len(pool), dtype=np.bool_)
     chosen_cats = set()
     chosen_ents = set()
     max_sim_to_chosen = np.zeros(len(pool), dtype=np.float32)
@@ -285,7 +395,7 @@ def greedy_rerank(
         # Among all items in the pool, examine every candidate that has not already been chosen,
         # score it for the current position, and find the best one.
         for i, nid in enumerate(pool):
-            if nid in chosen_set:
+            if bool(chosen_mask[i]):
                 continue
             rel = float(pool_scores[i])
             val = (
@@ -306,7 +416,7 @@ def greedy_rerank(
             break
         chosen.append(best)
         chosen_idx.append(int(best_i))
-        chosen_set.add(best)
+        chosen_mask[int(best_i)] = True
         if sim_mat is not None and best_i is not None:
             # np.maximum compares two arrays and return a new array of element-wise larger values.
             # To the not yet chosen items, their similarities to the chosen-set-as-a-whole are represented by max_sim_to_chosen.
@@ -320,16 +430,17 @@ def greedy_rerank(
             )
         chosen_ents |= m.ent
         if pos_mode == "linear":
-            if int(pool_is_new[pool_index[best]]) == 1:
+            if int(pool_is_new[int(best_i)]) == 1:
                 chosen_new_count += 1
                 chosen_new_pos_sum += len(chosen) - 1
         else:
             pos_w = float(weights_by_len[len(chosen)][-1])
             if m.cat_idx != 0:
                 chosen_exp_by_cat[m.cat_idx] = chosen_exp_by_cat.get(m.cat_idx, 0.0) + pos_w
-            if int(pool_is_new[pool_index[best]]) == 1:
+            if int(pool_is_new[int(best_i)]) == 1:
                 chosen_new_exp += pos_w
 
     return {
         "ranked_news_id": chosen,
+        "ranked_indices": [int(order[i]) for i in chosen_idx],
     }

@@ -6,7 +6,10 @@ from pathlib import Path
 from mindrec.config import load_config
 from mindrec.data.item_age import run_build_item_age
 from mindrec.pipeline.evaluate import run_evaluate
-from mindrec.pipeline.preprocess import run_preprocess
+from mindrec.pipeline.preprocess import (
+    run_prepare_rerank_holdout,
+    run_preprocess,
+)
 from mindrec.pipeline.ranker_train import run_train_ranker
 from mindrec.pipeline.ranker_lr_sweep import run_train_ranker_lr_sweep
 from mindrec.pipeline.rerank_eval import run_rerank_eval
@@ -30,6 +33,12 @@ def main() -> None:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("preprocess", help="Parse raw MIND TSV into processed parquet")
+    _add_config_arg(p)
+
+    p = sub.add_parser(
+        "prepare_rerank_holdout",
+        help="Split an existing temporal val into reranker tuning/reporting days",
+    )
     _add_config_arg(p)
 
     p = sub.add_parser(
@@ -74,12 +83,14 @@ def main() -> None:
     _add_config_arg(p)
 
     p = sub.add_parser(
-        "rerank_eval", help="Evaluate diversity+coverage+fairness reranker, on test data only"
+        "rerank_eval",
+        help="Report a fixed diversity+coverage+fairness reranker on its configured labeled split",
     )
     _add_config_arg(p)
 
     p = sub.add_parser(
-        "rerank_search", help="Search reranker hyperparameters on val data under product constraints"
+        "rerank_search",
+        help="Search reranker hyperparameters on the configured tuning split under product constraints",
     )
     _add_config_arg(p)
 
@@ -100,6 +111,9 @@ def main() -> None:
 
     if args.cmd == "preprocess":
         run_preprocess(cfg)
+        return
+    if args.cmd == "prepare_rerank_holdout":
+        run_prepare_rerank_holdout(cfg)
         return
     if args.cmd == "train_teacher":
         run_train_teacher(cfg)

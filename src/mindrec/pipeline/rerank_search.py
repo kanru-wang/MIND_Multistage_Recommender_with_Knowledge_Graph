@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -10,72 +9,24 @@ import torch
 from tqdm import tqdm
 
 from mindrec.config import ensure_dir
-from mindrec.metrics.diversity import category_coverage, entropy, ild_from_similarity
-from mindrec.metrics.fairness import (
-    catalog_target,
-    exposure_from_ranking,
-    gini,
-    kl_divergence,
-    normalize_dist,
-    uniform_target,
+from mindrec.pipeline.rerank_metrics import (
+    ScoredRerankImpression,
+    evaluate_baseline,
+    evaluate_candidate,
 )
-from mindrec.metrics.ranking import ndcg_at_k, ndcg_from_order, recall_at_k, recall_from_order
-from mindrec.pipeline.evaluate import _expand_history_base, _load_model
-from mindrec.rerank.greedy import build_news_meta, cosine_sim_matrix, greedy_rerank
+from mindrec.pipeline.rerank_scoring import (
+    load_rerank_scoring_assets,
+    prepare_rerank_score_group,
+    resolve_rerank_protocol,
+    score_rerank_groups,
+)
+from mindrec.rerank.greedy import build_news_meta, validate_rerank_config
 from mindrec.utils import (
     impression_artifact_path,
     log_device,
-    position_bias_weights,
     resolve_device as resolve_torch_device,
     save_json,
-    validation_split_name,
 )
-
-
-@dataclass
-class ImpressionScores:
-    labels: np.ndarray
-    cand_news_id: list[str]
-    cand_news_idx: np.ndarray
-    cand_is_new: list[int]
-    scores: np.ndarray
-
-
-def _cat_idx(news_meta: dict[str, Any], news_id: str) -> int:
-    meta = news_meta.get(news_id)
-    return int(meta.cat_idx) if meta is not None else 0
-
-
-def _category_reference(
-    cand_news_id: list[str], news_meta: dict[str, Any]
-) -> list[int]:
-    return [
-        cat_idx
-        for cat_idx in (_cat_idx(news_meta, nid) for nid in cand_news_id)
-        if cat_idx != 0
-    ]
-
-
-def _new_item_exposure_frac(
-    weights: np.ndarray, ranking_idx: list[int], cand_is_new: list[int]
-) -> float:
-    new_exp = sum(
-        float(weight)
-        for weight, idx in zip(weights.tolist(), ranking_idx)
-        if int(cand_is_new[idx]) == 1
-    )
-    return float(new_exp / (float(weights.sum()) + 1e-12))
-
-
-def _category_target_dist(
-    category_target: str, reference_cats: list[int]
-) -> dict[int, float]:
-    tgt = (
-        uniform_target(reference_cats)
-        if category_target == "uniform"
-        else catalog_target(reference_cats)
-    )
-    return normalize_dist(tgt)
 
 
 def _resolve_device(cfg: dict[str, Any]) -> torch.device:
@@ -85,282 +36,87 @@ def _resolve_device(cfg: dict[str, Any]) -> torch.device:
 def _score_impressions(
     cfg: dict[str, Any],
     proc_root: Path,
-    runs_root: Path,
     device: torch.device,
     split_name: str,
-) -> tuple[list[ImpressionScores], dict[str, Any]]:
-    model, item_base, teacher_item = _load_model(cfg, proc_root, device)
+) -> tuple[list[ScoredRerankImpression], dict[str, Any]]:
+    assets = load_rerank_scoring_assets(cfg, proc_root, device)
     impr = pd.read_parquet(impression_artifact_path(proc_root, split_name))
 
-    scored: list[ImpressionScores] = []
-    with torch.no_grad():
-        for _, r in tqdm(impr.iterrows(), total=len(impr), desc="Score impressions"):
-            labels = np.array(r["cand_label"], dtype=np.int32)
-            if labels.sum() <= 0:
-                continue
+    scored: list[ScoredRerankImpression] = []
+    pending_groups: list[dict[str, Any]] = []
+    pending_rows: list[dict[str, Any]] = []
 
-            user_idx = int(r["user_idx"])
-            hist_news_idx = [int(x) for x in list(r["hist_news_idx"])]
-            cand_news_id = list(r["cand_news_id"])
-            cand_news_idx = np.array(r["cand_news_idx"], dtype=np.int64)
-            cand_cat_idx = np.array(r["cand_cat_idx"], dtype=np.int64)
-            cand_subcat_idx = np.array(r["cand_subcat_idx"], dtype=np.int64)
-            cand_is_new = [int(x) for x in list(r["cand_is_new_item"])]
-            cand_is_new_arr = np.array(cand_is_new, dtype=np.int64)
-            cand_clicks_log1p = np.array(r["cand_item_clicks_log1p"], dtype=np.float32)
-            hlen = float(r["history_len"])
-            dense = np.stack(
-                [np.full_like(cand_clicks_log1p, hlen), cand_clicks_log1p], axis=1
-            )
-
-            logits = []
-            bs = 2048
-            for i in range(0, len(cand_news_idx), bs):
-                sl = slice(i, i + bs)
-                batch_size = len(cand_news_idx[sl])
-                b_user = torch.tensor(
-                    [user_idx] * batch_size, dtype=torch.long, device=device
-                )
-                b_news = torch.tensor(
-                    cand_news_idx[sl], dtype=torch.long, device=device
-                )
-                b_cat = torch.tensor(cand_cat_idx[sl], dtype=torch.long, device=device)
-                b_sub = torch.tensor(
-                    cand_subcat_idx[sl], dtype=torch.long, device=device
-                )
-                b_is_new = torch.tensor(
-                    cand_is_new_arr[sl], dtype=torch.long, device=device
-                )
-                b_dense = torch.tensor(dense[sl], dtype=torch.float32, device=device)
-                b_item_base = torch.tensor(
-                    item_base[cand_news_idx[sl]], dtype=torch.float32, device=device
-                )
-                b_hist_base, b_hist_mask = _expand_history_base(
-                    item_base=item_base,
-                    hist_idx=hist_news_idx,
-                    batch_size=batch_size,
-                    device=device,
-                )
-                logit, _ = model(
-                    user_idx=b_user,
-                    news_idx=b_news,
-                    cat_idx=b_cat,
-                    subcat_idx=b_sub,
-                    dense=b_dense,
-                    item_base=b_item_base,
-                    history_item_base=b_hist_base,
-                    history_mask=b_hist_mask,
-                    is_new_item=b_is_new,
-                )
-                logits.append(logit.detach().cpu().numpy())
-
+    def flush_pending() -> None:
+        if not pending_groups:
+            return
+        score_arrays = score_rerank_groups(assets, pending_groups, device)
+        for prepared, scores in zip(pending_rows, score_arrays):
             scored.append(
-                ImpressionScores(
-                    labels=labels,
-                    cand_news_id=cand_news_id,
-                    cand_news_idx=cand_news_idx,
-                    cand_is_new=cand_is_new,
-                    scores=np.concatenate(logits, axis=0),
+                ScoredRerankImpression(
+                    labels=prepared["labels"],
+                    cand_news_id=prepared["cand_news_id"],
+                    cand_news_idx=prepared["cand_news_idx"],
+                    cand_is_new=prepared["cand_is_new"],
+                    scores=scores,
                 )
             )
+        pending_groups.clear()
+        pending_rows.clear()
 
-    return scored, {"teacher_item": teacher_item}
-
-
-def _evaluate_baseline(
-    scored_impressions: list[ImpressionScores],
-    teacher_item: np.ndarray,
-    news_meta: dict[str, Any],
-    k_out: int,
-    pool_size: int,
-    position_bias: str,
-    category_target: str,
-) -> dict[str, float]:
-    base_ndcg = []
-    base_recall = []
-    base_ild = []
-    base_cov = []
-    base_ent = []
-    base_fair_kl_full = []
-    base_fair_kl_pool = []
-    base_fair_gini = []
-    base_new_exp = []
-    w = position_bias_weights(k_out, mode=position_bias)
-
-    for row in scored_impressions:
-        base_order = np.argsort(-row.scores)[:k_out]
-        pool_order = np.argsort(-row.scores)[:pool_size]
-        base_ids = [row.cand_news_id[i] for i in base_order.tolist()]
-        cand_cat_ref_full = _category_reference(row.cand_news_id, news_meta)
-        cand_cat_ref_pool = [
-            _cat_idx(news_meta, row.cand_news_id[i])
-            for i in pool_order.tolist()
-            if _cat_idx(news_meta, row.cand_news_id[i]) != 0
-        ]
-        base_cats = [_cat_idx(news_meta, nid) for nid in base_ids]
-
-        base_ndcg.append(ndcg_at_k(row.labels, row.scores, k_out))
-        base_recall.append(recall_at_k(row.labels, row.scores, k_out))
-        base_cov.append(category_coverage([c for c in base_cats if c != 0]))
-        base_ent.append(entropy([c for c in base_cats if c != 0]))
-
-        base_emb = teacher_item[row.cand_news_idx[base_order]]
-        base_emb = base_emb / (np.linalg.norm(base_emb, axis=1, keepdims=True) + 1e-12)
-        base_ild.append(ild_from_similarity(cosine_sim_matrix(base_emb)))
-
-        exp = normalize_dist(exposure_from_ranking(base_cats, w))
-        tgt_full = _category_target_dist(category_target, cand_cat_ref_full)
-        tgt_pool = _category_target_dist(category_target, cand_cat_ref_pool)
-        base_fair_kl_full.append(kl_divergence(exp, tgt_full))
-        base_fair_kl_pool.append(kl_divergence(exp, tgt_pool))
-        base_fair_gini.append(gini(list(exp.values())))
-
-        base_new_exp.append(
-            _new_item_exposure_frac(w, base_order.tolist(), row.cand_is_new)
+    for _, row in tqdm(impr.iterrows(), total=len(impr), desc="Score impressions"):
+        labels = np.asarray(row["cand_label"], dtype=np.int32)
+        if labels.sum() <= 0:
+            continue
+        group = prepare_rerank_score_group(row)
+        pending_groups.append(group)
+        pending_rows.append(
+            {
+                "labels": labels,
+                "cand_news_id": list(row["cand_news_id"]),
+                "cand_news_idx": group["cand_news_idx"],
+                "cand_is_new": group["cand_is_new"].astype(int).tolist(),
+            }
         )
+        if len(pending_groups) >= assets.impression_batch_size:
+            flush_pending()
+    flush_pending()
 
-    return {
-        "ndcg@k": float(np.mean(base_ndcg) if base_ndcg else 0.0),
-        "recall@k": float(np.mean(base_recall) if base_recall else 0.0),
-        "ild": float(np.mean(base_ild) if base_ild else 0.0),
-        "category_coverage": float(np.mean(base_cov) if base_cov else 0.0),
-        "category_entropy": float(np.mean(base_ent) if base_ent else 0.0),
-        "fairness_kl_full": float(
-            np.mean(base_fair_kl_full) if base_fair_kl_full else 0.0
-        ),
-        "fairness_kl_pool": float(
-            np.mean(base_fair_kl_pool) if base_fair_kl_pool else 0.0
-        ),
-        "fairness_gini": float(np.mean(base_fair_gini) if base_fair_gini else 0.0),
-        "new_item_exposure_frac": float(np.mean(base_new_exp) if base_new_exp else 0.0),
+    return scored, {
+        "teacher_item": assets.teacher_item,
+        "scoring": assets.metadata,
     }
-
-
-def _evaluate_candidate(
-    scored_impressions: list[ImpressionScores],
-    teacher_item: np.ndarray,
-    news_meta: dict[str, Any],
-    k_out: int,
-    pool_size: int,
-    position_bias: str,
-    coverage_cfg: dict[str, Any],
-    fairness_cfg: dict[str, Any],
-    relevance_weight: float,
-    novelty_weight: float,
-    coverage_weight: float,
-    novelty_sim: str,
-) -> dict[str, Any]:
-    rr_ndcg = []
-    rr_recall = []
-    rr_ild = []
-    rr_cov = []
-    rr_ent = []
-    rr_fair_kl_full = []
-    rr_fair_kl_pool = []
-    rr_fair_gini = []
-    rr_new_exp = []
-    w = position_bias_weights(k_out, mode=position_bias)
-
-    for row in scored_impressions:
-        pool_order = np.argsort(-row.scores)[:pool_size]
-        pool_emb = teacher_item[row.cand_news_idx[pool_order]]
-        cand_cat_ref_full = _category_reference(row.cand_news_id, news_meta)
-        cand_cat_ref_pool = [
-            _cat_idx(news_meta, row.cand_news_id[i])
-            for i in pool_order.tolist()
-            if _cat_idx(news_meta, row.cand_news_id[i]) != 0
-        ]
-        rr = greedy_rerank(
-            cand_news_id=row.cand_news_id,
-            cand_scores=row.scores,
-            cand_is_new=row.cand_is_new,
-            news_meta=news_meta,
-            item_teacher_emb=pool_emb,
-            k_out=k_out,
-            pool_size=pool_size,
-            relevance_weight=relevance_weight,
-            novelty_weight=novelty_weight,
-            coverage_weight=coverage_weight,
-            novelty_sim=novelty_sim,
-            coverage_cfg=coverage_cfg,
-            fairness_cfg=fairness_cfg,
-        )
-
-        rr_ids = rr["ranked_news_id"]
-        cand_idx_by_id = {nid: idx for idx, nid in enumerate(row.cand_news_id)}
-        rr_idx = [cand_idx_by_id[nid] for nid in rr_ids]
-        rr_cats = [_cat_idx(news_meta, nid) for nid in rr_ids]
-
-        rr_ndcg.append(ndcg_from_order(row.labels, np.array(rr_idx), k_out))
-        rr_recall.append(recall_from_order(row.labels, np.array(rr_idx), k_out))
-        rr_cov.append(category_coverage([c for c in rr_cats if c != 0]))
-        rr_ent.append(entropy([c for c in rr_cats if c != 0]))
-
-        rr_emb = teacher_item[row.cand_news_idx[rr_idx]]
-        rr_emb = rr_emb / (np.linalg.norm(rr_emb, axis=1, keepdims=True) + 1e-12)
-        rr_ild.append(ild_from_similarity(cosine_sim_matrix(rr_emb)))
-
-        exp = normalize_dist(exposure_from_ranking(rr_cats, w))
-        tgt_full = _category_target_dist(
-            fairness_cfg.get("category_target", "catalog"), cand_cat_ref_full
-        )
-        tgt_pool = _category_target_dist(
-            fairness_cfg.get("category_target", "catalog"), cand_cat_ref_pool
-        )
-        rr_fair_kl_full.append(kl_divergence(exp, tgt_full))
-        rr_fair_kl_pool.append(kl_divergence(exp, tgt_pool))
-        rr_fair_gini.append(gini(list(exp.values())))
-
-        rr_new_exp.append(_new_item_exposure_frac(w, rr_idx, row.cand_is_new))
-
-    metrics = {
-        "ndcg@k": float(np.mean(rr_ndcg) if rr_ndcg else 0.0),
-        "recall@k": float(np.mean(rr_recall) if rr_recall else 0.0),
-        "ild": float(np.mean(rr_ild) if rr_ild else 0.0),
-        "category_coverage": float(np.mean(rr_cov) if rr_cov else 0.0),
-        "category_entropy": float(np.mean(rr_ent) if rr_ent else 0.0),
-        "fairness_kl_full": float(
-            np.mean(rr_fair_kl_full) if rr_fair_kl_full else 0.0
-        ),
-        "fairness_kl_pool": float(
-            np.mean(rr_fair_kl_pool) if rr_fair_kl_pool else 0.0
-        ),
-        "fairness_gini": float(np.mean(rr_fair_gini) if rr_fair_gini else 0.0),
-        "new_item_exposure_frac": float(np.mean(rr_new_exp) if rr_new_exp else 0.0),
-    }
-    metrics["weights"] = {
-        "relevance": relevance_weight,
-        "novelty": novelty_weight,
-        "coverage": coverage_weight,
-    }
-    metrics["fairness"] = {
-        "penalty_weight": float(fairness_cfg.get("penalty_weight", 0.0)),
-        "new_item_floor": float(fairness_cfg.get("new_item_floor", 0.0)),
-        "category_target": fairness_cfg.get("category_target", "catalog"),
-    }
-    metrics["novelty_sim"] = novelty_sim
-    return metrics
 
 
 def _make_constraint(
     baseline: dict[str, float], search_cfg: dict[str, Any]
 ) -> dict[str, Any]:
     relative_cfg = dict(search_cfg.get("relative_guardrails", {}))
+    relative_guardrails = {
+        "max_ndcg_drop_ratio": float(
+            relative_cfg.get("max_ndcg_drop_ratio", 0.03)
+        ),
+        "min_new_item_exposure_gain": float(
+            relative_cfg.get("min_new_item_exposure_gain", 0.0)
+        ),
+        "min_category_coverage_gain": float(
+            relative_cfg.get("min_category_coverage_gain", 0.3)
+        ),
+        "min_fairness_kl_pool_improvement": float(
+            relative_cfg.get("min_fairness_kl_pool_improvement", 0.05)
+        ),
+    }
+    invalid = [
+        name
+        for name, value in relative_guardrails.items()
+        if not np.isfinite(value) or value < 0.0
+    ]
+    if invalid:
+        raise ValueError(
+            "Reranker relative guardrails must be finite and non-negative; "
+            "invalid fields: " + ", ".join(invalid)
+        )
     return {
-        "relative_guardrails": {
-            "max_ndcg_drop_ratio": float(
-                relative_cfg.get("max_ndcg_drop_ratio", 0.03)
-            ),
-            "min_new_item_exposure_gain": float(
-                relative_cfg.get("min_new_item_exposure_gain", 0.0)
-            ),
-            "min_category_coverage_gain": float(
-                relative_cfg.get("min_category_coverage_gain", 0.3)
-            ),
-            "min_fairness_kl_pool_improvement": float(
-                relative_cfg.get("min_fairness_kl_pool_improvement", 0.05)
-            ),
-        },
+        "relative_guardrails": relative_guardrails,
         "baseline_metrics": {
             "ndcg@k": baseline["ndcg@k"],
             "new_item_exposure_frac": baseline["new_item_exposure_frac"],
@@ -372,7 +128,7 @@ def _make_constraint(
 
 
 def _constraint_check(
-    baseline: dict[str, float], metrics: dict[str, Any], constraint: dict[str, float]
+    baseline: dict[str, float], metrics: dict[str, Any], constraint: dict[str, Any]
 ) -> dict[str, Any]:
     relative = constraint["relative_guardrails"]
     ndcg_drop_ratio = max(
@@ -442,7 +198,7 @@ def _current_config_candidate(
 def _attach_objective_views(
     baseline: dict[str, float],
     metrics: dict[str, Any],
-    constraint: dict[str, float],
+    constraint: dict[str, Any],
     search_cfg: dict[str, Any],
 ) -> dict[str, Any]:
     metrics = dict(metrics)
@@ -457,28 +213,59 @@ def _attach_objective_views(
     cov_gain = metrics["category_coverage"] - baseline["category_coverage"]
     fair_pool_delta = metrics["fairness_kl_pool"] - baseline["fairness_kl_pool"]
     relative = constraint["relative_guardrails"]
-    fairness_target_improvement = float(relative["min_fairness_kl_pool_improvement"])
-    fairness_kl_pool_improvement_units = float(
-        (baseline["fairness_kl_pool"] - metrics["fairness_kl_pool"])
-        / max(fairness_target_improvement, 1e-12)
-    )
+    scale_cfg = dict(search_cfg.get("utility_scales", {}))
+
+    def utility_scale(name: str, guardrail_name: str) -> float:
+        guardrail = float(relative[guardrail_name])
+        value = float(scale_cfg.get(name, guardrail if guardrail > 0.0 else 1.0))
+        if not np.isfinite(value) or value <= 0.0:
+            raise ValueError(
+                f"rerank.search.utility_scales.{name} must be finite and positive."
+            )
+        return value
+
+    utility_scales = {
+        "ndcg_drop_ratio": utility_scale(
+            "ndcg_drop_ratio", "max_ndcg_drop_ratio"
+        ),
+        "new_item_exposure_gain": utility_scale(
+            "new_item_exposure_gain", "min_new_item_exposure_gain"
+        ),
+        "category_coverage_gain": utility_scale(
+            "category_coverage_gain", "min_category_coverage_gain"
+        ),
+        "fairness_kl_pool_improvement": utility_scale(
+            "fairness_kl_pool_improvement",
+            "min_fairness_kl_pool_improvement",
+        ),
+    }
 
     utility_terms = {
-        # Normalize each term by the relative guardrail scale.
+        # Put every priority on a meaningful, dimensionless scale. Relevance
+        # falls from one unit at baseline to zero at the configured drop scale.
         "ndcg_retention_units": float(
-            1.0 - ((baseline["ndcg@k"] - metrics["ndcg@k"]) / max(baseline["ndcg@k"], 1e-12))
+            1.0
+            - (
+                max(
+                    0.0,
+                    (baseline["ndcg@k"] - metrics["ndcg@k"])
+                    / max(baseline["ndcg@k"], 1e-12),
+                )
+                / utility_scales["ndcg_drop_ratio"]
+            )
         ),
         "new_item_exposure_gain_units": float(
             (metrics["new_item_exposure_frac"] - baseline["new_item_exposure_frac"])
-            / max(relative["min_new_item_exposure_gain"], 1e-12)
-            if relative["min_new_item_exposure_gain"] > 0.0
-            else (metrics["new_item_exposure_frac"] - baseline["new_item_exposure_frac"])
+            / utility_scales["new_item_exposure_gain"]
         ),
         "category_coverage_gain_units": float(
             (metrics["category_coverage"] - baseline["category_coverage"])
-            / max(relative["min_category_coverage_gain"], 1e-12)
+            / utility_scales["category_coverage_gain"]
         ),
-        "fairness_kl_pool_improvement_units": fairness_kl_pool_improvement_units,
+        "fairness_kl_pool_improvement_units": float(
+            (baseline["fairness_kl_pool"] - metrics["fairness_kl_pool"])
+            / utility_scales["fairness_kl_pool_improvement"]
+        ),
     }
     utility_cfg = dict(search_cfg.get("utility_coefficients", {}))
     utility_coefficients = {
@@ -493,6 +280,16 @@ def _attach_objective_views(
             utility_cfg.get("fairness_kl_pool_improvement_units", 1.5)
         ),
     }
+    invalid_coefficients = [
+        name
+        for name, value in utility_coefficients.items()
+        if not np.isfinite(value) or value < 0.0
+    ]
+    if invalid_coefficients:
+        raise ValueError(
+            "Reranker utility coefficients must be finite and non-negative; "
+            "invalid fields: " + ", ".join(invalid_coefficients)
+        )
     scalar_utility = sum(
         utility_coefficients[name] * utility_terms[name]
         for name in utility_coefficients
@@ -511,6 +308,7 @@ def _attach_objective_views(
         "scalar_utility": {
             "score": float(scalar_utility),
             "coefficients": utility_coefficients,
+            "scales": utility_scales,
             "normalized_terms": utility_terms,
         },
     }
@@ -678,85 +476,137 @@ def _write_pareto_frontier_md(out_root: Path, out: dict[str, Any]) -> None:
     (out_root / "pareto_frontier.md").write_text("\n".join(lines), encoding="utf-8")
 
 
-def run_rerank_search(cfg: dict[str, Any]) -> None:
-    ds = cfg["data"]["dataset_name"]
-    proc_root = Path(cfg["data"]["processed_root"]) / ds
-    runs_root = ensure_dir(Path("runs") / cfg["run_name"])
-    out_root = ensure_dir(runs_root / "eval")
-    rr_cfg = cfg["rerank"]
-
-    device = _resolve_device(cfg)
-    log_device(device, "Rerank search")
-    news = pd.read_parquet(proc_root / "news.parquet")
-    news_meta = build_news_meta(news)
-    search_split = validation_split_name(cfg)
-    scored_impressions, assets = _score_impressions(
-        cfg, proc_root, runs_root, device, split_name=search_split
+def _resolve_search_settings(search_cfg: dict[str, Any]) -> dict[str, Any]:
+    raw_novelty_sims = search_cfg.get("novelty_sims", ["teacher_cosine"])
+    if isinstance(raw_novelty_sims, str):
+        raise ValueError("rerank.search.novelty_sims must be a YAML list.")
+    raw_weight_pairs = search_cfg.get(
+        "weight_pairs",
+        [
+            [0.05, 0.05],
+            [0.04, 0.05],
+            [0.05, 0.04],
+            [0.06, 0.05],
+            [0.05, 0.06],
+            [0.075, 0.05],
+            [0.05, 0.075],
+        ],
     )
-    teacher_item = assets["teacher_item"]
+    weight_pairs = []
+    for index, pair in enumerate(raw_weight_pairs):
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            raise ValueError(
+                f"rerank.search.weight_pairs[{index}] must be "
+                "[novelty_weight, coverage_weight]."
+            )
+        weight_pairs.append([float(pair[0]), float(pair[1])])
 
-    k_out = int(rr_cfg["k_out"])
-    pool_size = int(rr_cfg["pool_size"])
-    position_bias = rr_cfg.get("position_bias", "log")
-    coverage_cfg = dict(rr_cfg.get("coverage", {}))
-    fairness_base = dict(rr_cfg.get("fairness", {}))
-    search_cfg = dict(rr_cfg.get("search", {}))
-    fairness_base["position_bias"] = position_bias
-
-    baseline = _evaluate_baseline(
-        scored_impressions=scored_impressions,
-        teacher_item=teacher_item,
-        news_meta=news_meta,
-        k_out=k_out,
-        pool_size=pool_size,
-        position_bias=position_bias,
-        category_target=fairness_base.get("category_target", "catalog"),
-    )
-    constraint = _make_constraint(baseline, search_cfg)
-    seed = 13
-    search_sample_size = 500
-    if len(scored_impressions) > search_sample_size:
-        rng = np.random.default_rng(seed)
-        sample_idx = np.sort(
-            rng.choice(len(scored_impressions), size=search_sample_size, replace=False)
+    settings = {
+        "seed": int(search_cfg.get("seed", 13)),
+        "sample_size": int(search_cfg.get("sample_size", 500)),
+        "shortlist_size": int(search_cfg.get("shortlist_size", 10)),
+        "novelty_sims": [str(value) for value in raw_novelty_sims],
+        "weight_pairs": weight_pairs,
+        "fairness_penalties": [
+            float(value)
+            for value in search_cfg.get(
+                "fairness_penalties", [0.20, 0.25, 0.30]
+            )
+        ],
+        "new_item_floors": [
+            float(value)
+            for value in search_cfg.get(
+                "new_item_floors", [0.15, 0.175, 0.20]
+            )
+        ],
+    }
+    if settings["sample_size"] < 1:
+        raise ValueError("rerank.search.sample_size must be at least 1.")
+    if settings["shortlist_size"] < 1:
+        raise ValueError("rerank.search.shortlist_size must be at least 1.")
+    if not settings["novelty_sims"]:
+        raise ValueError("rerank.search.novelty_sims cannot be empty.")
+    allowed_novelty = {"teacher_cosine", "category", "entity_jaccard"}
+    if any(value not in allowed_novelty for value in settings["novelty_sims"]):
+        raise ValueError(
+            "rerank.search.novelty_sims contains an unsupported similarity."
         )
-        scored_search = [scored_impressions[int(i)] for i in sample_idx.tolist()]
-    else:
-        scored_search = scored_impressions
+    if not settings["weight_pairs"]:
+        raise ValueError("rerank.search.weight_pairs cannot be empty.")
+    for novelty_weight, coverage_weight in settings["weight_pairs"]:
+        if (
+            not np.isfinite(novelty_weight)
+            or not np.isfinite(coverage_weight)
+            or novelty_weight < 0.0
+            or coverage_weight < 0.0
+            or novelty_weight + coverage_weight >= 1.0
+        ):
+            raise ValueError(
+                "Each rerank.search.weight_pairs entry must contain non-negative "
+                "novelty and coverage weights whose sum is less than 1."
+            )
+    if not settings["fairness_penalties"] or any(
+        not np.isfinite(value) or value < 0.0
+        for value in settings["fairness_penalties"]
+    ):
+        raise ValueError(
+            "rerank.search.fairness_penalties must contain finite non-negative values."
+        )
+    if not settings["new_item_floors"] or any(
+        not np.isfinite(value) or not 0.0 <= value <= 1.0
+        for value in settings["new_item_floors"]
+    ):
+        raise ValueError(
+            "rerank.search.new_item_floors must contain values between 0 and 1."
+        )
+    return settings
 
-    novelty_sims = ["teacher_cosine"]
-    # (novelty_weight, coverage_weight) pairs
-    weight_pairs = [
-        (0.05, 0.05),
-        (0.04, 0.05),
-        (0.05, 0.04),
-        (0.06, 0.05),
-        (0.05, 0.06),
-        (0.075, 0.05),
-        (0.05, 0.075),
-    ]
-    fairness_penalties = [0.20, 0.25, 0.30]
-    new_item_floors = [0.15, 0.175, 0.20]
 
-    sample_baseline = _evaluate_baseline(
-        scored_impressions=scored_search,
-        teacher_item=teacher_item,
-        news_meta=news_meta,
-        k_out=k_out,
-        pool_size=pool_size,
-        position_bias=position_bias,
-        category_target=fairness_base.get("category_target", "catalog"),
-    )
+def _build_shortlist(
+    sources: tuple[list[dict[str, Any]], ...],
+    size: int,
+) -> tuple[list[dict[str, Any]], set[tuple[Any, ...]]]:
+    """Round-robin objective views so the full pass stays bounded and diverse."""
 
-    sample_results = []
-    search_space = []
+    shortlist: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    max_len = max((len(source) for source in sources), default=0)
+    for rank in range(max_len):
+        for source in sources:
+            if rank >= len(source):
+                continue
+            item = source[rank]
+            key = _candidate_key(item)
+            if key in seen:
+                continue
+            shortlist.append(item)
+            seen.add(key)
+            if len(shortlist) >= size:
+                return shortlist, seen
+    return shortlist, seen
+
+
+def _build_search_space(
+    novelty_sims: list[str],
+    weight_pairs: list[list[float]],
+    fairness_penalties: list[float],
+    new_item_floors: list[float],
+) -> list[tuple[str, float, float, float, float, float]]:
+    """Build effective policies, omitting settings that rank identically."""
+
+    search_space: list[tuple[str, float, float, float, float, float]] = []
     for novelty_sim in novelty_sims:
         for novelty_weight, coverage_weight in weight_pairs:
             relevance_weight = 1.0 - novelty_weight - coverage_weight
             if relevance_weight <= 0.0:
                 continue
             for penalty_weight in fairness_penalties:
-                for new_item_floor in new_item_floors:
+                # With no fairness penalty the new-item floor cannot affect a
+                # score, so evaluate one canonical floor instead of duplicates.
+                effective_floors = (
+                    [0.0] if penalty_weight == 0.0 else new_item_floors
+                )
+                for new_item_floor in effective_floors:
                     search_space.append(
                         (
                             novelty_sim,
@@ -767,6 +617,87 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
                             new_item_floor,
                         )
                     )
+    return search_space
+
+
+def run_rerank_search(cfg: dict[str, Any]) -> None:
+    ds = cfg["data"]["dataset_name"]
+    proc_root = Path(cfg["data"]["processed_root"]) / ds
+    runs_root = ensure_dir(Path("runs") / cfg["run_name"])
+    out_root = ensure_dir(runs_root / "eval")
+    rr_cfg = cfg["rerank"]
+    validate_rerank_config(rr_cfg)
+
+    device = _resolve_device(cfg)
+    log_device(device, "Rerank search")
+    news = pd.read_parquet(proc_root / "news.parquet")
+    news_meta = build_news_meta(news)
+    protocol = resolve_rerank_protocol(cfg)
+    search_split = protocol.search_split
+    scored_impressions, assets = _score_impressions(
+        cfg, proc_root, device, split_name=search_split
+    )
+    if not scored_impressions:
+        raise RuntimeError(
+            f"No labeled impressions with positive clicks were found in {search_split!r}."
+        )
+    teacher_item = assets["teacher_item"]
+
+    k_out = int(rr_cfg["k_out"])
+    pool_size = int(rr_cfg["pool_size"])
+    position_bias = rr_cfg.get("position_bias", "log")
+    coverage_cfg = dict(rr_cfg.get("coverage", {}))
+    fairness_base = dict(rr_cfg.get("fairness", {}))
+    search_cfg = dict(rr_cfg.get("search", {}))
+    search_settings = _resolve_search_settings(search_cfg)
+    relevance_normalization = str(
+        rr_cfg.get("relevance_normalization", "none")
+    )
+    fairness_base["position_bias"] = position_bias
+
+    baseline = evaluate_baseline(
+        scored_impressions=scored_impressions,
+        teacher_item=teacher_item,
+        news_meta=news_meta,
+        k_out=k_out,
+        pool_size=pool_size,
+        position_bias=position_bias,
+        category_target=fairness_base.get("category_target", "catalog"),
+    )
+    constraint = _make_constraint(baseline, search_cfg)
+    seed = search_settings["seed"]
+    search_sample_size = search_settings["sample_size"]
+    if len(scored_impressions) > search_sample_size:
+        rng = np.random.default_rng(seed)
+        sample_idx = np.sort(
+            rng.choice(len(scored_impressions), size=search_sample_size, replace=False)
+        )
+        scored_search = [scored_impressions[int(i)] for i in sample_idx.tolist()]
+    else:
+        scored_search = scored_impressions
+
+    novelty_sims = search_settings["novelty_sims"]
+    weight_pairs = search_settings["weight_pairs"]
+    fairness_penalties = search_settings["fairness_penalties"]
+    new_item_floors = search_settings["new_item_floors"]
+
+    sample_baseline = evaluate_baseline(
+        scored_impressions=scored_search,
+        teacher_item=teacher_item,
+        news_meta=news_meta,
+        k_out=k_out,
+        pool_size=pool_size,
+        position_bias=position_bias,
+        category_target=fairness_base.get("category_target", "catalog"),
+    )
+
+    sample_results = []
+    search_space = _build_search_space(
+        novelty_sims=novelty_sims,
+        weight_pairs=weight_pairs,
+        fairness_penalties=fairness_penalties,
+        new_item_floors=new_item_floors,
+    )
 
     for (
         novelty_sim,
@@ -780,7 +711,7 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
         fairness_cfg["penalty_weight"] = penalty_weight
         fairness_cfg["new_item_floor"] = new_item_floor
 
-        metrics = _evaluate_candidate(
+        metrics = evaluate_candidate(
             scored_impressions=scored_search,
             teacher_item=teacher_item,
             news_meta=news_meta,
@@ -793,6 +724,7 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
             novelty_weight=novelty_weight,
             coverage_weight=coverage_weight,
             novelty_sim=novelty_sim,
+            relevance_normalization=relevance_normalization,
         )
         sample_results.append(
             _attach_objective_views(sample_baseline, metrics, constraint, search_cfg)
@@ -802,21 +734,13 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
     sample_results_by_utility = _sort_by_scalar_utility(sample_results)
     sample_pareto = _pareto_frontier(sample_results)
 
-    shortlist_size = 10
-    shortlist = []
-    seen = set()
+    shortlist_size = search_settings["shortlist_size"]
     shortlist_sources = (
-        sample_results[:shortlist_size],
-        sample_results_by_utility[:shortlist_size],
+        sample_results,
+        sample_results_by_utility,
         sample_pareto,
     )
-    for source in shortlist_sources:
-        for item in source:
-            key = _candidate_key(item)
-            if key in seen:
-                continue
-            shortlist.append(item)
-            seen.add(key)
+    shortlist, seen = _build_shortlist(shortlist_sources, shortlist_size)
 
     current_candidate = _current_config_candidate(
         rr_cfg=rr_cfg,
@@ -833,7 +757,7 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
         fairness_cfg = dict(fairness_base)
         fairness_cfg["penalty_weight"] = item["fairness"]["penalty_weight"]
         fairness_cfg["new_item_floor"] = item["fairness"]["new_item_floor"]
-        metrics = _evaluate_candidate(
+        metrics = evaluate_candidate(
             scored_impressions=scored_impressions,
             teacher_item=teacher_item,
             news_meta=news_meta,
@@ -846,6 +770,7 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
             novelty_weight=item["weights"]["novelty"],
             coverage_weight=item["weights"]["coverage"],
             novelty_sim=item["novelty_sim"],
+            relevance_normalization=relevance_normalization,
         )
         results.append(_attach_objective_views(baseline, metrics, constraint, search_cfg))
 
@@ -859,7 +784,14 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
         "k_out": k_out,
         "pool_size": pool_size,
         "position_bias": position_bias,
+        "relevance_normalization": relevance_normalization,
+        "search_split": search_split,
+        # Retained for backward compatibility with historical search JSON.
         "eval_split": search_split,
+        "reporting_split": protocol.reporting_split,
+        "selection": protocol.selection,
+        "scoring": assets["scoring"],
+        "search_configuration": search_settings,
         "baseline": baseline,
         "product_constraint": constraint,
         "search_sample_size": len(scored_search),

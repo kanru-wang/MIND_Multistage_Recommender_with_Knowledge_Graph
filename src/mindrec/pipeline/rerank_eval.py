@@ -9,58 +9,85 @@ import torch
 from tqdm import tqdm
 
 from mindrec.config import ensure_dir
-from mindrec.metrics.diversity import category_coverage, entropy, ild_from_similarity
-from mindrec.metrics.fairness import (
-    catalog_target,
-    exposure_from_ranking,
-    gini,
-    kl_divergence,
-    normalize_dist,
-    uniform_target,
+from mindrec.pipeline.rerank_metrics import (
+    MetricAccumulator,
+    ScoredRerankImpression,
+    baseline_metrics_for_impression,
+    candidate_metrics_for_impression,
 )
-from mindrec.metrics.ranking import (
-    ndcg_at_k,
-    recall_at_k,
-    ndcg_from_order,
-    recall_from_order,
+from mindrec.pipeline.rerank_scoring import (
+    load_rerank_scoring_assets,
+    prepare_rerank_score_group,
+    resolve_rerank_protocol,
+    score_rerank_groups,
 )
-from mindrec.pipeline.evaluate import _expand_history_base, _load_model
-from mindrec.rerank.greedy import build_news_meta, cosine_sim_matrix, greedy_rerank
+from mindrec.rerank.greedy import build_news_meta, validate_rerank_config
 from mindrec.utils import (
     impression_artifact_path,
     log_device,
-    position_bias_weights,
     resolve_device,
     save_json,
-    test_split_name,
 )
 
 
-def _cat_idx(news_meta: dict[str, Any], news_id: str) -> int:
-    meta = news_meta.get(news_id)
-    return int(meta.cat_idx) if meta is not None else 0
-
-
-def _new_item_exposure_frac(
-    weights: np.ndarray, ranking_idx: list[int], cand_is_new: list[int]
-) -> float:
-    new_exp = sum(
-        float(weight)
-        for weight, idx in zip(weights.tolist(), ranking_idx)
-        if int(cand_is_new[idx]) == 1
+def _metric_deltas(
+    baseline: dict[str, float], reranked: dict[str, float]
+) -> dict[str, float]:
+    delta = {
+        key: float(reranked[key] - baseline[key])
+        for key in baseline
+        if key in reranked
+    }
+    base_ndcg = float(baseline.get("ndcg@k", 0.0))
+    delta["ndcg_drop_ratio"] = float(
+        max(0.0, (base_ndcg - float(reranked.get("ndcg@k", 0.0))))
+        / max(base_ndcg, 1e-12)
     )
-    return float(new_exp / (float(weights.sum()) + 1e-12))
+    return delta
 
 
-def _category_target_dist(
-    category_target: str, reference_cats: list[int]
-) -> dict[int, float]:
-    tgt = (
-        uniform_target(reference_cats)
-        if category_target == "uniform"
-        else catalog_target(reference_cats)
+def _write_rerank_report(out_root: Path, out: dict[str, Any]) -> None:
+    baseline = out["baseline"]
+    reranked = out["reranked"]
+    delta = out["delta"]
+    lines = [
+        "# Reranker Evaluation",
+        "",
+        f"Split: `{out['eval_split']}`  ",
+        f"Evaluated impressions: {out['n_impressions_evaluated']}  ",
+        f"Top-K / pool: {out['k_out']} / {out['pool_size']}",
+        "",
+        "| Metric | Baseline | Reranked | Delta |",
+        "|---|---:|---:|---:|",
+    ]
+    for key in (
+        "ndcg@k",
+        "recall@k",
+        "ild",
+        "category_coverage",
+        "category_entropy",
+        "fairness_kl_pool",
+        "fairness_kl_full",
+        "fairness_gini",
+        "new_item_exposure_frac",
+    ):
+        lines.append(
+            f"| {key} | {baseline[key]:.6f} | {reranked[key]:.6f} | "
+            f"{delta[key]:+.6f} |"
+        )
+    lines.extend(
+        [
+            "",
+            f"Relative nDCG drop: {100.0 * delta['ndcg_drop_ratio']:.3f}%",
+            "",
+            (
+                "Lower is better for fairness KL and fairness Gini; higher is "
+                "better for the other reported metrics."
+            ),
+            "",
+        ]
     )
-    return normalize_dist(tgt)
+    (out_root / "rerank_eval.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 def run_rerank_eval(cfg: dict[str, Any]) -> None:
@@ -70,18 +97,19 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
     out_root = ensure_dir(runs_root / "eval")
 
     device = resolve_device(cfg["ranker"].get("device", "cuda"))
-    device_str = str(device)
     log_device(device, "Rerank eval")
-
-    model, item_base, teacher_item = _load_model(cfg, proc_root, device)
 
     news = pd.read_parquet(proc_root / "news.parquet")
     news_meta = build_news_meta(news)
 
-    eval_split = test_split_name(cfg)
+    rr_cfg = cfg["rerank"]
+    validate_rerank_config(rr_cfg)
+    protocol = resolve_rerank_protocol(cfg, require_frozen=True)
+    eval_split = protocol.reporting_split
     impr = pd.read_parquet(impression_artifact_path(proc_root, eval_split))
 
-    rr_cfg = cfg["rerank"]
+    scoring_assets = load_rerank_scoring_assets(cfg, proc_root, device)
+    teacher_item = scoring_assets.teacher_item
     k_out = int(rr_cfg["k_out"])
     pool_size = int(rr_cfg["pool_size"])
     pos_mode = rr_cfg.get("position_bias", "log")
@@ -90,213 +118,92 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
     nov_w = float(rr_cfg.get("novelty_weight", 0.10))
     cov_w = float(rr_cfg.get("coverage_weight", 0.05))
     novelty_sim = str(rr_cfg.get("novelty_sim", "teacher_cosine"))
+    relevance_normalization = str(
+        rr_cfg.get("relevance_normalization", "none")
+    )
     coverage_cfg = dict(rr_cfg.get("coverage", {}))
     fairness_cfg = dict(rr_cfg.get("fairness", {}))
     fairness_cfg["position_bias"] = pos_mode
 
-    base_ndcg = []
-    rr_ndcg = []
-    base_recall = []
-    rr_recall = []
-    base_ild = []
-    rr_ild = []
-    base_cat_cov = []
-    rr_cat_cov = []
-    base_ent = []
-    rr_ent = []
-    base_fair_kl_full = []
-    rr_fair_kl_full = []
-    base_fair_kl_pool = []
-    rr_fair_kl_pool = []
-    base_fair_gini = []
-    rr_fair_gini = []
-    base_new_exp = []
-    rr_new_exp = []
+    baseline_accumulator = MetricAccumulator()
+    reranked_accumulator = MetricAccumulator()
 
     with torch.no_grad():
         for _, r in tqdm(impr.iterrows(), total=len(impr), desc="Rerank eval"):
             labels = np.array(r["cand_label"], dtype=np.int32)
             if labels.sum() <= 0:
                 continue
-            user_idx = int(r["user_idx"])
-            hist_news_idx = [int(x) for x in list(r["hist_news_idx"])]
-            cand_news_id = list(r["cand_news_id"])
-            cand_news_idx = np.array(r["cand_news_idx"], dtype=np.int64)
-            cand_cat_idx = np.array(r["cand_cat_idx"], dtype=np.int64)
-            cand_subcat_idx = np.array(r["cand_subcat_idx"], dtype=np.int64)
-            cand_is_new = list(r["cand_is_new_item"])  # A binary list indicating whether each candidate news is a "new item" based on the training data
-            cand_is_new_arr = np.array(cand_is_new, dtype=np.int64)
-            cand_clicks_log1p = np.array(r["cand_item_clicks_log1p"], dtype=np.float32)
-            cand_cat_ref_full = [int(c) for c in cand_cat_idx.tolist() if int(c) != 0]
-            hlen = float(r["history_len"])
-            dense = np.stack(
-                [np.full_like(cand_clicks_log1p, hlen), cand_clicks_log1p], axis=1
+            prepared = prepare_rerank_score_group(r)
+            scores = score_rerank_groups(
+                scoring_assets,
+                [prepared],
+                device,
+            )[0]
+            scored = ScoredRerankImpression(
+                labels=labels,
+                cand_news_id=list(r["cand_news_id"]),
+                cand_news_idx=prepared["cand_news_idx"],
+                cand_is_new=prepared["cand_is_new"].astype(int).tolist(),
+                scores=scores,
+            )
+            baseline_accumulator.add(
+                baseline_metrics_for_impression(
+                    row=scored,
+                    teacher_item=teacher_item,
+                    news_meta=news_meta,
+                    k_out=k_out,
+                    pool_size=pool_size,
+                    position_bias=pos_mode,
+                    category_target=str(
+                        fairness_cfg.get("category_target", "catalog")
+                    ),
+                )
+            )
+            reranked_accumulator.add(
+                candidate_metrics_for_impression(
+                    row=scored,
+                    teacher_item=teacher_item,
+                    news_meta=news_meta,
+                    k_out=k_out,
+                    pool_size=pool_size,
+                    position_bias=pos_mode,
+                    coverage_cfg=coverage_cfg,
+                    fairness_cfg=fairness_cfg,
+                    relevance_weight=rel_w,
+                    novelty_weight=nov_w,
+                    coverage_weight=cov_w,
+                    novelty_sim=novelty_sim,
+                    relevance_normalization=relevance_normalization,
+                )
             )
 
-            # Score all candidates
-            logits = []
-            bs = 2048
-            for i in range(0, len(cand_news_idx), bs):
-                sl = slice(i, i + bs)
-                batch_size = len(cand_news_idx[sl])
-                b_user = torch.tensor(
-                    [user_idx] * batch_size, dtype=torch.long, device=device
-                )
-                b_news = torch.tensor(
-                    cand_news_idx[sl], dtype=torch.long, device=device
-                )
-                b_cat = torch.tensor(cand_cat_idx[sl], dtype=torch.long, device=device)
-                b_sub = torch.tensor(
-                    cand_subcat_idx[sl], dtype=torch.long, device=device
-                )
-                b_is_new = torch.tensor(
-                    cand_is_new_arr[sl], dtype=torch.long, device=device
-                )
-                b_dense = torch.tensor(dense[sl], dtype=torch.float32, device=device)
-                b_item_base = torch.tensor(
-                    item_base[cand_news_idx[sl]], dtype=torch.float32, device=device
-                )
-                b_hist_base, b_hist_mask = _expand_history_base(
-                    item_base=item_base,
-                    hist_idx=hist_news_idx,
-                    batch_size=batch_size,
-                    device=device,
-                )
-                logit, _ = model(
-                    user_idx=b_user,
-                    news_idx=b_news,
-                    cat_idx=b_cat,
-                    subcat_idx=b_sub,
-                    dense=b_dense,
-                    item_base=b_item_base,
-                    history_item_base=b_hist_base,
-                    history_mask=b_hist_mask,
-                    is_new_item=b_is_new,
-                )
-                logits.append(logit.detach().cpu().numpy())
-            scores = np.concatenate(logits, axis=0)
+    if baseline_accumulator.count == 0:
+        raise RuntimeError(
+            f"No labeled impressions with positive clicks were found in {eval_split!r}."
+        )
 
-            # Baseline: top-k_out by relevance
-            base_order = np.argsort(-scores)[:k_out]
-            base_ndcg.append(ndcg_at_k(labels, scores, k_out))
-            base_recall.append(recall_at_k(labels, scores, k_out))
-
-            base_ids = [cand_news_id[i] for i in base_order.tolist()]
-            base_cats = [_cat_idx(news_meta, nid) for nid in base_ids]
-            base_cat_cov.append(category_coverage([c for c in base_cats if c != 0]))
-            base_ent.append(entropy([c for c in base_cats if c != 0]))
-
-            # ILD via teacher cosine
-            base_emb = teacher_item[cand_news_idx[base_order]]
-            base_emb = base_emb / (
-                np.linalg.norm(base_emb, axis=1, keepdims=True) + 1e-12
-            )
-            base_ild.append(ild_from_similarity(cosine_sim_matrix(base_emb)))
-
-            # Exposure fairness (categories)
-            w = position_bias_weights(k_out, mode=pos_mode)
-            exp = normalize_dist(exposure_from_ranking(base_cats, w))
-            pool_order = np.argsort(-scores)[:pool_size]
-            cand_cat_ref_pool = [
-                int(cand_cat_idx[i]) for i in pool_order.tolist() if int(cand_cat_idx[i]) != 0
-            ]
-            tgt_full = _category_target_dist(
-                fairness_cfg.get("category_target", "catalog"), cand_cat_ref_full
-            )
-            tgt_pool = _category_target_dist(
-                fairness_cfg.get("category_target", "catalog"), cand_cat_ref_pool
-            )
-            # "tgt_full" and "tgt_pool" are not weighted by position bias since they represent the
-            # ideal distribution of relevant items in the catalog/pool, independent of ranking
-            # position, but they still can be compared against "exp".
-            base_fair_kl_full.append(kl_divergence(exp, tgt_full))
-            base_fair_kl_pool.append(kl_divergence(exp, tgt_pool))
-            base_fair_gini.append(gini(list(exp.values())))
-
-            base_new_exp.append(
-                _new_item_exposure_frac(w, base_order.tolist(), cand_is_new)
-            )
-
-            # Re-rank
-            pool_emb = teacher_item[cand_news_idx[pool_order]]
-            rr = greedy_rerank(
-                cand_news_id=cand_news_id,
-                cand_scores=scores,
-                cand_is_new=cand_is_new,
-                news_meta=news_meta,
-                item_teacher_emb=pool_emb,
-                k_out=k_out,
-                pool_size=pool_size,
-                relevance_weight=rel_w,
-                novelty_weight=nov_w,
-                coverage_weight=cov_w,
-                novelty_sim=novelty_sim,
-                coverage_cfg=coverage_cfg,
-                fairness_cfg=fairness_cfg,
-            )
-            rr_ids = rr["ranked_news_id"]
-            cand_idx_by_id = {nid: idx for idx, nid in enumerate(cand_news_id)}
-            rr_idx = [cand_idx_by_id[nid] for nid in rr_ids]
-            rr_ndcg.append(ndcg_from_order(labels, np.array(rr_idx), k_out))
-            rr_recall.append(recall_from_order(labels, np.array(rr_idx), k_out))
-
-            rr_cats = [_cat_idx(news_meta, nid) for nid in rr_ids]
-            rr_cat_cov.append(category_coverage([c for c in rr_cats if c != 0]))
-            rr_ent.append(entropy([c for c in rr_cats if c != 0]))
-
-            rr_emb = teacher_item[cand_news_idx[rr_idx]]
-            rr_emb = rr_emb / (np.linalg.norm(rr_emb, axis=1, keepdims=True) + 1e-12)
-            rr_ild.append(ild_from_similarity(cosine_sim_matrix(rr_emb)))
-
-            exp2 = normalize_dist(exposure_from_ranking(rr_cats, w))
-            rr_fair_kl_full.append(kl_divergence(exp2, tgt_full))
-            rr_fair_kl_pool.append(kl_divergence(exp2, tgt_pool))
-            rr_fair_gini.append(gini(list(exp2.values())))
-
-            rr_new_exp.append(_new_item_exposure_frac(w, rr_idx, cand_is_new))
-
+    baseline = baseline_accumulator.mean()
+    reranked = reranked_accumulator.mean()
     out = {
         "k_out": k_out,
         "pool_size": pool_size,
-        "baseline": {
-            "ndcg@k": float(np.mean(base_ndcg) if base_ndcg else 0.0),
-            "recall@k": float(np.mean(base_recall) if base_recall else 0.0),
-            "ild": float(np.mean(base_ild) if base_ild else 0.0),
-            "category_coverage": float(np.mean(base_cat_cov) if base_cat_cov else 0.0),
-            "category_entropy": float(np.mean(base_ent) if base_ent else 0.0),
-            "fairness_kl_full": float(
-                np.mean(base_fair_kl_full) if base_fair_kl_full else 0.0
-            ),
-            "fairness_kl_pool": float(
-                np.mean(base_fair_kl_pool) if base_fair_kl_pool else 0.0
-            ),
-            "fairness_gini": float(np.mean(base_fair_gini) if base_fair_gini else 0.0),
-            "new_item_exposure_frac": float(
-                np.mean(base_new_exp) if base_new_exp else 0.0
-            ),
-        },
-        "reranked": {
-            "ndcg@k": float(np.mean(rr_ndcg) if rr_ndcg else 0.0),
-            "recall@k": float(np.mean(rr_recall) if rr_recall else 0.0),
-            "ild": float(np.mean(rr_ild) if rr_ild else 0.0),
-            "category_coverage": float(np.mean(rr_cat_cov) if rr_cat_cov else 0.0),
-            "category_entropy": float(np.mean(rr_ent) if rr_ent else 0.0),
-            "fairness_kl_full": float(
-                np.mean(rr_fair_kl_full) if rr_fair_kl_full else 0.0
-            ),
-            "fairness_kl_pool": float(
-                np.mean(rr_fair_kl_pool) if rr_fair_kl_pool else 0.0
-            ),
-            "fairness_gini": float(np.mean(rr_fair_gini) if rr_fair_gini else 0.0),
-            "new_item_exposure_frac": float(np.mean(rr_new_exp) if rr_new_exp else 0.0),
-        },
+        "n_impressions_evaluated": baseline_accumulator.count,
+        "baseline": baseline,
+        "reranked": reranked,
+        "delta": _metric_deltas(baseline, reranked),
         "weights": {
             "relevance": rel_w,
             "novelty": nov_w,
             "coverage": cov_w,
         },
         "novelty_sim": novelty_sim,
+        "relevance_normalization": relevance_normalization,
+        "coverage": coverage_cfg,
+        "fairness": fairness_cfg,
         "position_bias": pos_mode,
         "eval_split": eval_split,
+        "scoring": scoring_assets.metadata,
+        "selection": protocol.selection,
     }
     save_json(out_root / "rerank_eval.json", out)
+    _write_rerank_report(out_root, out)

@@ -19,7 +19,7 @@
 ## Exposure fairness (list-level, top-K)
 Position-weighted exposure uses a bias curve v(pos) (log or linear).
 - **KL / L1 disparity**: compare exposure distribution vs target distribution (catalog or uniform).
-- **Gini**: inequality of exposure allocation across groups.
+- **Gini**: inequality of exposure allocation across the union of exposed categories and categories present in the pool target, including target categories that received zero exposure.
 - **New-item exposure fraction**: how much position-weighted exposure is allocated to items tagged as new/rare.
 - **fairness_kl_pool**: KL divergence between top-K exposure and the reranker's top-`pool_size` candidate mix.
 - **fairness_kl_full**: KL divergence between top-K exposure and the full impression candidate mix.
@@ -39,5 +39,6 @@ Target definition note:
     - Lower KL means the observed exposure pattern is closer to the target pattern.
 
 - Novelty is an anti-redundancy score used by the reranker. With `teacher_cosine`, it is `- max similarity(candidate, already_selected_items)`, so lower similarity means higher novelty.
+- Recommended reranker configs min-max normalize ranker logits within the accessible candidate pool before combining relevance with novelty and coverage. This changes score scale, not the baseline relevance order.
 - Coverage rewards adding new information to the list. In the current code this means bonus for a previously unseen category and bonus for previously unseen entities.
-- New-item exposure fraction is the fraction of total position-weighted exposure assigned to items flagged as new/rare (by train-click-count thresholds).
+- New-item exposure fraction is the fraction of total position-weighted exposure assigned to items flagged as new/rare (by train-click-count thresholds). `fairness.new_item_floor` is a soft reranking penalty target; search guardrails are the place to require a measured gain.

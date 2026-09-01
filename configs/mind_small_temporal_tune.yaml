@@ -110,11 +110,17 @@ ranker:
 rerank:
   k_out: 10
   pool_size: 50
+  eval_split: "val"  # Temporal tuning has no independent processed test split.
   position_bias: "log"
   relevance_weight: 0.875
   novelty_weight: 0.05
   coverage_weight: 0.075
   novelty_sim: "teacher_cosine"
+  relevance_normalization: "minmax"
+  scoring:
+    batch_size: 2048
+    item_encoding_batch_size: 8192
+    impression_batch_size: 128
   coverage:
     max_new_entities_per_item: 3
     category_bonus: 1.0
@@ -125,6 +131,20 @@ rerank:
     new_item_floor: 0.20
     penalty_weight: 0.25
   search:
+    seed: 13
+    sample_size: 500
+    shortlist_size: 10
+    novelty_sims: ["teacher_cosine"]
+    weight_pairs:
+      - [0.05, 0.05]
+      - [0.04, 0.05]
+      - [0.05, 0.04]
+      - [0.06, 0.05]
+      - [0.05, 0.06]
+      - [0.075, 0.05]
+      - [0.05, 0.075]
+    fairness_penalties: [0.20, 0.25, 0.30]
+    new_item_floors: [0.15, 0.175, 0.20]
     relative_guardrails:
       max_ndcg_drop_ratio: 0.021
       min_new_item_exposure_gain: 0.00

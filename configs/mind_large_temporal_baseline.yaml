@@ -11,8 +11,16 @@ data:
   min_user_hist_for_warm: 5
   min_item_train_clicks_for_warm: 10
   ranker_negatives_per_positive: 4
+  # This processed root is shared by random- and hard-negative experiments.
+  # Always retain the deterministic random-pair artifact needed by the baseline.
+  materialize_train_pairs: true
   temporal_validation:
     validation_start: "2019-11-14 00:00:00"
+    # Preserve combined val for upstream historical comparisons, but create
+    # separate chronological artifacts for the prospective reranker protocol.
+    rerank_reporting_start: "2019-11-15 00:00:00"
+    rerank_tuning_split_name: "rerank_tune"
+    rerank_reporting_split_name: "rerank_test"
   sub_sample:
     enabled: false
     train_impressions: 200000
@@ -108,11 +116,26 @@ ranker:
 rerank:
   k_out: 10
   pool_size: 50
+  eval_split: "rerank_test"  # Nov 15; run once after freezing the Day-1 selection.
+  selection:
+    require_frozen_for_eval: true
+    require_distinct_splits: true
+    require_provenance_for_eval: true
+    source_split: "rerank_tune"
+    reporting_split: "rerank_test"
+    search_artifact: null
+    decision_note: null
+    frozen: false  # Set true only after Day-1 priorities and parameters are final.
   position_bias: "log"
   relevance_weight: 0.875
   novelty_weight: 0.05
   coverage_weight: 0.075
   novelty_sim: "teacher_cosine"
+  relevance_normalization: "minmax"
+  scoring:
+    batch_size: 2048
+    item_encoding_batch_size: 8192
+    impression_batch_size: 128
   coverage:
     max_new_entities_per_item: 3
     category_bonus: 1.0
@@ -123,16 +146,54 @@ rerank:
     new_item_floor: 0.20
     penalty_weight: 0.25
   search:
+    split: "rerank_tune"  # Nov 14; all priority iteration stays on this split.
+    seed: 13
+    # A larger deterministic screen reduces shortlist churn observed with the
+    # earlier 2,000-impression sample; full validation remains bounded below.
+    sample_size: 5000
+    shortlist_size: 15
+    novelty_sims: ["teacher_cosine"]
+    weight_pairs:
+      - [0.00, 0.00]
+      - [0.025, 0.00]
+      - [0.00, 0.025]
+      - [0.025, 0.025]
+      - [0.05, 0.00]
+      - [0.00, 0.05]
+      - [0.05, 0.05]
+      - [0.04, 0.075]
+      - [0.05, 0.065]
+      - [0.075, 0.05]
+      - [0.05, 0.075]
+      - [0.06, 0.075]
+      - [0.05, 0.085]
+      - [0.10, 0.05]
+      - [0.05, 0.10]
+      - [0.10, 0.10]
+    fairness_penalties: [0.00, 0.10, 0.15, 0.175, 0.20, 0.225, 0.25, 0.30, 0.40]
+    new_item_floors: [0.00, 0.10, 0.20, 0.30]
+    # These guardrails and utility coefficients are provisional starting
+    # priorities. Iterate and document them on Nov 14 before freezing selection.
     relative_guardrails:
       max_ndcg_drop_ratio: 0.021
       min_new_item_exposure_gain: 0.00
       min_category_coverage_gain: 0.25
       min_fairness_kl_pool_improvement: 0.04
+    # One utility unit represents a product-meaningful change. In particular,
+    # a 1 percentage-point new-item gain is not divided by the disabled zero
+    # guardrail, and the full allowed nDCG drop consumes one relevance unit.
+    utility_scales:
+      ndcg_drop_ratio: 0.021
+      new_item_exposure_gain: 0.01
+      category_coverage_gain: 0.25
+      fairness_kl_pool_improvement: 0.04
     utility_coefficients:
       ndcg_retention_units: 4.0
       new_item_exposure_gain_units: 0.5
-      category_coverage_gain_units: 1.5
-      fairness_kl_pool_improvement_units: 1.5
+      # Coverage and category-fairness are correlated, so avoid counting each
+      # as heavily as before while retaining both views of the trade-off.
+      category_coverage_gain_units: 1.0
+      fairness_kl_pool_improvement_units: 1.0
 
 eval:
   report_splits: ["val"]
