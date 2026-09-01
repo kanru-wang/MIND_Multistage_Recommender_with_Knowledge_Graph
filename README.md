@@ -1,4 +1,4 @@
-# MIND Multi-Stage News Recommender (Retrieval -> DLRM+Knowledge_Graph Ranker; Optional Re-ranker)
+# MIND Multi-Stage News Recommender [Retrieval -> Ranker(DLRM+knowledge graph) -> Re-ranker]
 
 This project implements a realistic recommender stack on the **Microsoft News Dataset (MIND)**:
 - Preprocessing: prepare train/val/test data, click-count features, cold/new flags, impression-level eval data, and map IDs to indices.
