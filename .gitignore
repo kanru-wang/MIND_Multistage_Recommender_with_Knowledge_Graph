@@ -42,6 +42,7 @@ runs/mind_large_submission_item_age_residual_*/
 runs/mind_large_submission_item_trend_*/
 runs/mind_large_submission_hard_neg_*/
 runs/mind_large_submission_content_trend_*/
+runs/mind_large_ensemble*/submission/
 runs/mind_large_semantic_burst_*/
 runs/mind_large_content_trend_*/
 runs/mind_large_recency_tiebreaker_tune_*/

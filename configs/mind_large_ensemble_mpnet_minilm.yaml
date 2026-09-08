@@ -1,0 +1,30 @@
+run_name: "mind_large_ensemble_mpnet_minilm_rank_v1"
+
+data:
+  processed_root: "data/processed"
+  dataset_name: "MINDlarge_temporal_tune"
+
+ensemble:
+  # MPNet is primary so exact fusion ties fall back to the stronger model.
+  members:
+    - name: "mpnet_candidate_attention"
+      config: "configs/mind_large_temporal_mpnet.yaml"
+      prediction_zip: "runs/mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.zip"
+    - name: "minilm_candidate_attention"
+      config: "configs/mind_large_temporal_candidate_attention.yaml"
+      prediction_zip: "runs/mind_large_submission_text_adapt_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.zip"
+  method: "weighted_borda_rank_fusion"
+  primary_weight_grid: [0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95, 1.0]
+  tune_split: "rerank_tune"
+  report_split: "rerank_test"
+  device: "cuda"
+  batch_size: 2048
+  candidate_buffer_size: 65536
+  item_encoding_batch_size: 8192
+
+  # Selected by mean impression AUC on Nov 14 (rerank_tune). The frozen weight
+  # improved AUC again on Nov 15 (rerank_test), from 0.683811 to 0.684632.
+  selected_primary_weight: 0.75
+  selection_artifact: "runs/mind_large_ensemble_mpnet_minilm_rank_v1/ensemble/search.json"
+  frozen: true
+  expected_impressions: 2370727

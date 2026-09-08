@@ -623,7 +623,40 @@ start or end of the dataset.
 
 The official MIND evaluator reads `prediction.txt` lines as `impression_id [rank,...]`, where rank `1` is the highest-scored candidate. Local MIND metrics report AUC, MRR, nDCG@5, and nDCG@10 using the same per-impression ranking definitions as the official evaluator; leaderboard rank is primarily by AUC.
 
-### 3.6 Search reranker hyperparameters (optional)
+### 3.6 Ensemble MPNet and MiniLM
+
+The MPNet and selected candidate-attention MiniLM submissions can be combined
+without retraining. Their retained submission artifacts contain ranks rather
+than raw logits, so the supported method is weighted Borda rank fusion. The
+stronger MPNet member resolves exact fusion ties.
+
+The single MPNet weight was selected from a 0.00--1.00 grid on Nov 14 and then
+frozen before one report on Nov 15. Since these days were already used during
+upstream model development, this is transfer evidence rather than a new
+independent holdout.
+
+| Split | MiniLM AUC | MPNet AUC | 75% MPNet + 25% MiniLM AUC | Ensemble delta vs MPNet |
+| --- | ---: | ---: | ---: | ---: |
+| Nov 14 weight selection | 0.675224 | 0.693301 | **0.694412** | +0.001111 |
+| Nov 15 frozen-weight report | 0.667431 | 0.683811 | **0.684632** | +0.000820 |
+
+The frozen blend slightly reduced Nov 15 MRR (`-0.000807`), nDCG@5
+(`-0.000783`), and nDCG@10 (`-0.000284`) versus MPNet alone. It is retained as
+an AUC-targeted competition candidate because the MIND leaderboard's primary
+metric is AUC, not as a universal replacement for the single MPNet model.
+
+```powershell
+python -m mindrec.cli ensemble_search --config configs/mind_large_ensemble_mpnet_minilm.yaml
+python -m mindrec.cli ensemble_submission --config configs/mind_large_ensemble_mpnet_minilm.yaml
+```
+
+The completed hidden-test artifact is
+`runs/mind_large_ensemble_mpnet_minilm_rank_v1/submission/prediction.zip`. It
+contains 2,370,727 aligned impressions and passed rank-permutation, candidate-
+count, member-alignment, ZIP-integrity, and content-hash checks. Its hidden-test
+AUC is pending leaderboard evaluation.
+
+### 3.7 Search reranker hyperparameters (optional)
 
 Reranking is not part of the leaderboard submission, but this is a current
 workflow for demonstrating how to select a product-style relevance/diversity/fairness

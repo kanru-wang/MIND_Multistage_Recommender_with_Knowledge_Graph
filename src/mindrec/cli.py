@@ -6,6 +6,7 @@ from pathlib import Path
 from mindrec.config import load_config
 from mindrec.data.item_age import run_build_item_age
 from mindrec.pipeline.evaluate import run_evaluate
+from mindrec.pipeline.ensemble import run_ensemble_search, run_ensemble_submission
 from mindrec.pipeline.preprocess import (
     run_prepare_rerank_holdout,
     run_preprocess,
@@ -101,6 +102,18 @@ def main() -> None:
     _add_config_arg(p)
 
     p = sub.add_parser(
+        "ensemble_search",
+        help="Tune a rank-fusion weight on one labeled split and report it on another",
+    )
+    _add_config_arg(p)
+
+    p = sub.add_parser(
+        "ensemble_submission",
+        help="Fuse two aligned MIND prediction ZIPs with a frozen validation weight",
+    )
+    _add_config_arg(p)
+
+    p = sub.add_parser(
         "build_item_age",
         help="Build the first-seen article-age index used by alpha=0.02",
     )
@@ -147,6 +160,12 @@ def main() -> None:
         return
     if args.cmd == "write_submission":
         run_write_submission(cfg)
+        return
+    if args.cmd == "ensemble_search":
+        run_ensemble_search(cfg)
+        return
+    if args.cmd == "ensemble_submission":
+        run_ensemble_submission(cfg)
         return
     if args.cmd == "build_item_age":
         run_build_item_age(cfg)
