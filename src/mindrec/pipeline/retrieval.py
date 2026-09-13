@@ -13,12 +13,20 @@ from tqdm import tqdm
 from mindrec.config import ensure_dir
 from mindrec.data.featurize import IdMaps
 from mindrec.models.teacher import TeacherTwoTower
+from mindrec.pipeline.eval_slices import (
+    attach_time_periods as _attach_time_periods,
+    history_len_bucket as _history_len_bucket,
+    popularity_bucket as _popularity_bucket,
+    resolve_eval_splits as _resolve_eval_splits,
+    sanitize_slice_value as _sanitize_slice_value,
+)
 from mindrec.utils import (
     behavior_artifact_path,
     impression_artifact_path,
     load_json,
     save_json,
-    test_split_name,
+    teacher_artifact_root,
+    teacher_artifact_run_name,
     validation_split_name,
 )
 
@@ -44,11 +52,10 @@ def _build_index(item_emb: np.ndarray, index_type: str, ivf_nlist: int) -> faiss
 
 
 def run_build_index(cfg: dict[str, Any]) -> None:
-    ds = cfg["data"]["dataset_name"]
     runs_root = ensure_dir(Path("runs") / cfg["run_name"])
     art_root = ensure_dir(runs_root / "retrieval")
 
-    teacher_root = runs_root / "teacher"
+    teacher_root = teacher_artifact_root(cfg)
     item_emb = np.load(teacher_root / "item_teacher_emb.npy")
     item_base = np.load(teacher_root / "item_base_emb.npy")
 
@@ -72,8 +79,37 @@ def run_build_index(cfg: dict[str, Any]) -> None:
             "ivf_nlist": int(cfg["retrieval"].get("ivf_nlist", 2048)),
             "n_items": int(item_emb.shape[0]),
             "dim": int(item_emb.shape[1]),
+            "teacher_artifact_run_name": teacher_artifact_run_name(cfg),
         },
     )
+
+
+def _validate_retrieval_artifact_source(
+    cfg: dict[str, Any],
+    art_root: Path,
+) -> None:
+    meta_path = art_root / "meta.json"
+    if not meta_path.exists():
+        raise FileNotFoundError(
+            f"Retrieval metadata not found at {meta_path}. Run build_index first."
+        )
+    meta = load_json(meta_path)
+    expected = teacher_artifact_run_name(cfg)
+    recorded = meta.get("teacher_artifact_run_name")
+    if recorded is None:
+        # Backward compatibility is safe only for legacy indexes whose teacher
+        # lived in the same run as the index.
+        if expected != str(cfg["run_name"]):
+            raise ValueError(
+                f"Legacy retrieval index at {art_root} has no teacher provenance, "
+                f"but the config routes to teacher run {expected!r}. Rebuild it."
+            )
+        return
+    if str(recorded) != expected:
+        raise ValueError(
+            f"Retrieval index at {art_root} was built from teacher run "
+            f"{recorded!r}, not the configured {expected!r}. Rebuild it."
+        )
 
 
 def _dedupe_settings(settings: list[dict[str, int | float]]) -> list[dict[str, int | float]]:
@@ -124,85 +160,6 @@ def _retrieve_topk(
 
     ranked = sorted(combined.items(), key=lambda kv: kv[1], reverse=True)
     return {idx for idx, _ in ranked[:topk]}
-
-
-def _sanitize_slice_value(value: str) -> str:
-    text = str(value).strip().lower()
-    if not text:
-        return "unknown"
-    chars = [ch if ch.isalnum() else "_" for ch in text]
-    text = "".join(chars)
-    while "__" in text:
-        text = text.replace("__", "_")
-    return text.strip("_") or "unknown"
-
-
-def _history_len_bucket(history_len: int) -> str:
-    if history_len <= 0:
-        return "0"
-    if history_len <= 4:
-        return "1_4"
-    if history_len <= 20:
-        return "5_20"
-    return "21_plus"
-
-
-def _popularity_bucket(click_count: int) -> str:
-    if click_count <= 0:
-        return "0"
-    if click_count <= 4:
-        return "1_4"
-    if click_count <= 19:
-        return "5_19"
-    return "20_plus"
-
-
-def _resolve_eval_splits(cfg: dict[str, Any]) -> list[str]:
-    raw_splits = cfg.get("eval", {}).get("report_splits", ["test"])
-    resolved: list[str] = []
-    for split in raw_splits:
-        split_name = str(split)
-        if split_name == "val":
-            split_name = validation_split_name(cfg)
-        elif split_name == "test":
-            split_name = test_split_name(cfg)
-        if split_name not in resolved:
-            resolved.append(split_name)
-    return resolved
-
-
-def _attach_time_periods(df: pd.DataFrame, n_periods: int) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
-    out = df.copy()
-    out["time_period"] = "unknown"
-    meta: list[dict[str, Any]] = []
-
-    if n_periods <= 0 or "time" not in out.columns:
-        return out, meta
-
-    parsed = pd.to_datetime(out["time"], format="%m/%d/%Y %I:%M:%S %p", errors="coerce")
-    valid_idx = np.flatnonzero(parsed.notna().to_numpy())
-    if len(valid_idx) == 0:
-        return out, meta
-
-    order = np.argsort(parsed.iloc[valid_idx].to_numpy(dtype="datetime64[ns]"), kind="stable")
-    ordered_valid_idx = valid_idx[order]
-    chunks = np.array_split(ordered_valid_idx, min(n_periods, len(ordered_valid_idx)))
-
-    for i, chunk in enumerate(chunks, start=1):
-        if len(chunk) == 0:
-            continue
-        label = f"period_{i}_of_{len(chunks)}"
-        out.iloc[chunk, out.columns.get_loc("time_period")] = label
-        times = parsed.iloc[chunk]
-        meta.append(
-            {
-                "name": label,
-                "n_impressions": int(len(chunk)),
-                "time_min": str(times.min()),
-                "time_max": str(times.max()),
-            }
-        )
-    return out, meta
 
 
 def _evaluate_single_retrieval_split(
@@ -361,13 +318,14 @@ def _evaluate_retrieval_settings(
     if not settings:
         raise ValueError("At least one retrieval setting is required")
 
-    teacher_root = runs_root / "teacher"
+    teacher_root = teacher_artifact_root(cfg)
     item_emb = np.load(teacher_root / "item_teacher_emb.npy")
     item_base = np.load(teacher_root / "item_base_emb.npy")
     item_emb_tensor = torch.tensor(item_emb, dtype=torch.float32)
     item_base_tensor = torch.tensor(item_base, dtype=torch.float32)
     model_ckpt_path = teacher_root / "model.pt"
 
+    _validate_retrieval_artifact_source(cfg, art_root)
     index = faiss.read_index(str(art_root / "faiss.index"))
     base_index_path = art_root / "base_faiss.index"
     base_index = faiss.read_index(str(base_index_path)) if base_index_path.exists() else None
@@ -499,12 +457,13 @@ def run_eval_retrieval(cfg: dict[str, Any]) -> None:
     art_root = ensure_dir(runs_root / "retrieval")
     ds = cfg["data"]["dataset_name"]
     proc_root = Path(cfg["data"]["processed_root"]) / ds
-    teacher_root = runs_root / "teacher"
+    teacher_root = teacher_artifact_root(cfg)
 
     item_emb = np.load(teacher_root / "item_teacher_emb.npy")
     item_base = np.load(teacher_root / "item_base_emb.npy")
     item_emb_tensor = torch.tensor(item_emb, dtype=torch.float32)
     item_base_tensor = torch.tensor(item_base, dtype=torch.float32)
+    _validate_retrieval_artifact_source(cfg, art_root)
     index = faiss.read_index(str(art_root / "faiss.index"))
     base_index_path = art_root / "base_faiss.index"
     base_index = faiss.read_index(str(base_index_path)) if base_index_path.exists() else None

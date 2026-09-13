@@ -1,8 +1,11 @@
 extends: "mind_large_submission.yaml"
 
-# Encoder/teacher artifact run. The adapted encoder is produced by
+# Teacher artifact run. The adapted encoder is produced in a separate run by
 # mind_large_submission_mpnet_text_continue.yaml before this config is used.
 run_name: "mind_large_submission_mpnet_v1"
+
+artifacts:
+  text_encoder_run_name: "mind_large_submission_mpnet_text_continue_v1"
 
 teacher:
   model_name: "sentence-transformers/all-mpnet-base-v2"

@@ -22,6 +22,10 @@ from mindrec.pipeline.retrieval import (
 from mindrec.pipeline.submission import run_write_submission
 from mindrec.pipeline.teacher_train import run_train_teacher
 from mindrec.pipeline.text_encoder_adapt import run_adapt_text_encoder
+from mindrec.pipeline.text_encoder_sweep import (
+    run_adapt_text_encoder_sweep,
+    run_promote_text_encoder_sweep,
+)
 
 
 def _add_config_arg(p: argparse.ArgumentParser) -> None:
@@ -48,6 +52,18 @@ def main() -> None:
 
     p = sub.add_parser(
         "adapt_text_encoder", help="MIND-adapt the sentence-transformer from labeled impressions"
+    )
+    _add_config_arg(p)
+
+    p = sub.add_parser(
+        "adapt_text_encoder_sweep",
+        help="Select text-adaptation learning rate, temperature, and optimizer update",
+    )
+    _add_config_arg(p)
+
+    p = sub.add_parser(
+        "promote_text_encoder_sweep",
+        help="Generate Phase 2/3 configs wired to the selected text encoder",
     )
     _add_config_arg(p)
 
@@ -120,6 +136,12 @@ def main() -> None:
         return
     if args.cmd == "adapt_text_encoder":
         run_adapt_text_encoder(cfg)
+        return
+    if args.cmd == "adapt_text_encoder_sweep":
+        run_adapt_text_encoder_sweep(cfg)
+        return
+    if args.cmd == "promote_text_encoder_sweep":
+        run_promote_text_encoder_sweep(cfg)
         return
     if args.cmd == "build_index":
         run_build_index(cfg)

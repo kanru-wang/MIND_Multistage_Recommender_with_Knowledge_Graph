@@ -12,6 +12,7 @@ $SubmissionConfig = Join-Path $RepoRoot "configs\mind_large_submission_mpnet.yam
 $CandidateConfig = Join-Path $RepoRoot "configs\mind_large_submission_mpnet_candidate_attention.yaml"
 $RecencyConfig = Join-Path $RepoRoot "configs\mind_large_submission_mpnet_candidate_attention_recency_alpha_002.yaml"
 $TemporalRun = "mind_large_temporal_mpnet_candidate_attention_v1"
+$SubmissionEncoderRun = "mind_large_submission_mpnet_text_continue_v1"
 $SubmissionTeacherRun = "mind_large_submission_mpnet_v1"
 $SubmissionRankerRun = "mind_large_submission_mpnet_candidate_attention_low_lr_2ep_v1"
 $SubmissionOutputRun = "mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1"
@@ -92,8 +93,8 @@ function Assert-MpnetTemporalSelection {
 }
 
 function Test-CompatibleContinuation {
-    $MetaPath = Join-Path $RepoRoot "runs\$SubmissionTeacherRun\text_encoder\meta.json"
-    $ModelPath = Join-Path $RepoRoot "runs\$SubmissionTeacherRun\text_encoder\model\modules.json"
+    $MetaPath = Join-Path $RepoRoot "runs\$SubmissionEncoderRun\text_encoder\meta.json"
+    $ModelPath = Join-Path $RepoRoot "runs\$SubmissionEncoderRun\text_encoder\model\modules.json"
     if (-not (Test-Path -LiteralPath $MetaPath)) {
         return $false
     }
@@ -128,8 +129,14 @@ function Test-CompatibleTeacher {
         [int]$Meta.item_base_dim -ne 768 -or
         [int]$Meta.epochs -ne 4 -or
         [int]$Meta.best_epoch -ne 4 -or
-        $Meta.selection_mode -ne "fixed_epoch") {
+        $Meta.selection_mode -ne "fixed_epoch" -or
+        [double]$Meta.weight_decay -ne 1.0e-6) {
         throw "Existing MPNet submission teacher is incompatible: $(Join-Path $TeacherRoot 'meta.json')"
+    }
+    $ExpectedEncoderSource = "runs\$SubmissionEncoderRun\text_encoder\model"
+    if ($Meta.text_encoder_artifact_run_name -ne $SubmissionEncoderRun -or
+        $Meta.text_encoder_source -ne $ExpectedEncoderSource) {
+        throw "Existing MPNet teacher references encoder run $($Meta.text_encoder_artifact_run_name), not $SubmissionEncoderRun."
     }
     return $true
 }

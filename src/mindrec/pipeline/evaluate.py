@@ -21,6 +21,13 @@ from mindrec.metrics.ranking import (
 )
 from mindrec.models.calibration import TemperatureScaler
 from mindrec.models.dlrm import DLRMStudent
+from mindrec.pipeline.eval_slices import (
+    attach_time_periods as _attach_time_periods,
+    history_len_bucket as _history_len_bucket,
+    popularity_bucket as _popularity_bucket,
+    resolve_eval_splits as _resolve_eval_splits,
+    sanitize_slice_value as _sanitize_slice_value,
+)
 from mindrec.pipeline.ranker_scoring import (
     precompute_item_semantics,
     score_prepared_groups,
@@ -32,8 +39,6 @@ from mindrec.utils import (
     resolve_device,
     save_json,
     teacher_artifact_root,
-    test_split_name,
-    validation_split_name,
 )
 
 
@@ -110,88 +115,8 @@ def _load_model(
     return model, item_base, teacher_item
 
 
-def _sanitize_slice_value(value: str) -> str:
-    text = str(value).strip().lower()
-    if not text:
-        return "unknown"
-    chars = [ch if ch.isalnum() else "_" for ch in text]
-    text = "".join(chars)
-    while "__" in text:
-        text = text.replace("__", "_")
-    return text.strip("_") or "unknown"
-
-
-def _history_len_bucket(history_len: float) -> str:
-    h = int(round(float(history_len)))
-    if h <= 0:
-        return "0"
-    if h <= 4:
-        return "1_4"
-    if h <= 20:
-        return "5_20"
-    return "21_plus"
-
-
 def _click_count_from_log1p(clicks_log1p: float) -> int:
     return max(0, int(round(float(np.expm1(clicks_log1p)))))
-
-
-def _popularity_bucket(click_count: int) -> str:
-    if click_count <= 0:
-        return "0"
-    if click_count <= 4:
-        return "1_4"
-    if click_count <= 19:
-        return "5_19"
-    return "20_plus"
-
-
-def _resolve_eval_splits(cfg: dict[str, Any]) -> list[str]:
-    raw_splits = cfg.get("eval", {}).get("report_splits", ["test"])
-    resolved: list[str] = []
-    for split in raw_splits:
-        split_name = str(split)
-        if split_name == "val":
-            split_name = validation_split_name(cfg)
-        elif split_name == "test":
-            split_name = test_split_name(cfg)
-        if split_name not in resolved:
-            resolved.append(split_name)
-    return resolved
-
-
-def _attach_time_periods(impr: pd.DataFrame, n_periods: int) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
-    out = impr.copy()
-    out["time_period"] = "unknown"
-    meta: list[dict[str, Any]] = []
-
-    if n_periods <= 0 or "time" not in out.columns:
-        return out, meta
-
-    parsed = pd.to_datetime(out["time"], format="%m/%d/%Y %I:%M:%S %p", errors="coerce")
-    valid_idx = np.flatnonzero(parsed.notna().to_numpy())
-    if len(valid_idx) == 0:
-        return out, meta
-
-    order = np.argsort(parsed.iloc[valid_idx].to_numpy(dtype="datetime64[ns]"), kind="stable")
-    ordered_valid_idx = valid_idx[order]
-    period_chunks = np.array_split(ordered_valid_idx, min(n_periods, len(ordered_valid_idx)))
-
-    for i, chunk in enumerate(period_chunks, start=1):
-        if len(chunk) == 0:
-            continue
-        label = f"period_{i}_of_{len(period_chunks)}"
-        out.iloc[chunk, out.columns.get_loc("time_period")] = label
-        times = parsed.iloc[chunk]
-        meta.append(
-            {
-                "name": label,
-                "n_impressions": int(len(chunk)),
-                "time_min": str(times.min()),
-                "time_max": str(times.max()),
-            }
-        )
-    return out, meta
 
 
 def _attach_behavior_time(impr: pd.DataFrame, beh: pd.DataFrame) -> pd.DataFrame:

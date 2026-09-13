@@ -36,6 +36,7 @@ runs/mind_large_tune*/
 runs/mind_large_temporal_hard_neg*/
 runs/mind_large_temporal_text_adapt*/
 runs/mind_large_submission_text_adapt*/
+runs/mind_large_submission_text_continue*/
 runs/mind_large_submission*/submission/
 runs/mind_small_temporal_tune_ranker_lr_*/
 runs/mind_large_submission_item_age_residual_*/

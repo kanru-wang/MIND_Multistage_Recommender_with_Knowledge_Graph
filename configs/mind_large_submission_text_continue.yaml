@@ -1,6 +1,6 @@
 extends: "mind_large_temporal_text_adapt.yaml"
 
-run_name: "mind_large_submission_text_adapt_v1"
+run_name: "mind_large_submission_text_continue_v1"
 
 teacher:
   text_adaptation:

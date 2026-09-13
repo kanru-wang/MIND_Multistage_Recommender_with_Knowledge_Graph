@@ -1,5 +1,10 @@
 run_name: "mind_large_submission_text_adapt_v1"
 
+# The continued encoder has its own run so training it cannot overwrite or be
+# mistaken for the teacher/ranker artifacts produced by this config.
+artifacts:
+  text_encoder_run_name: "mind_large_submission_text_continue_v1"
+
 data:
   raw_root: "data/raw"
   dataset_name: "MINDlarge_submission"
@@ -44,6 +49,7 @@ teacher:
   user_attn_heads: 4
   user_attn_dim: 384
   lr: 2.0e-4
+  weight_decay: 1.0e-6
   epochs: 4
   early_stopping:
     enabled: false

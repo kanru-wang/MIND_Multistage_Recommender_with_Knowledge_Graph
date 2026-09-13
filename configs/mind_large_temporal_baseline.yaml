@@ -51,6 +51,7 @@ teacher:
   user_attn_heads: 4
   user_attn_dim: 384
   lr: 2.0e-4
+  weight_decay: 1.0e-6
   epochs: 8
   early_stopping:
     enabled: true

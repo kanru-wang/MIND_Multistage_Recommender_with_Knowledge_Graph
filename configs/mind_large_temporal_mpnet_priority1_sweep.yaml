@@ -1,0 +1,44 @@
+extends: "mind_large_temporal_mpnet.yaml"
+
+# Isolate all priority-1 tuning artifacts from the promoted MPNet run.
+run_name: "mind_large_temporal_mpnet_p1_sweep"
+
+teacher:
+  text_adaptation:
+    sweep:
+      # Staged runs 3 LR variants at temperature 0.05, then the two remaining
+      # temperatures at the selected LR (5 runs total). Set strategy to "grid"
+      # for the complete 3 x 3 interaction grid (9 runs total).
+      strategy: "staged"
+      lrs: [1.0e-5, 2.0e-5, 3.0e-5]
+      temperatures: [0.03, 0.05, 0.08]
+      baseline_temperature: 0.05
+
+      # MPNet previously peaked at update 9,000. Check more finely and leave
+      # room for the lower-LR variants to mature. Six 500-update misses retain
+      # the original sweep's 3,000-update early-stopping horizon.
+      max_optimizer_updates: 12000
+      validation_interval_updates: 500
+      patience: 6
+      min_delta: 1.0e-4
+      reuse_completed: true
+
+      # `promote_text_encoder_sweep` writes resolved Phase 2/3 configs with
+      # explicit encoder/teacher/ranker artifact routes. These names are kept
+      # separate from the proven 0.6948 submission artifacts.
+      promotion:
+        # The 1e-5 run completed before the sweep was stopped manually and
+        # improved on the established 2e-5 reference (0.687240 vs 0.685648).
+        # Preserve that expensive result and make the partial decision explicit.
+        allow_partial: true
+        selection_note: "Promote the completed 1e-5 candidate after manual interruption; it beat the established 2e-5 reference (0.687240 vs 0.685648)."
+        phase2_run_name: "mind_large_temporal_mpnet_p1_promoted"
+        phase3_encoder_run_name: "mind_large_submission_mpnet_p1_text_continue"
+        phase3_teacher_run_name: "mind_large_submission_mpnet_p1_teacher"
+        phase3_ranker_run_name: "mind_large_submission_mpnet_p1_ranker"
+        phase3_output_run_name: "mind_large_submission_mpnet_p1_output"
+        continuation_updates: 2000
+        submission_continuation_config: "configs/mind_large_submission_mpnet_text_continue.yaml"
+        submission_teacher_config: "configs/mind_large_submission_mpnet.yaml"
+        submission_ranker_config: "configs/mind_large_submission_mpnet_candidate_attention.yaml"
+        submission_output_config: "configs/mind_large_submission_mpnet_candidate_attention_recency_alpha_002.yaml"

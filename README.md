@@ -443,6 +443,40 @@ objective on Large Temporal Val; early stopping selected update 9,000. This
 phase selects only the text encoder—it does not yet train the final two-tower
 teacher or student ranker.
 
+To retune the backbone-specific Phase 1 learning rate, contrastive temperature,
+and selected optimizer update without touching the promoted run, use:
+
+```powershell
+python -m mindrec.cli adapt_text_encoder_sweep --config configs/mind_large_temporal_mpnet_priority1_sweep.yaml
+```
+
+The default staged search trains three learning rates at temperature `0.05`,
+then tests `0.03` and `0.08` at the best learning rate. Each variant validates
+every 500 updates for at most 12,000 updates. Six unsuccessful validations keep
+the original 3,000-update patience horizon. Set `strategy: grid` in the sweep
+config to run all nine LR/temperature combinations. Completed compatible
+variants are reused only when a full provenance fingerprint matches (effective
+adaptation settings, data/split identity, preprocessing metadata, continuation
+source, and relevant implementation files). The combined selection artifact is
+written to `runs/mind_large_temporal_mpnet_p1_sweep/tuning/text_encoder_priority1_sweep/sweep.json`.
+
+  After the sweep completes, generate resolved Phase 2 and Phase 3 configs wired
+to the actual winning encoder:
+
+```powershell
+  python -m mindrec.cli promote_text_encoder_sweep --config configs/mind_large_temporal_mpnet_priority1_sweep.yaml
+  ```
+
+  Promotion normally requires every planned variant. If a long sweep is stopped
+  deliberately, partial promotion must be enabled explicitly with a documented
+  `selection_note`; the command records the incomplete count and revalidates the
+  selected model, history, metadata, and provenance before writing any configs.
+
+This validates the winner's provenance and writes `promotion.json` plus five
+generated YAML files beside `sweep.json`. The manifest lists the exact commands
+for temporal teacher/ranker evaluation and the locked maximum-data continuation.
+All promoted run names are isolated from the verified `0.6948` submission.
+
 For each training impression, MPNet encodes every article as
 `title [SEP] abstract`; the mean of up to 10 clicked-history embeddings becomes
 the temporary user vector. A temperature-scaled contrastive loss trains the
@@ -506,7 +540,9 @@ The orchestration script uses these config roles:
   Phases 1–2 and records the already-frozen reranker policy.
 - `mind_large_submission_mpnet_text_continue.yaml` continues the selected
   update-9,000 encoder for exactly 2,000 successful optimizer updates on Large
-  Temporal Val, without another early-stopping decision.
+  Temporal Val, without another early-stopping decision. Its encoder artifact
+  run is `mind_large_submission_mpnet_text_continue_v1`, separate from the
+  teacher run below.
 - `mind_large_submission_mpnet.yaml` and
   `mind_large_submission_mpnet_candidate_attention.yaml` train the teacher for
   four complete epochs and the candidate-attention ranker for two complete

@@ -37,11 +37,6 @@ def kl_divergence(
     return float(s)
 
 
-def l1_distance(p: dict[int, float], q: dict[int, float]) -> float:
-    keys = set(p) | set(q)
-    return float(sum(abs(p.get(k, 0.0) - q.get(k, 0.0)) for k in keys))
-
-
 def gini(values: list[float]) -> float:
     x = np.array(values, dtype=np.float32)
     if x.size == 0:

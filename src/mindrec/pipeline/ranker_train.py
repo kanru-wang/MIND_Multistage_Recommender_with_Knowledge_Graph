@@ -18,6 +18,8 @@ from mindrec.models.calibration import fit_temperature_scaler
 from mindrec.models.dlrm import DLRMStudent
 from mindrec.models.distill import (
     distillation_history_masks,
+    pairwise_logit_distill_bce,
+    repr_distill_mse,
     representation_distillation_dims,
     select_representation_distillation_inputs,
 )
@@ -328,9 +330,11 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
 
             # teacher logit as cosine / inner product (embeddings are normalized)
             tlogit = (tu * ti).sum(dim=1)
-            target = torch.sigmoid(tlogit / temp)
-            loss_logit = nn.functional.binary_cross_entropy_with_logits(
-                logits, target, reduction="none"
+            loss_logit = pairwise_logit_distill_bce(
+                logits,
+                tlogit,
+                temp,
+                reduction="none",
             )
 
             student_repr_input, t_repr = select_representation_distillation_inputs(
@@ -341,7 +345,11 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
                 target=representation_target,
             )
             s_repr = proj(student_repr_input)
-            loss_repr = ((s_repr - t_repr) ** 2).mean(dim=1)
+            loss_repr = repr_distill_mse(
+                s_repr,
+                t_repr,
+                reduction="none",
+            ).mean(dim=1)
 
             cold_mask = (
                 (batch["is_cold_user"] == 1) | (batch["is_new_item"] == 1)
@@ -452,6 +460,12 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     save_json(
         art_root / "train_summary.json",
         {
+            "provenance_fingerprint": cfg.get("_runtime_provenance", {}).get(
+                "ranker_training_fingerprint"
+            ),
+            "provenance": cfg.get("_runtime_provenance", {}).get(
+                "ranker_training_payload"
+            ),
             "validation_split_name": val_split,
             "has_validation": has_validation,
             "best_val_auc": best_auc if has_validation else None,

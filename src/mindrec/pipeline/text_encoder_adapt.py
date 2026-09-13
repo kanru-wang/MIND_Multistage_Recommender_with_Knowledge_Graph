@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +36,179 @@ class TextAdaptSample:
     history: list[int]
     positive: int
     negatives: list[int]
+
+
+@lru_cache(maxsize=32)
+def _sha256_file_state(path_text: str, size: int, mtime_ns: int) -> str:
+    del mtime_ns  # It intentionally participates in the cache key.
+    digest = hashlib.sha256()
+    path = Path(path_text)
+    show_progress = size >= 8 * 1024 * 1024
+    with open(path, "rb") as handle, tqdm(
+        total=size,
+        desc=f"Fingerprint {path.name}",
+        unit="B",
+        unit_scale=True,
+        unit_divisor=1024,
+        disable=not show_progress,
+        dynamic_ncols=True,
+    ) as progress:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+            progress.update(len(chunk))
+    return digest.hexdigest()
+
+
+def _sha256_file(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    stat = path.stat()
+    return _sha256_file_state(
+        str(path.resolve()),
+        stat.st_size,
+        stat.st_mtime_ns,
+    )
+
+
+def _artifact_signature(path: Path, *, content_hash: bool = False) -> dict[str, Any]:
+    return {
+        "path": str(path.resolve()),
+        "exists": path.is_file(),
+        "size_bytes": path.stat().st_size if path.is_file() else None,
+        "sha256": _sha256_file(path) if content_hash else None,
+    }
+
+
+def text_adaptation_provenance(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Return the complete, canonical identity of a text-adaptation run."""
+    teacher_cfg = dict(cfg["teacher"])
+    adaptation = dict(teacher_cfg.get("text_adaptation", {}))
+    adaptation.pop("sweep", None)
+    early_cfg = dict(adaptation.get("early_stopping", {}))
+    data_cfg = dict(cfg["data"])
+    seed = int(data_cfg.get("sub_sample", {}).get("seed", 13))
+    proc_root = Path(data_cfg["processed_root"]) / str(data_cfg["dataset_name"])
+    training_split = str(adaptation.get("training_split", "train"))
+    initial_run = adaptation.get("initial_model_from_run")
+
+    effective_settings = {
+        "enabled": bool(adaptation.get("enabled", False)),
+        "base_model_name": str(teacher_cfg["model_name"]),
+        "include_category_prefix": bool(
+            teacher_cfg.get("text", {}).get("include_category_prefix", False)
+        ),
+        "device": str(adaptation.get("device", teacher_cfg.get("device", "cuda"))),
+        "local_files_only": bool(
+            adaptation.get(
+                "local_files_only",
+                teacher_cfg.get("local_files_only", True),
+            )
+        ),
+        "gradient_checkpointing": bool(
+            adaptation.get("gradient_checkpointing", False)
+        ),
+        "mixed_precision": str(adaptation.get("mixed_precision", "none")).lower(),
+        "encoder_forward_batch_size": adaptation.get("encoder_forward_batch_size"),
+        "encode_batch_size": int(adaptation.get("encode_batch_size", 256)),
+        "training_split": training_split,
+        "max_history": int(adaptation.get("max_history", 10)),
+        "negatives_per_positive": int(
+            adaptation.get("negatives_per_positive", 4)
+        ),
+        "hard_fraction": float(adaptation.get("hard_fraction", 0.25)),
+        "hard_pool_size": int(adaptation.get("hard_pool_size", 20)),
+        "teacher_consistent_hard_only": bool(
+            adaptation.get("teacher_consistent_hard_only", True)
+        ),
+        "max_score_above_positive": float(
+            adaptation.get("max_score_above_positive", 0.0)
+        ),
+        "hard_for_cold_users_only": bool(
+            adaptation.get("hard_for_cold_users_only", False)
+        ),
+        "batch_size": int(adaptation.get("batch_size", 16)),
+        "lr": float(adaptation.get("lr", 2.0e-5)),
+        "weight_decay": float(adaptation.get("weight_decay", 0.01)),
+        "temperature": float(adaptation.get("temperature", 0.05)),
+        "gradient_accumulation_steps": int(
+            adaptation.get("gradient_accumulation_steps", 1)
+        ),
+        "max_optimizer_updates": int(
+            adaptation.get("max_optimizer_updates", 10_000)
+        ),
+        "early_stopping": {
+            "enabled": bool(early_cfg.get("enabled", False)),
+            "validation_interval_updates": int(
+                early_cfg.get("validation_interval_updates", 1_000)
+            ),
+            "patience": int(early_cfg.get("patience", 3)),
+            "min_delta": float(early_cfg.get("min_delta", 1.0e-4)),
+        },
+        "initial_model_from_run": (
+            None if initial_run is None else str(initial_run)
+        ),
+        "expected_initial_update": adaptation.get("expected_initial_update"),
+    }
+    implementation_paths = [
+        Path(__file__),
+        Path(__file__).with_name("hard_negative_sampling.py"),
+        Path(__file__).with_name("teacher_train.py"),
+    ]
+    payload: dict[str, Any] = {
+        "schema_version": 1,
+        "effective_settings": effective_settings,
+        "data": {
+            "dataset_name": str(data_cfg["dataset_name"]),
+            "processed_root": str(proc_root.resolve()),
+            "min_user_hist_for_warm": int(data_cfg["min_user_hist_for_warm"]),
+            "seed": seed,
+            "preprocess_meta": _artifact_signature(
+                proc_root / "preprocess_meta.json",
+                content_hash=True,
+            ),
+            "id_maps": _artifact_signature(
+                proc_root / "id_maps.json",
+                content_hash=True,
+            ),
+            "news": _artifact_signature(
+                proc_root / "news.parquet",
+                content_hash=True,
+            ),
+            "training_behaviors": _artifact_signature(
+                behavior_artifact_path(proc_root, training_split),
+                content_hash=True,
+            ),
+            "validation_behaviors": (
+                _artifact_signature(
+                    behavior_artifact_path(proc_root, "val"),
+                    content_hash=True,
+                )
+                if effective_settings["early_stopping"]["enabled"]
+                else None
+            ),
+        },
+        "initial_model_meta": (
+            _artifact_signature(
+                Path("runs") / str(initial_run) / "text_encoder" / "meta.json",
+                content_hash=True,
+            )
+            if initial_run is not None
+            else None
+        ),
+        "implementation": {
+            path.name: _sha256_file(path) for path in implementation_paths
+        },
+    }
+    canonical = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return {
+        "fingerprint": hashlib.sha256(canonical).hexdigest(),
+        "payload": payload,
+    }
 
 
 def _enable_gradient_checkpointing(model: SentenceTransformer) -> str:
@@ -452,12 +628,18 @@ def run_adapt_text_encoder(cfg: dict[str, Any]) -> None:
     adaptation = dict(cfg["teacher"].get("text_adaptation", {}))
     if not adaptation.get("enabled", False):
         raise ValueError("teacher.text_adaptation.enabled must be true")
+    print(
+        f"Preparing text-encoder adaptation run {cfg['run_name']!r}...",
+        flush=True,
+    )
+    provenance = text_adaptation_provenance(cfg)
     seed = int(cfg["data"].get("sub_sample", {}).get("seed", 13))
     set_seed(seed)
     device = resolve_device(adaptation.get("device", cfg["teacher"].get("device", "cuda")))
     log_device(device, "Text encoder adaptation")
     proc_root = Path(cfg["data"]["processed_root"]) / cfg["data"]["dataset_name"]
     art_root = ensure_dir(Path("runs") / cfg["run_name"] / "text_encoder")
+    print(f"Loading processed data from {proc_root}...", flush=True)
     maps = IdMaps.load(proc_root / "id_maps.json")
     news = pd.read_parquet(proc_root / "news.parquet")
     include_prefix = bool(cfg["teacher"].get("text", {}).get("include_category_prefix", False))
@@ -519,6 +701,11 @@ def run_adapt_text_encoder(cfg: dict[str, Any]) -> None:
         )
     behaviors = pd.read_parquet(training_behavior_path)
     valid_indices = _referenced_news_indices(behaviors, maps)
+    print(
+        f"Encoding {len(valid_indices):,} referenced articles for hard-negative "
+        "sampling...",
+        flush=True,
+    )
     baseline[valid_indices] = model.encode(
         [texts_by_idx[index] for index in valid_indices],
         batch_size=encode_batch_size,
@@ -727,6 +914,8 @@ def run_adapt_text_encoder(cfg: dict[str, Any]) -> None:
     save_json(
         art_root / "meta.json",
         {
+            "provenance_fingerprint": provenance["fingerprint"],
+            "provenance": provenance["payload"],
             "base_model_name": cfg["teacher"]["model_name"],
             "embedding_dimension": int(model.get_embedding_dimension()),
             "configured_local_files_only": configured_local_files_only,
@@ -787,6 +976,7 @@ def run_adapt_text_encoder(cfg: dict[str, Any]) -> None:
             "best_val_impression_auc": best_auc if early_enabled else None,
             "early_stopping_enabled": early_enabled,
             "early_stopping_patience": patience if early_enabled else None,
+            "early_stopping_min_delta": min_delta if early_enabled else None,
             "validation_interval_updates": validation_interval if early_enabled else None,
             "stop_reason": stop_reason,
             **sample_dataset.last_stats,

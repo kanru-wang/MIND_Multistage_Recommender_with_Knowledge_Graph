@@ -24,6 +24,8 @@ from mindrec.utils import (
     resolve_device,
     save_json,
     set_seed,
+    text_encoder_artifact_root,
+    text_encoder_artifact_run_name,
     validation_split_name,
 )
 
@@ -390,6 +392,9 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
         raise ValueError("teacher.encode_batch_size must be at least 1")
     epochs = int(teacher_cfg.get("epochs", 1))
     lr = float(teacher_cfg.get("lr", 2.0e-4))
+    weight_decay = float(teacher_cfg.get("weight_decay", 1.0e-6))
+    if not np.isfinite(weight_decay) or weight_decay < 0.0:
+        raise ValueError("teacher.weight_decay must be finite and non-negative")
     hidden_dim = int(teacher_cfg.get("user_attn_dim", 256))
     heads = int(teacher_cfg.get("user_attn_heads", 4))
     dropout = float(teacher_cfg.get("dropout", 0.1))
@@ -405,7 +410,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
     monitor_name = str(es_cfg.get("monitor", "retrieval_recall@k"))
 
     adaptation_cfg = dict(teacher_cfg.get("text_adaptation", {}))
-    adapted_model_path = Path("runs") / cfg["run_name"] / "text_encoder" / "model"
+    adapted_model_path = text_encoder_artifact_root(cfg) / "model"
     use_adapted = bool(adaptation_cfg.get("enabled", False))
     if use_adapted and not adapted_model_path.exists():
         raise FileNotFoundError(
@@ -486,7 +491,11 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
         heads=heads,
         dropout=dropout,
     ).to(device)
-    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1.0e-6)
+    opt = torch.optim.AdamW(
+        model.parameters(),
+        lr=lr,
+        weight_decay=weight_decay,
+    )
 
     train_loss_mean = 0.0
     best_metric = float("-inf")
@@ -577,6 +586,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
                     "hidden_dim": hidden_dim,
                     "heads": heads,
                     "dropout": dropout,
+                    "weight_decay": weight_decay,
                     "state_dict": model.state_dict(),
                     "epoch": epoch,
                     "train_loss_mean": train_loss_mean,
@@ -631,6 +641,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
             "hidden_dim": hidden_dim,
             "heads": heads,
             "dropout": dropout,
+            "weight_decay": weight_decay,
             "state_dict": model.state_dict(),
             "best_epoch": best_epoch,
             "best_val_loss_mean": best_val_loss_mean,
@@ -643,6 +654,9 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
     meta = {
         "model_name": teacher_cfg["model_name"],
         "text_encoder_source": encoder_source,
+        "text_encoder_artifact_run_name": (
+            text_encoder_artifact_run_name(cfg) if use_adapted else None
+        ),
         "text_encoder_adapted": use_adapted,
         "device": device_str,
         "device_info": device_info(device),
@@ -678,6 +692,7 @@ def run_train_teacher(cfg: dict[str, Any]) -> None:
         "selection_mode": "validation_recall" if has_validation else "fixed_epoch",
         "stop_reason": stop_reason,
         "lr": lr,
+        "weight_decay": weight_decay,
         "train_loss_mean": train_loss_mean,
         "item_encoder": (
             "mind_adapted_sentence_transformer_frozen_plus_projection"

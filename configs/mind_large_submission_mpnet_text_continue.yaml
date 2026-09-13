@@ -3,7 +3,7 @@ extends: "mind_large_temporal_mpnet.yaml"
 # Continue only the Phase 1-selected MPNet encoder on the held-out temporal
 # validation behaviours. This is the same maximum-data protocol used by the
 # proven MiniLM submission pipeline; the hidden test set remains untouched.
-run_name: "mind_large_submission_mpnet_v1"
+run_name: "mind_large_submission_mpnet_text_continue_v1"
 
 teacher:
   text_adaptation:

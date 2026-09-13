@@ -119,6 +119,16 @@ def teacher_artifact_root(cfg: dict[str, Any]) -> Path:
     return Path("runs") / teacher_artifact_run_name(cfg) / "teacher"
 
 
+def text_encoder_artifact_run_name(cfg: dict[str, Any]) -> str:
+    return str(
+        cfg.get("artifacts", {}).get("text_encoder_run_name", cfg["run_name"])
+    )
+
+
+def text_encoder_artifact_root(cfg: dict[str, Any]) -> Path:
+    return Path("runs") / text_encoder_artifact_run_name(cfg) / "text_encoder"
+
+
 def pair_artifact_path(proc_root: Path, split_name: str) -> Path:
     return proc_root / f"{split_name}_pairs.parquet"
 
