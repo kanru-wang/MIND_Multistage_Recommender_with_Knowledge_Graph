@@ -4,16 +4,14 @@ import hashlib
 import json
 import math
 from copy import deepcopy
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
-
-from tqdm import tqdm
 
 from mindrec.config import ensure_dir
 from mindrec.pipeline.evaluate import run_evaluate
 from mindrec.pipeline.ranker_train import run_train_ranker
 from mindrec.pipeline.sweep_utils import best_result, float_slug
+from mindrec.provenance import artifact_signature, sha256_file
 from mindrec.utils import load_json, save_json, teacher_artifact_root
 
 
@@ -23,46 +21,6 @@ def _variant_run_name(base_run_name: str, lr: float) -> str:
 
 def _read_json_if_exists(path: Path) -> Any | None:
     return load_json(path) if path.exists() else None
-
-
-@lru_cache(maxsize=None)
-def _sha256_file_state(path_text: str, size: int, mtime_ns: int) -> str:
-    del mtime_ns
-    if not Path(path_text).is_file():
-        raise FileNotFoundError(path_text)
-    digest = hashlib.sha256()
-    with (
-        open(path_text, "rb") as handle,
-        tqdm(
-            total=size,
-            desc=f"Fingerprint {Path(path_text).name}",
-            unit="B",
-            unit_scale=True,
-            disable=size < 32 * 1024 * 1024,
-        ) as progress,
-    ):
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-            progress.update(len(chunk))
-    return digest.hexdigest()
-
-
-def _sha256_file(path: Path) -> str | None:
-    if not path.is_file():
-        return None
-    stat = path.stat()
-    return _sha256_file_state(str(path.resolve()), stat.st_size, stat.st_mtime_ns)
-
-
-def _artifact_signature(path: Path, *, content_hash: bool = False) -> dict[str, Any]:
-    exists = path.is_file()
-    return {
-        "path": str(path.resolve()),
-        "exists": exists,
-        "size_bytes": path.stat().st_size if exists else None,
-        "mtime_ns": path.stat().st_mtime_ns if exists else None,
-        "sha256": _sha256_file(path) if exists and content_hash else None,
-    }
 
 
 def _ranker_training_provenance(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -93,7 +51,11 @@ def _ranker_training_provenance(cfg: dict[str, Any]) -> dict[str, Any]:
             "eval": deepcopy(cfg.get("eval", {})),
         },
         "data_artifacts": {
-            name: _artifact_signature(proc_root / name, content_hash=True)
+            name: artifact_signature(
+                proc_root / name,
+                content_hash=True,
+                include_mtime=True,
+            )
             for name in (
                 "preprocess_meta.json",
                 "id_maps.json",
@@ -108,19 +70,26 @@ def _ranker_training_provenance(cfg: dict[str, Any]) -> dict[str, Any]:
         },
         "teacher_artifacts": {
             "root": str(teacher_root.resolve()),
-            "meta": _artifact_signature(teacher_root / "meta.json", content_hash=True),
-            "ranker_item_base": _artifact_signature(
-                teacher_root / ranker_base_name
+            "meta": artifact_signature(
+                teacher_root / "meta.json",
+                content_hash=True,
+                include_mtime=True,
             ),
-            "item_teacher": _artifact_signature(
-                teacher_root / "item_teacher_emb.npy"
+            "ranker_item_base": artifact_signature(
+                teacher_root / ranker_base_name,
+                include_mtime=True,
             ),
-            "user_teacher": _artifact_signature(
-                teacher_root / "user_teacher_emb.npy"
+            "item_teacher": artifact_signature(
+                teacher_root / "item_teacher_emb.npy",
+                include_mtime=True,
+            ),
+            "user_teacher": artifact_signature(
+                teacher_root / "user_teacher_emb.npy",
+                include_mtime=True,
             ),
         },
         "implementation": {
-            str(path.relative_to(Path(__file__).parents[2])): _sha256_file(path)
+            str(path.relative_to(Path(__file__).parents[2])): sha256_file(path)
             for path in implementation_paths
         },
     }

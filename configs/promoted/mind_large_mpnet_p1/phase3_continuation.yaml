@@ -1,0 +1,8 @@
+extends: "../../mind_large_submission_mpnet_text_continue.yaml"
+
+run_name: "mind_large_submission_mpnet_p1_text_continue"
+
+teacher:
+  text_adaptation:
+    lr: 1.0e-5
+    initial_model_from_run: "mind_large_temporal_mpnet_p1_sweep_ta_lr_1em05_t_5em02_u12000_v500"

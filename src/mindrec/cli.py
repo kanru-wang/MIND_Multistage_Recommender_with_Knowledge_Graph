@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
-
 from mindrec.config import load_config
 from mindrec.data.item_age import run_build_item_age
 from mindrec.pipeline.evaluate import run_evaluate

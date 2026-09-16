@@ -1,0 +1,6 @@
+extends: "phase1_selected.yaml"
+
+run_name: "mind_large_temporal_mpnet_p1_promoted"
+
+artifacts:
+  text_encoder_run_name: "mind_large_temporal_mpnet_p1_sweep_ta_lr_1em05_t_5em02_u12000_v500"

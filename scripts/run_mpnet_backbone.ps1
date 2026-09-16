@@ -6,19 +6,25 @@ param(
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
-$TemporalConfig = Join-Path $RepoRoot "configs\mind_large_temporal_mpnet.yaml"
-$ContinuationConfig = Join-Path $RepoRoot "configs\mind_large_submission_mpnet_text_continue.yaml"
-$SubmissionConfig = Join-Path $RepoRoot "configs\mind_large_submission_mpnet.yaml"
-$CandidateConfig = Join-Path $RepoRoot "configs\mind_large_submission_mpnet_candidate_attention.yaml"
-$RecencyConfig = Join-Path $RepoRoot "configs\mind_large_submission_mpnet_candidate_attention_recency_alpha_002.yaml"
-$TemporalRun = "mind_large_temporal_mpnet_candidate_attention_v1"
-$SubmissionEncoderRun = "mind_large_submission_mpnet_text_continue_v1"
-$SubmissionTeacherRun = "mind_large_submission_mpnet_v1"
-$SubmissionRankerRun = "mind_large_submission_mpnet_candidate_attention_low_lr_2ep_v1"
-$SubmissionOutputRun = "mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1"
+$PromotedConfigRoot = Join-Path $RepoRoot "configs\promoted\mind_large_mpnet_p1"
+$TemporalConfig = Join-Path $PromotedConfigRoot "phase1_selected.yaml"
+$Phase2Config = Join-Path $PromotedConfigRoot "phase2_selected.yaml"
+$ContinuationConfig = Join-Path $PromotedConfigRoot "phase3_continuation.yaml"
+$SubmissionConfig = Join-Path $PromotedConfigRoot "phase3_teacher.yaml"
+$CandidateConfig = Join-Path $PromotedConfigRoot "phase3_ranker.yaml"
+$RecencyConfig = Join-Path $PromotedConfigRoot "phase3_output.yaml"
+$TemporalEncoderRun = "mind_large_temporal_mpnet_p1_sweep_ta_lr_1em05_t_5em02_u12000_v500"
+$TemporalRun = "mind_large_temporal_mpnet_p1_promoted"
+$SubmissionEncoderRun = "mind_large_submission_mpnet_p1_text_continue"
+$SubmissionTeacherRun = "mind_large_submission_mpnet_p1_teacher"
+$SubmissionRankerRun = "mind_large_submission_mpnet_p1_ranker"
+$SubmissionOutputRun = "mind_large_submission_mpnet_p1_output"
 $MpnetModelName = "sentence-transformers/all-mpnet-base-v2"
 $SelectedUpdate = 9000
+$Phase1CompletedUpdates = 12000
 $ContinuationUpdates = 2000
+$AdaptationLearningRate = 1.0e-5
+$AdaptationTemperature = 0.05
 
 if (-not (Test-Path -LiteralPath $Python)) {
     throw "Virtual-environment Python was not found at $Python"
@@ -62,23 +68,30 @@ function Assert-FreeDiskSpace {
     Write-Host "Disk-space preflight passed for $Stage`: $FreeGB GB free (minimum $RequiredGB GB)." -ForegroundColor Green
 }
 
-function Assert-MpnetTemporalSelection {
-    $EncoderRoot = Join-Path $RepoRoot "runs\$TemporalRun\text_encoder"
-    $EncoderMeta = Read-JsonFile (Join-Path $EncoderRoot "meta.json")
-    if ($EncoderMeta.base_model_name -ne $MpnetModelName) {
-        throw "Phase 3 requires $MpnetModelName, but Phase 1 metadata reports $($EncoderMeta.base_model_name)."
+function Test-CompatibleTemporalEncoder {
+    $EncoderRoot = Join-Path $RepoRoot "runs\$TemporalEncoderRun\text_encoder"
+    $MetaPath = Join-Path $EncoderRoot "meta.json"
+    $ModelPath = Join-Path $EncoderRoot "model\modules.json"
+    if (-not (Test-AllPaths @($MetaPath, $ModelPath))) {
+        return $false
     }
-    if ([int]$EncoderMeta.best_update -ne $SelectedUpdate) {
-        throw "Phase 3 is locked to the selected $SelectedUpdate-update checkpoint; metadata reports $($EncoderMeta.best_update)."
-    }
-    if ([int]$EncoderMeta.batch_size -ne 16 -or
+    $EncoderMeta = Read-JsonFile $MetaPath
+    if ($EncoderMeta.base_model_name -ne $MpnetModelName -or
+        [int]$EncoderMeta.best_update -ne $SelectedUpdate -or
+        [int]$EncoderMeta.batch_size -ne 16 -or
         [int]$EncoderMeta.gradient_accumulation_steps -ne 4 -or
-        [int]$EncoderMeta.max_optimizer_updates -ne 10000 -or
-        [int]$EncoderMeta.completed_optimizer_updates -ne 10000) {
-        throw "Phase 1 did not use the locked batch-16, accumulation-4, 10,000-update adaptation schedule."
+        [int]$EncoderMeta.max_optimizer_updates -ne $Phase1CompletedUpdates -or
+        [int]$EncoderMeta.completed_optimizer_updates -ne $Phase1CompletedUpdates -or
+        [double]$EncoderMeta.lr -ne $AdaptationLearningRate -or
+        [double]$EncoderMeta.temperature -ne $AdaptationTemperature) {
+        throw "Existing priority-1 encoder metadata is incompatible: $MetaPath"
     }
-    if (-not (Test-Path -LiteralPath (Join-Path $EncoderRoot "model\modules.json"))) {
-        throw "The selected Phase 1 encoder model is missing from $EncoderRoot."
+    return $true
+}
+
+function Assert-MpnetTemporalSelection {
+    if (-not (Test-CompatibleTemporalEncoder)) {
+        throw "The selected priority-1 encoder is incomplete. Run this script with -Phase phase1 first."
     }
 
     $EvaluationPath = Join-Path $RepoRoot "runs\$TemporalRun\eval\ranker_eval_val.json"
@@ -86,8 +99,8 @@ function Assert-MpnetTemporalSelection {
     if ([int]$Evaluation.n_impressions -ne 807988) {
         throw "Phase 2 evaluation used $($Evaluation.n_impressions) impressions instead of the expected 807988."
     }
-    if ([double]$Evaluation.ranking.auc -lt 0.671592574) {
-        throw "MPNet temporal AUC $($Evaluation.ranking.auc) does not beat the controlled MiniLM reference; Phase 3 is blocked."
+    if ([double]$Evaluation.ranking.auc -lt 0.6914) {
+        throw "Priority-1 MPNet temporal AUC $($Evaluation.ranking.auc) is below the promoted 0.6914 gate; Phase 3 is blocked."
     }
     Write-Host "Preflight passed: MPNet update $SelectedUpdate, temporal AUC $([math]::Round([double]$Evaluation.ranking.auc, 6))." -ForegroundColor Green
 }
@@ -105,6 +118,8 @@ function Test-CompatibleContinuation {
         [int]$Meta.cumulative_optimizer_updates -ne ($SelectedUpdate + $ContinuationUpdates) -or
         [int]$Meta.batch_size -ne 16 -or
         [int]$Meta.gradient_accumulation_steps -ne 4 -or
+        [double]$Meta.lr -ne $AdaptationLearningRate -or
+        [double]$Meta.temperature -ne $AdaptationTemperature -or
         $Meta.training_split -ne "val") {
         throw "Existing Phase 3 encoder metadata is incompatible. Refusing to overwrite it automatically: $MetaPath"
     }
@@ -190,7 +205,7 @@ function Test-ProcessedDataset {
 Push-Location $RepoRoot
 try {
     if ($Phase -in @("phase1", "all")) {
-        Write-Host "PHASE 1: Select the MPNet optimizer-update count on Large Temporal Val" -ForegroundColor Green
+        Write-Host "PHASE 1: Reproduce the promoted priority-1 MPNet encoder" -ForegroundColor Green
         $TemporalData = Join-Path $RepoRoot "data\processed\MINDlarge_temporal_tune"
         $TemporalArtifacts = @(
             "id_maps.json",
@@ -208,22 +223,30 @@ try {
             Write-Host "Large Temporal Train/Val artifacts are incomplete; rebuilding them." -ForegroundColor Yellow
             Invoke-Mindrec "preprocess"
         }
-        Invoke-Mindrec "adapt_text_encoder"
+        if (Test-CompatibleTemporalEncoder) {
+            Write-Host "Reusing compatible priority-1 MPNet encoder at selected update $SelectedUpdate." -ForegroundColor Yellow
+        }
+        else {
+            Invoke-Mindrec "adapt_text_encoder" $TemporalConfig
+            if (-not (Test-CompatibleTemporalEncoder)) {
+                throw "Priority-1 MPNet adaptation completed without the expected selected artifacts."
+            }
+        }
     }
 
     if ($Phase -in @("phase2", "all")) {
         Write-Host "PHASE 2: Train and evaluate the selected pipeline with MPNet" -ForegroundColor Green
-        $SelectedEncoder = Join-Path $RepoRoot "runs\mind_large_temporal_mpnet_candidate_attention_v1\text_encoder\model"
+        $SelectedEncoder = Join-Path $RepoRoot "runs\$TemporalEncoderRun\text_encoder\model"
         if (-not (Test-Path -LiteralPath $SelectedEncoder)) {
             throw "Phase 1 encoder not found at $SelectedEncoder. Run this script with -Phase phase1 first."
         }
-        Invoke-Mindrec "train_teacher"
-        Invoke-Mindrec "train_ranker"
-        Invoke-Mindrec "evaluate"
+        Invoke-Mindrec "train_teacher" $Phase2Config
+        Invoke-Mindrec "train_ranker" $Phase2Config
+        Invoke-Mindrec "evaluate" $Phase2Config
 
-        $Evaluation = Join-Path $RepoRoot "runs\mind_large_temporal_mpnet_candidate_attention_v1\eval\ranker_eval_val.json"
+        $Evaluation = Join-Path $RepoRoot "runs\$TemporalRun\eval\ranker_eval_val.json"
         Write-Host "Temporal evaluation complete: $Evaluation" -ForegroundColor Green
-        Write-Host "Review it against candidate-attention MiniLM AUC 0.671593 before implementing any maximum-data submission." -ForegroundColor Yellow
+        Write-Host "The promoted priority-1 reference AUC is 0.691440." -ForegroundColor Yellow
     }
 
     if ($Phase -in @("phase3", "all")) {

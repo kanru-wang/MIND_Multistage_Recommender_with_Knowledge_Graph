@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterator
+from typing import Any
 
 import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset
-
-from mindrec.data.featurize import IdMaps
-
 
 @dataclass
 class PairSample:

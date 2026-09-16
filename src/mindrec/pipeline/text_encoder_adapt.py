@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +19,7 @@ from mindrec.config import ensure_dir
 from mindrec.data.featurize import IdMaps
 from mindrec.pipeline.teacher_train import format_news_texts
 from mindrec.pipeline.hard_negative_sampling import choose_negative_offsets
+from mindrec.provenance import artifact_signature, sha256_file
 from mindrec.utils import (
     behavior_artifact_path,
     device_info,
@@ -36,47 +36,6 @@ class TextAdaptSample:
     history: list[int]
     positive: int
     negatives: list[int]
-
-
-@lru_cache(maxsize=32)
-def _sha256_file_state(path_text: str, size: int, mtime_ns: int) -> str:
-    del mtime_ns  # It intentionally participates in the cache key.
-    digest = hashlib.sha256()
-    path = Path(path_text)
-    show_progress = size >= 8 * 1024 * 1024
-    with open(path, "rb") as handle, tqdm(
-        total=size,
-        desc=f"Fingerprint {path.name}",
-        unit="B",
-        unit_scale=True,
-        unit_divisor=1024,
-        disable=not show_progress,
-        dynamic_ncols=True,
-    ) as progress:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-            progress.update(len(chunk))
-    return digest.hexdigest()
-
-
-def _sha256_file(path: Path) -> str | None:
-    if not path.is_file():
-        return None
-    stat = path.stat()
-    return _sha256_file_state(
-        str(path.resolve()),
-        stat.st_size,
-        stat.st_mtime_ns,
-    )
-
-
-def _artifact_signature(path: Path, *, content_hash: bool = False) -> dict[str, Any]:
-    return {
-        "path": str(path.resolve()),
-        "exists": path.is_file(),
-        "size_bytes": path.stat().st_size if path.is_file() else None,
-        "sha256": _sha256_file(path) if content_hash else None,
-    }
 
 
 def text_adaptation_provenance(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -162,24 +121,24 @@ def text_adaptation_provenance(cfg: dict[str, Any]) -> dict[str, Any]:
             "processed_root": str(proc_root.resolve()),
             "min_user_hist_for_warm": int(data_cfg["min_user_hist_for_warm"]),
             "seed": seed,
-            "preprocess_meta": _artifact_signature(
+            "preprocess_meta": artifact_signature(
                 proc_root / "preprocess_meta.json",
                 content_hash=True,
             ),
-            "id_maps": _artifact_signature(
+            "id_maps": artifact_signature(
                 proc_root / "id_maps.json",
                 content_hash=True,
             ),
-            "news": _artifact_signature(
+            "news": artifact_signature(
                 proc_root / "news.parquet",
                 content_hash=True,
             ),
-            "training_behaviors": _artifact_signature(
+            "training_behaviors": artifact_signature(
                 behavior_artifact_path(proc_root, training_split),
                 content_hash=True,
             ),
             "validation_behaviors": (
-                _artifact_signature(
+                artifact_signature(
                     behavior_artifact_path(proc_root, "val"),
                     content_hash=True,
                 )
@@ -188,7 +147,7 @@ def text_adaptation_provenance(cfg: dict[str, Any]) -> dict[str, Any]:
             ),
         },
         "initial_model_meta": (
-            _artifact_signature(
+            artifact_signature(
                 Path("runs") / str(initial_run) / "text_encoder" / "meta.json",
                 content_hash=True,
             )
@@ -196,7 +155,7 @@ def text_adaptation_provenance(cfg: dict[str, Any]) -> dict[str, Any]:
             else None
         ),
         "implementation": {
-            path.name: _sha256_file(path) for path in implementation_paths
+            path.name: sha256_file(path) for path in implementation_paths
         },
     }
     canonical = json.dumps(

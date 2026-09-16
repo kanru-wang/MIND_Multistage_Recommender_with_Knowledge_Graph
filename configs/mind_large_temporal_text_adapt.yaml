@@ -28,13 +28,6 @@ teacher:
 
 ranker:
   lr: 1.0e-4
-  weight_decay: 3.0e-5
   hard_negative_sampling:
     enabled: true
-    pool_size: 20
-    hard_fraction: 0.25
-    score_batch_size: 512
-    teacher_consistent_hard_only: true
-    max_score_above_positive: 0.0
     hard_for_cold_users_only: true
-    hard_negative_distill_weight: 0.0

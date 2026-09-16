@@ -4,7 +4,6 @@ run_name: "mind_large_submission_text_adapt_candidate_attention_low_lr_2ep_recen
 
 artifacts:
   ranker_run_name: "mind_large_submission_text_adapt_candidate_attention_low_lr_2ep_v1"
-  teacher_run_name: "mind_large_submission_text_adapt_v1"
 
 submission:
   batch_size: 2048

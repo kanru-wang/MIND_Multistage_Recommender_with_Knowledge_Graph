@@ -10,9 +10,6 @@ teacher:
   # Text encoding is separate from the unchanged teacher-training batch size.
   encode_batch_size: 64
   text_adaptation:
-    # Preserve MiniLM's exact logical and physical training-batch schedule.
-    batch_size: 16
-    gradient_accumulation_steps: 4
     # Permit only the initial backbone load to populate the Hugging Face cache.
     local_files_only: false
     # Reduce activation memory without changing batch membership or the loss.
@@ -32,17 +29,11 @@ ranker:
 rerank:
   # Frozen after the rebalanced search on the Nov-14 rerank_tune split.
   relevance_weight: 0.85
-  novelty_weight: 0.05
   coverage_weight: 0.10
   fairness:
     penalty_weight: 0.10
     new_item_floor: 0.30
   selection:
-    require_frozen_for_eval: true
-    require_distinct_splits: true
-    require_provenance_for_eval: true
-    source_split: "rerank_tune"
-    reporting_split: "rerank_test"
     search_artifact: "runs/mind_large_temporal_mpnet_candidate_attention_v1/eval/rerank_search.json"
     decision_note: "Selected the rebalanced best-feasible and best-utility policy after screening 528 policies and full-validating the November 14 shortlist."
     frozen: true

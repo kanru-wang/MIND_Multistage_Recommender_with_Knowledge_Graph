@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "status": "promoted",
+  "source_sweep_config": "configs/mind_large_temporal_mpnet_priority1_sweep.yaml",
+  "source_sweep_artifact": "runs/mind_large_temporal_mpnet_p1_sweep/tuning/text_encoder_priority1_sweep/sweep.json",
+  "selection": {
+    "run_name": "mind_large_temporal_mpnet_p1_sweep_ta_lr_1em05_t_5em02_u12000_v500",
+    "learning_rate": 0.00001,
+    "temperature": 0.05,
+    "selected_update": 9000,
+    "completed_optimizer_updates": 12000,
+    "validation_impression_auc": 0.6872400683326838,
+    "original_provenance_fingerprint": "0f14d71836462503ea0ce96f88b5c2e4585a5a18994981783556293b90c1b606",
+    "selection_note": "The completed 1e-5 candidate was explicitly promoted after the broader sweep was interrupted; it beat the established 2e-5 reference (0.687240 vs 0.685648)."
+  },
+  "phase2": {
+    "run_name": "mind_large_temporal_mpnet_p1_promoted",
+    "n_impressions": 807988,
+    "auc": 0.6914403530616927,
+    "mrr": 0.3378351473959032,
+    "ndcg_at_5": 0.37217486445341036,
+    "ndcg_at_10": 0.4323638662214834
+  },
+  "phase3": {
+    "continuation_run_name": "mind_large_submission_mpnet_p1_text_continue",
+    "continuation_updates": 2000,
+    "teacher_run_name": "mind_large_submission_mpnet_p1_teacher",
+    "teacher_epochs": 4,
+    "ranker_run_name": "mind_large_submission_mpnet_p1_ranker",
+    "ranker_epochs": 2,
+    "output_run_name": "mind_large_submission_mpnet_p1_output",
+    "recency_alpha": 0.02
+  },
+  "configs": {
+    "phase1": "configs/promoted/mind_large_mpnet_p1/phase1_selected.yaml",
+    "phase2": "configs/promoted/mind_large_mpnet_p1/phase2_selected.yaml",
+    "phase3_continuation": "configs/promoted/mind_large_mpnet_p1/phase3_continuation.yaml",
+    "phase3_teacher": "configs/promoted/mind_large_mpnet_p1/phase3_teacher.yaml",
+    "phase3_ranker": "configs/promoted/mind_large_mpnet_p1/phase3_ranker.yaml",
+    "phase3_output": "configs/promoted/mind_large_mpnet_p1/phase3_output.yaml"
+  },
+  "leaderboard_results": "docs/leaderboard_results.json"
+}

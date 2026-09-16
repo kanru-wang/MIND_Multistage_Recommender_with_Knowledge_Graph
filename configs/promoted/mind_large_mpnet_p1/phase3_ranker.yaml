@@ -1,0 +1,7 @@
+extends: "../../mind_large_submission_mpnet_candidate_attention.yaml"
+
+run_name: "mind_large_submission_mpnet_p1_ranker"
+
+artifacts:
+  text_encoder_run_name: "mind_large_submission_mpnet_p1_text_continue"
+  teacher_run_name: "mind_large_submission_mpnet_p1_teacher"

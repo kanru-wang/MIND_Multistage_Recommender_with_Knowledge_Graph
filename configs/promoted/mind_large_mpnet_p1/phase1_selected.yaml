@@ -1,0 +1,13 @@
+extends: "../../mind_large_temporal_mpnet.yaml"
+
+# Exact completed priority-1 candidate. Reuses the retained checkpoint when it
+# is present and reproduces it from scratch otherwise.
+run_name: "mind_large_temporal_mpnet_p1_sweep_ta_lr_1em05_t_5em02_u12000_v500"
+
+teacher:
+  text_adaptation:
+    lr: 1.0e-5
+    max_optimizer_updates: 12000
+    early_stopping:
+      validation_interval_updates: 500
+      patience: 6

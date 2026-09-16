@@ -437,9 +437,11 @@ compatible processed data is not already present.
 .\scripts\run_mpnet_backbone.ps1 -Phase phase1
 ```
 
-Phase 1 adapts `all-mpnet-base-v2` on Large Temporal Train for at most 10,000
-successful optimizer updates. Every 1,000 updates it evaluates the text
-objective on Large Temporal Val; early stopping selected update 9,000. This
+Phase 1 reproduces the promoted `all-mpnet-base-v2` candidate on Large Temporal
+Train for at most 12,000 successful optimizer updates. Every 500 updates it
+evaluates the text objective on Large Temporal Val; early stopping selected
+update 9,000 after the run completed update 12,000. An existing compatible
+checkpoint is reused. This
 phase selects only the text encoder—it does not yet train the final two-tower
 teacher or student ranker.
 
@@ -475,16 +477,24 @@ to the actual winning encoder:
 This validates the winner's provenance and writes `promotion.json` plus five
 generated YAML files beside `sweep.json`. The manifest lists the exact commands
 for temporal teacher/ranker evaluation and the locked maximum-data continuation.
-All promoted run names are isolated from the verified `0.6948` submission.
+All promoted run names are isolated from the previously verified `0.6948`
+submission.
+
+The selected result is checked into
+`configs/promoted/mind_large_mpnet_p1`, including compact reproducible configs
+and `manifest.json`. Use those tracked configs to reproduce the champion; the
+broader sweep command above is for a new tuning run and may train unfinished
+variants.
 
 For each training impression, MPNet encodes every article as
 `title [SEP] abstract`; the mean of up to 10 clicked-history embeddings becomes
 the temporary user vector. A temperature-scaled contrastive loss trains the
 encoder to score the clicked candidate above four same-impression negatives and
 also separates mismatched user/positive pairs within the batch. AdamW updates
-the encoder itself (`lr=2e-5`, weight decay `0.01`) using batches of 16 with
-four-step gradient accumulation. Phase 3 later continues the same objective
-from the selected checkpoint.
+the encoder itself (historical default `lr=2e-5`, weight decay `0.01`) using
+batches of 16 with four-step gradient accumulation. The completed priority-1
+experiment selected `lr=1e-5` at temperature `0.05`; Phase 3 later continues
+the same objective from the selected checkpoint.
 
 ### 3.3 Phase 2: train and evaluate the complete temporal model
 
@@ -495,8 +505,10 @@ from the selected checkpoint.
 Phase 2 loads the selected update-9,000 encoder, trains the two-tower teacher,
 then trains the candidate-attention student with the hard-negative and
 distillation policies described above. It finally evaluates the student on all
-807,988 Large Temporal Val impressions. The completed model reached AUC
-`0.688880`, MRR `0.336397`, nDCG@5 `0.371215`, and nDCG@10 `0.431291`.
+807,988 Large Temporal Val impressions. The promoted priority-1 model reached
+AUC `0.691440`, MRR `0.337835`, nDCG@5 `0.372175`, and nDCG@10 `0.432364`.
+The previous `lr=2e-5` MPNet reference reached `0.688880`, `0.336397`,
+`0.371215`, and `0.431291`, respectively.
 
 The ranker evaluation also reports chronological, history-length, cold/new-item,
 popularity, category, and subcategory slices. A slice such as
@@ -531,25 +543,14 @@ The current MPNet submission is produced by Phase 3:
 .\scripts\run_mpnet_backbone.ps1 -Phase phase3
 ```
 
-The orchestration script uses these config roles:
-
-- `mind_large_temporal_baseline.yaml` defines the temporal split and shared
-  defaults inherited by the promoted temporal config; it is not a separate
-  prerequisite run.
-- `mind_large_temporal_mpnet.yaml` selects MPNet and candidate attention in
-  Phases 1–2 and records the already-frozen reranker policy.
-- `mind_large_submission_mpnet_text_continue.yaml` continues the selected
-  update-9,000 encoder for exactly 2,000 successful optimizer updates on Large
-  Temporal Val, without another early-stopping decision. Its encoder artifact
-  run is `mind_large_submission_mpnet_text_continue_v1`, separate from the
-  teacher run below.
-- `mind_large_submission_mpnet.yaml` and
-  `mind_large_submission_mpnet_candidate_attention.yaml` train the teacher for
-  four complete epochs and the candidate-attention ranker for two complete
-  epochs on Large Train + Dev, with early stopping disabled.
-- `mind_large_submission_mpnet_candidate_attention_recency_alpha_002.yaml`
-  applies the constant, non-learned recency coefficient `alpha=0.02` and writes
-  the submission.
+The orchestration script uses the tracked configs under
+`configs/promoted/mind_large_mpnet_p1`: `phase1_selected.yaml` reproduces or
+reuses the selected encoder, `phase2_selected.yaml` runs matched temporal
+teacher/ranker evaluation, and the four `phase3_*.yaml` files continue the
+encoder, train the fixed teacher and ranker, and write the recency-adjusted
+submission. `manifest.json` records the source sweep, original provenance
+fingerprint, metrics, run names, and config paths. These compact configs inherit
+the shared static MPNet configs rather than duplicating them.
 
 Here the schedules are **locked before maximum-data training**: the encoder
 update count and teacher/ranker epoch counts are no longer selected in Phase 3,
@@ -623,12 +624,24 @@ chunked article encoding to fit the target GPU without changing logical batch
 membership. Candidate-attention scoring caches item and history states, then
 runs only the small candidate-conditioned attention operation per candidate.
 
-The completed submission achieved Large Test AUC **`0.6948`**, making it the
-current verified champion. This is `+0.0079` over the selected MiniLM
-candidate-attention submission (`0.6869`), `+0.0100` over text-adapt v1
-(`0.6848`), and `+0.0224` over frozen MiniLM (`0.6724`). Its 2,370,727
-impression rankings passed sequential-ID, rank-permutation, ZIP-integrity, and
-content-hash checks.
+The original completed MPNet submission achieved Large Test AUC `0.6948`.
+The priority-1 run then changed Phase 1 learning rate from `2e-5` to `1e-5`
+while retaining temperature `0.05` and the locked Phase 3 schedule; it achieved
+Large Test AUC **`0.6960`**. This is
+`+0.0012` over the original MPNet result, `+0.0091` over the selected MiniLM
+candidate-attention submission (`0.6869`), `+0.0112` over text-adapt v1
+(`0.6848`), and `+0.0236` over frozen MiniLM (`0.6724`). Its 2,370,727
+impression rankings passed behavior-ID, candidate-count, rank-permutation,
+ZIP-integrity, and content-hash checks. The priority-1 ZIP is
+`runs/mind_large_submission_mpnet_p1_output/submission/prediction.zip` with
+SHA-256
+`08604AA5916CD39B7753DEAE40B30577E7A03A1BF4B1C1EF2EFB954E30A09EA0`.
+
+The next bounded tuning target is Phase 1 contrastive temperature with learning
+rate fixed at `1e-5`. Reuse `0.05` as the control and test `0.08` first; test
+`0.03` only if warranted. Require at least `0.692440` Phase 2 AUC, or matched
+overall AUC plus a clear repair of the period-4 and zero-popularity regressions,
+before spending resources on another Phase 3 run or hidden-test submission.
 
 To write the candidate-attention model without the recency tiebreaker, use
 `python -m mindrec.cli write_submission --config configs/mind_large_submission_mpnet_candidate_attention.yaml`;
