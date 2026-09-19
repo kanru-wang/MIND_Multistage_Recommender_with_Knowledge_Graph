@@ -445,22 +445,18 @@ checkpoint is reused. This
 phase selects only the text encoder—it does not yet train the final two-tower
 teacher or student ranker.
 
-To retune the backbone-specific Phase 1 learning rate, contrastive temperature,
-and selected optimizer update without touching the promoted run, use:
+`configs/mind_large_temporal_mpnet_priority1_sweep.yaml` records the historical
+five-candidate selection plan. It is now explicitly archived: invoking
+`adapt_text_encoder_sweep` with it stops before training, because its `0.08`
+temperature candidate has been rejected and later source changes intentionally
+produce a new provenance identity. Any future sweep must use a new config and
+`run_name`; do not reactivate the historical temperature candidates.
 
-```powershell
-python -m mindrec.cli adapt_text_encoder_sweep --config configs/mind_large_temporal_mpnet_priority1_sweep.yaml
-```
-
-The default staged search trains three learning rates at temperature `0.05`,
-then tests `0.03` and `0.08` at the best learning rate. Each variant validates
-every 500 updates for at most 12,000 updates. Six unsuccessful validations keep
-the original 3,000-update patience horizon. Set `strategy: grid` in the sweep
-config to run all nine LR/temperature combinations. Completed compatible
-variants are reused only when a full provenance fingerprint matches (effective
-adaptation settings, data/split identity, preprocessing metadata, continuation
-source, and relevant implementation files). The combined selection artifact is
-written to `runs/mind_large_temporal_mpnet_p1_sweep/tuning/text_encoder_priority1_sweep/sweep.json`.
+The completed selection artifact remains at
+`runs/mind_large_temporal_mpnet_p1_sweep/tuning/text_encoder_priority1_sweep/sweep.json`.
+Its promoted manifest pins the original run name, update, validation AUC, and
+provenance fingerprint, so the retained checkpoint remains usable without
+weakening provenance checks for newly trained models.
 
   After the sweep completes, generate resolved Phase 2 and Phase 3 configs wired
 to the actual winning encoder:
@@ -483,8 +479,7 @@ submission.
 The selected result is checked into
 `configs/promoted/mind_large_mpnet_p1`, including compact reproducible configs
 and `manifest.json`. Use those tracked configs to reproduce the champion; the
-broader sweep command above is for a new tuning run and may train unfinished
-variants.
+archived sweep config is retained only as the historical source record.
 
 For each training impression, MPNet encodes every article as
 `title [SEP] abstract`; the mean of up to 10 clicked-history embeddings becomes
@@ -495,6 +490,54 @@ the encoder itself (historical default `lr=2e-5`, weight decay `0.01`) using
 batches of 16 with four-step gradient accumulation. The completed priority-1
 experiment selected `lr=1e-5` at temperature `0.05`; Phase 3 later continues
 the same objective from the selected checkpoint.
+
+To compare validation-time history caps without changing or retraining that
+retained update-9,000 encoder, run:
+
+```powershell
+.\.venv\Scripts\python.exe -m mindrec.cli screen_text_encoder_history --config configs/mind_large_temporal_mpnet_history_screen.yaml
+```
+
+The command encodes the referenced validation articles once, evaluates caps
+`10`, `20`, and `50` over the same impressions, and writes the comparison to
+`runs/mind_large_temporal_mpnet_history_screen/diagnostics/text_encoder_history_caps.json`.
+It verifies the retained update before evaluation and does not create or modify
+model checkpoints. The completed result is also preserved as the tracked,
+portable snapshot
+`configs/promoted/mind_large_mpnet_p1/history_cap_screen.json`; downstream
+experiment configs depend on that snapshot rather than the ignored `runs/`
+copy.
+
+The completed screen exactly reproduced the cap-10 control (`0.687240`) and
+measured `0.695057` at cap 20 and **`0.698133`** at cap 50. Therefore the next
+bounded experiment skips a separate cap-20 training run and continues the
+retained update-9,000 encoder with only `max_history` changed to 50:
+
+```powershell
+.\.venv\Scripts\python.exe -m mindrec.cli adapt_text_encoder --config configs/mind_large_temporal_mpnet_max_history_50_continuation.yaml
+```
+
+This continuation runs for at most 2,000 updates, validates every 500 updates,
+and stops after three non-improving checks. Its update-0 cap-50 AUC is the fair
+training baseline; advance to Phase 2 only for a gain of at least `0.0005`.
+The resulting `text_encoder/meta.json` records the baseline, required AUC, best
+AUC, and a `phase1_passed` decision.
+
+If and only if `phase1_passed` is true, run the isolated Phase 2 follow-up:
+
+```powershell
+.\.venv\Scripts\python.exe -m mindrec.cli train_teacher --config configs/mind_large_temporal_mpnet_max_history_50_phase2.yaml
+.\.venv\Scripts\python.exe -m mindrec.cli train_ranker --config configs/mind_large_temporal_mpnet_max_history_50_phase2.yaml
+.\.venv\Scripts\python.exe -m mindrec.cli evaluate --config configs/mind_large_temporal_mpnet_max_history_50_phase2.yaml
+```
+
+Every command revalidates the Phase 1 handoff. Evaluation preserves the normal
+metrics, writes `eval/phase2_gate.json`, and requires AUC `0.692440` or higher
+against the `0.691440` reference. A failed gate raises only after both the
+evaluation and decision artifacts have been saved. The
+`.\scripts\run_mpnet_backbone.ps1 -Phase phase2` command below remains the
+reproduction path for the historical
+priority-1 result; it does not evaluate this follow-up encoder.
 
 ### 3.3 Phase 2: train and evaluate the complete temporal model
 
@@ -637,11 +680,11 @@ ZIP-integrity, and content-hash checks. The priority-1 ZIP is
 SHA-256
 `08604AA5916CD39B7753DEAE40B30577E7A03A1BF4B1C1EF2EFB954E30A09EA0`.
 
-The next bounded tuning target is Phase 1 contrastive temperature with learning
-rate fixed at `1e-5`. Reuse `0.05` as the control and test `0.08` first; test
-`0.03` only if warranted. Require at least `0.692440` Phase 2 AUC, or matched
-overall AUC plus a clear repair of the period-4 and zero-popularity regressions,
-before spending resources on another Phase 3 run or hidden-test submission.
+The frozen-encoder history-cap screen selected cap 50 (`0.698133`, or
+`+0.010893` over cap 10). A separate cap-20 training run is skipped. The next
+bounded experiment is the 2,000-update cap-50 continuation documented above;
+temperature `0.08` remains rejected, and `0.03` should not receive a full run
+without new evidence.
 
 To write the candidate-attention model without the recency tiebreaker, use
 `python -m mindrec.cli write_submission --config configs/mind_large_submission_mpnet_candidate_attention.yaml`;

@@ -16,6 +16,7 @@ This registry names the split protocol behind each major result set. Use it befo
 | Large temporal MPNet reranker | Select reranker priorities and weights on Nov 14 (`rerank_tune`), freeze them, and report once on Nov 15 (`rerank_test`). | Completed 2026-09-01; reporting split consumed | `configs/mind_large_temporal_mpnet.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_mpnet_candidate_attention_v1` | `runs/mind_large_temporal_mpnet_candidate_attention_v1/eval/rerank_eval.json` |
 | Large submission MPNet candidate attention + recency | Continue selected MPNet on Large Temporal Val, then fixed four-epoch teacher, fixed two-epoch candidate-attention ranker, and recency `alpha=0.02`. | Completed; previous champion, Large Test AUC `0.6948` | `configs/mind_large_submission_mpnet_candidate_attention_recency_alpha_002.yaml` | `data/processed/MINDlarge_submission` | `runs/mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1` | `runs/mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.zip` |
 | Large submission MPNet priority-1 LR | Select Phase 1 LR `1e-5` at temperature `0.05`, continue for 2,000 updates, then use the same fixed teacher, ranker, and recency schedule as the previous MPNet submission. | Completed; **current champion**, Large Test AUC **`0.6960`** | `configs/promoted/mind_large_mpnet_p1/phase3_output.yaml` | `data/processed/MINDlarge_submission` | `runs/mind_large_submission_mpnet_p1_output` | `runs/mind_large_submission_mpnet_p1_output/submission/prediction.zip` |
+| Rejected MPNet Phase 1 temperature `0.08` | Keep the selected `lr=1e-5` and all other Phase 1 settings fixed; soften only the contrastive temperature from `0.05` to `0.08`. | Rejected in Phase 1; validation AUC `0.686742` versus control `0.687240` | Removed after rejection | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_mpnet_temperature_sweep_ta_lr_1em05_t_8em02_u12000_v500` | `runs/mind_large_temporal_mpnet_temperature_sweep/tuning/text_encoder_temperature_sweep/sweep.json` |
 | Rejected Large temporal MPNet student width 96 | Reuse the selected MPNet encoder and 384-dimensional teacher; change only the learned student width from 56 to 96. | Completed/rejected on 2026-08-31; Phase 3 not run | Removed after rejection | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_mpnet_candidate_attention_student_width_96_v1` | `runs/mind_large_temporal_mpnet_candidate_attention_student_width_96_v1/eval/ranker_eval_val.json` |
 | Rejected large temporal candidate-attention item-only distillation v1 | Reuse candidate-attention v1 and change representation distillation from the full user/item target to `item_sem -> teacher_item`, including zero-history rows; teacher-logit distillation and all configured weights remain fixed. | Current repo; completed/rejected | `configs/mind_large_temporal_candidate_attention_item_only_distill.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_candidate_attention_item_only_distill_v1` | `runs/mind_large_temporal_text_adapt_candidate_attention_item_only_distill_v1/eval/ranker_eval_val.json` |
 | Small temporal | Train on `MINDsmall_train` before Nov 14; validate on Nov 14 tail from `MINDsmall_train` plus all `MINDsmall_dev`. | Current repo | `configs/mind_small_temporal_tune.yaml` | `data/processed/MINDsmall_temporal_tune` | `runs/mind_small_temporal_tune` | `runs/mind_small_temporal_tune/eval/ranker_eval_val.json` |
@@ -172,23 +173,29 @@ ZIP, behavior-ID, candidate-count, and rank-permutation checks. Its ZIP SHA-256
 is `08604AA5916CD39B7753DEAE40B30577E7A03A1BF4B1C1EF2EFB954E30A09EA0`.
 The exact path/hash mapping is also stored in `docs/leaderboard_results.json`.
 
-### Next bounded experiment
+### Rejected Phase 1 temperature experiment
 
-Tune the Phase 1 contrastive `temperature` next, with learning rate fixed at
-the winning `1e-5`. The existing `0.05` run is the control and must be reused,
-not rerun. Test `0.08` first: its softer contrastive distribution is a
-plausible way to reduce sensitivity to false negatives and popularity while
-preserving the lower learning rate's overall gain. Treat this as a hypothesis
-to validate, especially on period 4 and clicked-popularity-0 slices. Test the
-sharper `0.03` only if compute budget remains or `0.08` gives a promising but
-inconclusive result.
+With learning rate fixed at `1e-5`, temperature `0.08` peaked at update 5,000
+with validation AUC `0.686742`. The retained `0.05` control peaked at update
+9,000 with `0.687240`, so the candidate lost by `0.000498`. It early-stopped at
+update 8,000 and was not advanced to Phase 2 or Phase 3. Retain `0.05`; do not
+spend another full run on temperature `0.03` without new evidence.
 
-Do not promote another candidate merely for winning the Phase 1 text metric.
-Require a full Phase 2 AUC of at least `0.692440` (`+0.001` over `0.691440`), or
-approximately equal overall AUC with a clear recovery in both period 4 and
-clicked-popularity-0 and no material MRR/nDCG regression. Run Phase 3 and make
-another hidden-test submission only after that gate passes; otherwise retain
-the `0.6960` model.
+### Rejected Phase 1 `max_history=50` continuation
+
+A frozen-encoder diagnostic on the same 785,325 validation impressions raised
+raw text-encoder AUC from `0.687240` at cap 10 to `0.695057` at cap 20 and
+`0.698133` at cap 50. A bounded continuation therefore changed only Phase 1
+`max_history` from 10 to 50, starting from the retained update-9,000 encoder and
+keeping learning rate `1e-5`, temperature `0.05`, and negative sampling fixed.
+
+Training did not transfer the diagnostic gain: AUC fell to `0.697389` at update
+500, `0.697497` at update 1,000, and `0.693586` at update 1,500, versus the
+update-0 baseline `0.698133` and required gate `0.698633`. Early stopping chose
+update 0, whose saved weights were exactly identical to the retained encoder,
+so the experiment was not advanced to Phase 2. The experimental code/configs
+were discarded; the result remains auditable under
+`runs/mind_large_temporal_mpnet_max_history_50_continuation_v1`.
 
 ## Completed MPNet Reranker Learning Experiment
 
