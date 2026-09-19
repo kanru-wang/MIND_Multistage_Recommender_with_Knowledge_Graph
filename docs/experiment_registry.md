@@ -197,6 +197,18 @@ so the experiment was not advanced to Phase 2. The experimental code/configs
 were discarded; the result remains auditable under
 `runs/mind_large_temporal_mpnet_max_history_50_continuation_v1`.
 
+### Rejected ranker `lambda_repr=0.025` experiment
+
+This ranker-only experiment reused the priority-1 encoder and teacher and
+changed only representation-distillation weight `lambda_repr` from `0.05` to
+`0.025`. On the same 807,988 impressions, AUC fell from `0.691440` to
+`0.682111`; MRR fell by `0.004183`, nDCG@5 by `0.006218`, and nDCG@10 by
+`0.006340`. Popularity-0 AUC improved by `0.002246`, but every major aggregate,
+user, history-length, and time-period view declined, including clicked warm
+items by `0.030863` AUC. Retain `lambda_repr=0.05`; the experimental config was
+discarded, while results remain under
+`runs/mind_large_temporal_mpnet_p1_lambda_repr_0025_v1`.
+
 ## Completed MPNet Reranker Learning Experiment
 
 Reranker selection screened 528 policies on a deterministic 5,000-impression
