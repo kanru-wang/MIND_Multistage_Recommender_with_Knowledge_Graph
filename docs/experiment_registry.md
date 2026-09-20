@@ -209,6 +209,22 @@ items by `0.030863` AUC. Retain `lambda_repr=0.05`; the experimental config was
 discarded, while results remain under
 `runs/mind_large_temporal_mpnet_p1_lambda_repr_0025_v1`.
 
+### Rejected teacher `user_attn_dim=512` experiment
+
+This single-variable experiment reused the retained priority-1 MPNet encoder
+and changed only teacher `user_attn_dim` from `384` to `512`. Its best
+Recall@200 was `0.038419` at epoch 4, down `0.002606` absolute (6.35%) from the
+`384` control's `0.041025` and below the `0.042025` advancement gate. Validation
+loss at the selected epoch also worsened from `6.419607` to `6.428789`.
+
+Early stopping ended training after epoch 5, and the exported model exactly
+matched the selected epoch-4 checkpoint, so this was a valid experimental loss
+rather than an incomplete run. The candidate was not advanced to ranker
+training. Retain `user_attn_dim=384`; the experimental config was discarded.
+The small audit files remain under
+`runs/mind_large_temporal_mpnet_p1_teacher_dim_512_v1/teacher`, while its
+generated checkpoints and embedding arrays were removed after documentation.
+
 ## Completed MPNet Reranker Learning Experiment
 
 Reranker selection screened 528 policies on a deterministic 5,000-impression
