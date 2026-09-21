@@ -557,8 +557,8 @@ preserved in
 The submission command reads the frozen search result automatically and
 verifies its source fingerprint; the YAML's null weight and `frozen: false`
 are intentional in `search_artifact` mode. No search rerun or MiniLM ZIP
-regeneration is needed for unchanged inputs. See README section 3.6 for the
-CLI commands.
+regeneration is needed for unchanged inputs. See the
+[ensembling guide](ensembling.md) for the method, artifacts, and CLI commands.
 
 The new search applies recency `alpha=0.02` before ranking each temporal
 member and shares exact integer Borda sorting with submission. Historical
