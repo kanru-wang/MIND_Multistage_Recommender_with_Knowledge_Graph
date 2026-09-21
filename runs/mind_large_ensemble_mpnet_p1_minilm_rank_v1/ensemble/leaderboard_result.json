@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "run_name": "mind_large_ensemble_mpnet_p1_minilm_rank_v1",
+  "evaluation": "MIND Large Test",
+  "auc": 0.6972,
+  "result_source": "user_reported_competition_platform_result",
+  "hidden_test_labels_available_locally": false,
+  "config": "configs/mind_large_ensemble_mpnet_p1_minilm.yaml",
+  "method": "weighted_borda_rank_fusion",
+  "scoring_protocol": "integer_borda_recency_reference_guard_v2",
+  "primary_member": "mpnet_p1_candidate_attention",
+  "primary_model_commit": "31ab682",
+  "secondary_member": "minilm_candidate_attention",
+  "selected_primary_weight": 0.75,
+  "secondary_weight": 0.25,
+  "member_recency_alpha": 0.02,
+  "selection_artifact": "runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/ensemble/search.json",
+  "submission_metadata": "runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/submission/submission_meta.json",
+  "prediction_zip": "runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/submission/prediction.zip",
+  "n_impressions": 2370727,
+  "prediction_zip_sha256": "bb019664f2982264263a401e433d6a33815a61b6c3b29497c837bdd597dec58b",
+  "prediction_content_sha256": "59031afc6f1e7c885ed2a47246b7afb3997c765b9d13e8f25c0090aee78fbb52"
+}

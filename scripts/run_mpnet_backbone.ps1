@@ -4,6 +4,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# Historical runner on this branch. The lr=1e-5 promotion's full training
+# orchestration is retained at commit 31ab682 on feature/lr_sweep_2.
+Write-Host "Original MPNet workflow: text-encoder lr=2e-5, Large Test AUC=0.6948. For the improved-model ensemble, use configs/mind_large_ensemble_mpnet_p1_minilm.yaml."
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 $TemporalConfig = Join-Path $RepoRoot "configs\mind_large_temporal_mpnet.yaml"

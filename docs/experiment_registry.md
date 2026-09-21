@@ -14,8 +14,9 @@ This registry names the split protocol behind each major result set. Use it befo
 | Large temporal candidate-attention v1 | Reuse the text-adapt v1 teacher and replace only student mean history pooling with candidate-aware attention. | Current repo; completed | `configs/mind_large_temporal_candidate_attention.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_candidate_attention_v1` | `runs/mind_large_temporal_text_adapt_candidate_attention_v1/eval/ranker_eval_val.json` |
 | Large temporal MPNet backbone v1 | Replace MiniLM with adapted `all-mpnet-base-v2` in the selected candidate-attention pipeline; keep the temporal split, objective, negative policy, and downstream settings fixed. | Completed; promoted to Phase 3 | `configs/mind_large_temporal_mpnet.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_mpnet_candidate_attention_v1` | `runs/mind_large_temporal_mpnet_candidate_attention_v1/eval/ranker_eval_val.json` |
 | Large temporal MPNet reranker | Select reranker priorities and weights on Nov 14 (`rerank_tune`), freeze them, and report once on Nov 15 (`rerank_test`). | Completed 2026-09-01; reporting split consumed | `configs/mind_large_temporal_mpnet.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_mpnet_candidate_attention_v1` | `runs/mind_large_temporal_mpnet_candidate_attention_v1/eval/rerank_eval.json` |
-| Large submission MPNet candidate attention + recency | Continue selected MPNet on Large Temporal Val, then fixed four-epoch teacher, fixed two-epoch candidate-attention ranker, and recency `alpha=0.02`. | Completed; current champion, Large Test AUC `0.6948` | `configs/mind_large_submission_mpnet_candidate_attention_recency_alpha_002.yaml` | `data/processed/MINDlarge_submission` | `runs/mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1` | `runs/mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.zip` |
-| Large MPNet + MiniLM rank ensemble | Select a weighted-Borda MPNet weight on Nov 14, freeze it, report on Nov 15, then fuse the two recency-adjusted hidden-test rank ZIPs. | Completed locally 2026-09-09; hidden-test AUC pending | `configs/mind_large_ensemble_mpnet_minilm.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_ensemble_mpnet_minilm_rank_v1` | `runs/mind_large_ensemble_mpnet_minilm_rank_v1/ensemble/search.json` |
+| Original Large submission MPNet candidate attention + recency | Continue selected MPNet on Large Temporal Val, then fixed four-epoch teacher, fixed two-epoch candidate-attention ranker, and recency `alpha=0.02`. | Completed historical baseline, Large Test AUC `0.6948` | `configs/mind_large_submission_mpnet_candidate_attention_recency_alpha_002.yaml` | `data/processed/MINDlarge_submission` | `runs/mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1` | `runs/mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.zip` |
+| Large MPNet + MiniLM rank ensemble | Select a weighted-Borda MPNet weight on Nov 14, freeze it, report on Nov 15, then fuse the two recency-adjusted hidden-test rank ZIPs. | Completed; user-reported Large Test AUC `0.6960` | `configs/mind_large_ensemble_mpnet_minilm.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_ensemble_mpnet_minilm_rank_v1` | `runs/mind_large_ensemble_mpnet_minilm_rank_v1/ensemble/search.json` |
+| Improved MPNet (lr=1e-5) + MiniLM rank ensemble | Retune the Borda weight using the promoted temporal MPNet from `31ab682`, then fuse its maximum-data ZIP with the same selected MiniLM. | Completed; best reported Large Test AUC `0.6972`; selected 75/25 | `configs/mind_large_ensemble_mpnet_p1_minilm.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1` | `runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/ensemble/search.json` |
 | Rejected Large temporal MPNet student width 96 | Reuse the selected MPNet encoder and 384-dimensional teacher; change only the learned student width from 56 to 96. | Completed/rejected on 2026-08-31; Phase 3 not run | Removed after rejection | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_mpnet_candidate_attention_student_width_96_v1` | `runs/mind_large_temporal_mpnet_candidate_attention_student_width_96_v1/eval/ranker_eval_val.json` |
 | Rejected large temporal candidate-attention item-only distillation v1 | Reuse candidate-attention v1 and change representation distillation from the full user/item target to `item_sem -> teacher_item`, including zero-history rows; teacher-logit distillation and all configured weights remain fixed. | Current repo; completed/rejected | `configs/mind_large_temporal_candidate_attention_item_only_distill.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_candidate_attention_item_only_distill_v1` | `runs/mind_large_temporal_text_adapt_candidate_attention_item_only_distill_v1/eval/ranker_eval_val.json` |
 | Small temporal | Train on `MINDsmall_train` before Nov 14; validate on Nov 14 tail from `MINDsmall_train` plus all `MINDsmall_dev`. | Current repo | `configs/mind_small_temporal_tune.yaml` | `data/processed/MINDsmall_temporal_tune` | `runs/mind_small_temporal_tune` | `runs/mind_small_temporal_tune/eval/ranker_eval_val.json` |
@@ -99,7 +100,7 @@ Phase 1 selected update 9,000. The full Phase 2 evaluation produced AUC
 807,988 impressions, exceeding the matched MiniLM candidate-attention AUC of
 `0.671593`. This passed the promotion gate.
 
-The promoted Phase 3 workflow is implemented by
+The original `lr=2e-5` Phase 3 workflow on this branch is implemented by
 `scripts/run_mpnet_backbone.ps1 -Phase phase3`. It is locked to the selected
 update-9,000 encoder and exactly 2,000 successful continuation optimizer updates
 on Large Temporal Val (11,000 cumulative), followed by four fixed teacher epochs
@@ -421,7 +422,7 @@ Item-only distillation still exceeded the older mean-pooling text-adapt model
 by `+0.002060` AUC, so candidate-aware pooling remains beneficial; the failed
 component is the item-only objective. This variant is not promoted to
 maximum-data training or submission, and the verified full-distillation
-candidate-attention workflow remains the active champion.
+candidate-attention workflow remained the selected architecture at that stage.
 
 The reverse-position run selected epoch 3 and learned a substantial newest-click
 signal, but its gains were not stable across history lengths. Relative to direct
@@ -495,8 +496,10 @@ users, including zero-history groups.
 | Text-adapt v1 | Phase 1 update 6,000 + 2,000 Phase 3 updates | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6848 | 2,370,727 | `runs/mind_large_submission_text_adapt_recency_alpha_002_v1/submission/prediction.zip` |
 | Candidate attention, original schedule | Same as text-adapt v1; candidate-aware student history pooling | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6848 | 2,370,727 | `runs/mind_large_submission_text_adapt_candidate_attention_recency_alpha_002_v1/submission/prediction.zip` |
 | Candidate attention, selected schedule | Same as text-adapt v1; candidate-aware student history pooling | `MINDlarge_train + MINDlarge_dev` | 4 | 2 | 0.02 | **0.6869** | 2,370,727 | `runs/mind_large_submission_text_adapt_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.zip` |
-| **MPNet candidate attention, selected schedule** | Phase 1 update 9,000 + 2,000 Phase 3 updates; adapted `all-mpnet-base-v2` | `MINDlarge_train + MINDlarge_dev` | 4 | 2 | 0.02 | **0.6948** | 2,370,727 | `runs/mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.zip` |
-| MPNet + selected candidate-attention MiniLM weighted-Borda ensemble | 75% MPNet ranks + 25% MiniLM ranks; MPNet breaks exact fusion ties | Same two maximum-data members above | 4 | 2 | Included in both members | Pending | 2,370,727 | `runs/mind_large_ensemble_mpnet_minilm_rank_v1/submission/prediction.zip` |
+| Original MPNet candidate attention, selected schedule | Phase 1 update 9,000 + 2,000 Phase 3 updates; adapted `all-mpnet-base-v2` | `MINDlarge_train + MINDlarge_dev` | 4 | 2 | 0.02 | 0.6948 | 2,370,727 | `runs/mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.zip` |
+| MPNet + selected candidate-attention MiniLM weighted-Borda ensemble | 75% MPNet ranks + 25% MiniLM ranks; MPNet breaks exact fusion ties | Same two maximum-data members above | 4 | 2 | Included in both members | 0.6960 | 2,370,727 | `runs/mind_large_ensemble_mpnet_minilm_rank_v1/submission/prediction.zip` |
+| Improved MPNet single model (`31ab682`) | MPNet text-encoder lr=1e-5, selected update 9,000, then 2,000 continuation updates | `MINDlarge_train + MINDlarge_dev` | 4 | 2 | 0.02 | 0.6960 | 2,370,727 | `runs/mind_large_submission_mpnet_p1_output/submission/prediction.zip` |
+| **Improved MPNet + selected candidate-attention MiniLM weighted-Borda ensemble (best reported)** | 75% improved MPNet (`31ab682`) ranks + 25% MiniLM ranks; MPNet breaks exact fusion ties | Same improved MPNet and selected MiniLM maximum-data members | 4 | 2 | Included in both members (`0.02`) | **0.6972** | 2,370,727 | `runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/submission/prediction.zip` |
 | Rejected attentive multi-view v1 | Separate title/abstract encoding with a jointly trained attentive gate | `MINDlarge_train + MINDlarge_dev` | 1 | 3 | 0.02 | 0.6746 | 2,370,727 | `runs/mind_large_submission_text_adapt_multiview_low_lr_3ep_recency_alpha_002_v1/submission/prediction.zip` |
 | Rejected replay 85/10/5 | Phase 1 update 6,000 + 2,000 replay-mixture updates | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6800 | 2,370,727 | `runs/mind_large_submission_text_adapt_replay_85_10_5_recency_alpha_002_v1/submission/prediction.zip` |
 | Rejected Nov 15 overweight 45/55 | Phase 1 update 6,000 + 2,000 date-weighted updates | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6796 | 2,370,727 | `runs/mind_large_submission_text_adapt_nov15_weighted_recency_alpha_002_v1/submission/prediction.zip` |
@@ -509,11 +512,16 @@ The adapted-text submission first improved Large Test AUC from `0.6724` to
 validation AUC from `0.664328` to `0.671593`. Its original one-epoch
 maximum-data schedule remained at `0.6848`, while transferring the selected
 `lr=1e-4`, `weight_decay=3e-5` schedule for two maximum-data epochs reached
-**`0.6869`**. MPNet then raised Large Test AUC to **`0.6948`**. The current
-champion gains `+0.0079` over selected candidate-attention MiniLM, `+0.0100`
+**`0.6869`**. Original MPNet then raised Large Test AUC to **`0.6948`**. That
+historical model gained `+0.0079` over selected candidate-attention MiniLM, `+0.0100`
 over text-adapt v1, and `+0.0224` over the frozen-MiniLM baseline.
 
-The subsequent rank-only ensemble selected 75% MPNet and 25% MiniLM on the
+The current best single model is the `lr=1e-5` MPNet from `31ab682`, at
+`0.6960`; the original MPNet+MiniLM ensemble independently achieved `0.6960`.
+The improved-MPNet+MiniLM ensemble is now the best reported submission at
+**`0.6972`**, gaining `+0.0012` over both of those results.
+
+The original rank-only ensemble selected 75% MPNet and 25% MiniLM on the
 Nov 14 `rerank_tune` view. Mean impression AUC increased from MPNet's
 `0.693301` to `0.694412` (`+0.001111`). With that weight frozen, Nov 15 AUC
 increased from `0.683811` to `0.684632` (`+0.000820`). Nov 15 MRR and nDCG were
@@ -521,7 +529,44 @@ essentially flat but slightly lower, so this is specifically an AUC-targeted
 leaderboard candidate. The two hidden rank archives agree on the top candidate
 for only `49.30%` of impressions, providing useful model diversity. The output
 ZIP and hashes are recorded under `runs/mind_large_ensemble_mpnet_minilm_rank_v1`;
-its hidden Large Test result has not yet been reported.
+its user-reported hidden Large Test AUC is `0.6960`.
+
+The follow-up config `configs/mind_large_ensemble_mpnet_p1_minilm.yaml` uses
+the improved MPNet from commit `31ab682` (`feature/lr_sweep_2`) and the same
+MiniLM member. The temporal checkpoint is `mind_large_temporal_mpnet_p1_promoted`;
+the hidden-test member is `mind_large_submission_mpnet_p1_output`. Search and
+submission generation are complete. The independent Nov 14 search selected
+75% improved MPNet and 25% MiniLM from the 0.00--1.00 grid (step 0.05), then
+froze that choice before the Nov 15 report:
+
+| Split | Impressions | MiniLM AUC | Improved MPNet AUC | 75/25 ensemble AUC | Ensemble delta vs MPNet |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Nov 14 weight selection | 431,517 | 0.675268 | 0.697527 | **0.698596** | +0.001069 |
+| Nov 15 frozen-weight report | 376,471 | 0.667200 | 0.684624 | **0.686049** | +0.001425 |
+
+On Nov 15, ensemble MRR was `0.339251` (`-0.000665` vs improved MPNet),
+nDCG@5 was `0.377157` (`-0.000137`), and nDCG@10 was `0.438932` (`+0.000131`).
+Existing November splits remain reused diagnostics, not an independent holdout.
+These are local temporal metrics, not the hidden Large Test score.
+
+The user reported **Large Test AUC `0.6972`** for the completed submission.
+The generated metadata records 2,370,727 impressions and 75/25 weights; the
+actual ZIP checksum matches that metadata. The score and artifact identity are
+preserved in
+[leaderboard_result.json](../runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/ensemble/leaderboard_result.json).
+The submission command reads the frozen search result automatically and
+verifies its source fingerprint; the YAML's null weight and `frozen: false`
+are intentional in `search_artifact` mode. No search rerun or MiniLM ZIP
+regeneration is needed for unchanged inputs. See README section 3.6 for the
+CLI commands.
+
+The new search applies recency `alpha=0.02` before ranking each temporal
+member and shares exact integer Borda sorting with submission. Historical
+ensemble validation numbers above did not include recency and should not be
+compared as matched-protocol results. The current source fingerprints cover
+actual checkpoints, embeddings, validation data, age artifacts and prediction
+contents; old search artifacts must be regenerated. The original-model phase
+runner is retained for historical reproduction, not training the new champion.
 
 The attentive multi-view promotion is rejected. Its encouraging temporal AUC
 of `0.675783` did not transfer: Large Test AUC was `0.6746`, which is `-0.0123`
@@ -577,8 +622,11 @@ as negative experimental evidence.
   baseline and `configs/mind_large_temporal_tune.yaml` to reproduce hard-negative v4.
 - Use `configs/mind_large_submission.yaml` only after choosing fixed settings; it trains on `MINDlarge_train + MINDlarge_dev` and writes hidden-test submission ranks.
 - Use `configs/mind_large_submission_mpnet_candidate_attention.yaml` and its
-  recency companion to reproduce the current `0.6948` champion. The MiniLM
+  recency companion to reproduce the original `0.6948` MPNet. The MiniLM
   candidate-attention configs reproduce the previous `0.6869` fallback.
+- Use `configs/mind_large_ensemble_mpnet_p1_minilm.yaml` with its completed
+  search artifact for the best reported `0.6972` ensemble. Preserve the saved
+  selection and result record when starting a new experiment.
 
 ## Known Metadata Note
 

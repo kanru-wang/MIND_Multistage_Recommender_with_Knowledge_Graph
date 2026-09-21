@@ -1,5 +1,10 @@
 # MIND Multi-Stage News Recommender [Retrieval -> Ranker(DLRM+knowledge graph) -> Re-ranker]
 
+Best reported **Large Test AUC: 0.6972**, from a weighted-Borda ensemble of
+75% improved MPNet (`31ab682`, text-encoder `lr=1e-5`) and 25% selected
+candidate-attention MiniLM. The best single model remains MPNet at `0.6960`.
+See [section 3.6](#36-ensemble-mpnet-and-minilm) for results and reproduction.
+
 This project implements a realistic recommender stack on the **Microsoft News Dataset (MIND)**:
 - Preprocessing: prepare train/val/test data, click-count features, cold/new flags, impression-level eval data, and map IDs to indices.
 - Train **Teacher retrieval encoders** (text-based item encoder + history-based user encoder).
@@ -411,9 +416,16 @@ slices so regressions can be checked against impression order:
 
 ---
 
-## 3) End-to-end Large MPNet workflow
+## 3) Large MPNet workflows
 
-The promoted workflow first selects the model on the chronological Large
+Sections 3.1--3.5 reproduce the **original MPNet (`lr=2e-5`, Test AUC
+`0.6948`)**. The current best single model uses `lr=1e-5` and achieves `0.6960`;
+its complete training workflow lives at commit `31ab682` on
+`feature/lr_sweep_2`. This branch reuses its saved artifacts for the new
+ensemble in section 3.6. `run_mpnet_backbone.ps1` on this branch remains the
+original-model runner.
+
+The original workflow first selects the model on the chronological Large
 temporal split, then performs a maximum-data fit for the hidden leaderboard
 test. Run one phase at a time so each selection decision can be reviewed before
 the next phase consumes more data.
@@ -428,7 +440,7 @@ python -m mindrec.cli preprocess --config configs/mind_large_temporal_mpnet.yaml
 ```
 
 This creates the training, validation, and reranker views shown in the timeline
-above. The promoted phase runner performs this step automatically when the
+above. The original-model phase runner performs this step automatically when the
 compatible processed data is not already present.
 
 ### 3.2 Phase 1: select the adapted MPNet checkpoint
@@ -491,7 +503,7 @@ fallback weight and oversampling choices, then selects the best held-out
 
 ### 3.5 Build a MIND-large leaderboard submission
 
-The current MPNet submission is produced by Phase 3:
+The original MPNet submission is produced by Phase 3:
 
 ```powershell
 .\scripts\run_mpnet_backbone.ps1 -Phase phase3
@@ -523,8 +535,8 @@ model weights. Likewise, `alpha=0.02` is a configured post-hoc constant rather
 than a learned parameter.
 
 `mind_large_temporal_tune.yaml`, `mind_large_tune.yaml`, and the MiniLM
-submission configs remain reproducibility baselines; they are not the current
-champion path.
+submission configs remain reproducibility baselines. The improved MPNet
+artifacts and current ensemble commands are identified in section 3.6.
 
 Completed Large temporal metrics, protocol details, and rejected experiments are recorded in [docs/experiment_registry.md](docs/experiment_registry.md).
 
@@ -587,8 +599,8 @@ chunked article encoding to fit the target GPU without changing logical batch
 membership. Candidate-attention scoring caches item and history states, then
 runs only the small candidate-conditioned attention operation per candidate.
 
-The completed submission achieved Large Test AUC **`0.6948`**, making it the
-current verified champion. This is `+0.0079` over the selected MiniLM
+The original MPNet submission achieved Large Test AUC **`0.6948`**.
+This is `+0.0079` over the selected MiniLM
 candidate-attention submission (`0.6869`), `+0.0100` over text-adapt v1
 (`0.6848`), and `+0.0224` over frozen MiniLM (`0.6724`). Its 2,370,727
 impression rankings passed sequential-ID, rank-permutation, ZIP-integrity, and
@@ -630,7 +642,7 @@ without retraining. Their retained submission artifacts contain ranks rather
 than raw logits, so the supported method is weighted Borda rank fusion. The
 stronger MPNet member resolves exact fusion ties.
 
-The single MPNet weight was selected from a 0.00--1.00 grid on Nov 14 and then
+For the first ensemble, the single MPNet weight was selected from a 0.00--1.00 grid on Nov 14 and then
 frozen before one report on Nov 15. Since these days were already used during
 upstream model development, this is transfer evidence rather than a new
 independent holdout.
@@ -640,21 +652,106 @@ independent holdout.
 | Nov 14 weight selection | 0.675224 | 0.693301 | **0.694412** | +0.001111 |
 | Nov 15 frozen-weight report | 0.667431 | 0.683811 | **0.684632** | +0.000820 |
 
+These are historical results from validation without recency. New searches
+apply recency before ranking and use exact integer Borda arithmetic; they do
+not reproduce this historical search table.
+
 The frozen blend slightly reduced Nov 15 MRR (`-0.000807`), nDCG@5
 (`-0.000783`), and nDCG@10 (`-0.000284`) versus MPNet alone. It is retained as
 an AUC-targeted competition candidate because the MIND leaderboard's primary
 metric is AUC, not as a universal replacement for the single MPNet model.
 
 ```powershell
-python -m mindrec.cli ensemble_search --config configs/mind_large_ensemble_mpnet_minilm.yaml
+# Reproduce the original submission using its already-frozen 75/25 weight.
 python -m mindrec.cli ensemble_submission --config configs/mind_large_ensemble_mpnet_minilm.yaml
 ```
 
 The completed hidden-test artifact is
 `runs/mind_large_ensemble_mpnet_minilm_rank_v1/submission/prediction.zip`. It
 contains 2,370,727 aligned impressions and passed rank-permutation, candidate-
-count, member-alignment, ZIP-integrity, and content-hash checks. Its hidden-test
-AUC is pending leaderboard evaluation.
+count, member-alignment, ZIP-integrity, and content-hash checks. The user
+reported its Large Test AUC as **0.6960**.
+
+#### Ensemble the improved MPNet (text-encoder lr=1e-5) with MiniLM
+
+Commit `31ab682` on `feature/lr_sweep_2` promoted the MPNet temporal run
+`mind_large_temporal_mpnet_p1_promoted` (full temporal AUC `0.691440`). Its
+maximum-data submission at
+`runs/mind_large_submission_mpnet_p1_output/submission/prediction.zip`
+achieved Large Test AUC **0.6960** as a single model. The earlier MPNet single
+model scored `0.6948`; the earlier MPNet+MiniLM ensemble also scored `0.6960`.
+These are three separate results.
+
+The completed improved-MPNet ensemble achieved user-reported **Large Test AUC
+0.6972**, the best reported result so far: `+0.0012` over both the best single
+MPNet and the original ensemble. A fresh Nov 14 search independently selected
+**75% improved MPNet + 25% MiniLM**; it did not inherit the original weight.
+
+| Split | Impressions | MiniLM AUC | Improved MPNet AUC | 75/25 ensemble AUC | Ensemble delta vs MPNet |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Nov 14 weight selection | 431,517 | 0.675268 | 0.697527 | **0.698596** | +0.001069 |
+| Nov 15 frozen-weight report | 376,471 | 0.667200 | 0.684624 | **0.686049** | +0.001425 |
+
+These temporal results include recency `alpha=0.02` and are distinct from the
+hidden Large Test result. On Nov 15, versus improved MPNet alone, the ensemble
+slightly reduced MRR (`-0.000665`) and nDCG@5 (`-0.000137`) while increasing
+nDCG@10 (`+0.000131`); this remains an AUC-targeted ensemble.
+
+The submission contains 2,370,727 impressions. Its verified ZIP checksum and
+user-reported leaderboard score are preserved in
+[leaderboard_result.json](runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/ensemble/leaderboard_result.json),
+alongside the saved search. Hidden test labels are not available locally.
+
+To regenerate the ensemble ZIP from the existing member ZIPs and completed
+search, run from the repository root:
+
+```powershell
+.\.venv\Scripts\python.exe -m mindrec.cli ensemble_submission --config configs/mind_large_ensemble_mpnet_p1_minilm.yaml
+```
+
+For a full replay of selection, the preparation commands are below. They are
+not needed when the member ZIPs and saved search are unchanged. Regenerate the
+MiniLM ZIP only if missing; rerunning search replaces the recorded selection.
+
+```powershell
+.\.venv\Scripts\python.exe -m mindrec.cli write_submission --config configs/mind_large_submission_candidate_attention_recency_alpha_002.yaml
+.\.venv\Scripts\python.exe -m mindrec.cli ensemble_search --config configs/mind_large_ensemble_mpnet_p1_minilm.yaml
+.\.venv\Scripts\python.exe -m mindrec.cli ensemble_submission --config configs/mind_large_ensemble_mpnet_p1_minilm.yaml
+```
+
+The first command regenerates the MiniLM ZIP from its existing
+checkpoint (skip it if that ZIP is already available). The second command
+scores the two existing temporal checkpoints, selects the
+MPNet weight on Nov 14, records it before reporting Nov 15, and saves
+`runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/ensemble/search.json`.
+The third command automatically reads that selection and fuses the existing
+maximum-data ZIPs. No manual weight edit or retraining is needed. The search
+fingerprint covers the actual temporal checkpoints, embeddings, processed
+news/ID maps, validation files, age index/maps, scoring settings, and prediction
+contents. Changes to these inputs invalidate the selection. Unrelated training
+or reranker options and ZIP timestamps/compression do not.
+
+The completed output is
+`runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/submission/prediction.zip`.
+The config intentionally keeps `selection_source: search_artifact`,
+`selected_primary_weight: null`, and `frozen: false`: the completed search
+artifact, which records `selection_frozen: true`, supplies the frozen 0.75
+weight. These YAML fields do not mean selection is pending.
+The two promoted temporal config files were adapted
+from `31ab682` to support inference on this branch; this does not import that
+branch's complete training workflow.
+
+Temporal selection now applies `zscore(logit) + 0.02 * freshness_percentile`
+to each member before ranking, matching the adjustment already in the
+maximum-data ZIPs. Age lookup maps article IDs to the age index's own news
+indices. Validation also uses the submission's near-tie reference scoring
+guard. No additional recency is applied when fusing the ZIPs. Exact integer
+Borda costs and the MPNet tiebreaker use one shared sorting implementation.
+The writer checks IDs, candidate counts, permutations, ZIP CRC and content
+hash before publishing staged output; a failed generation preserves previous
+outputs. Older search artifacts are incompatible and must be regenerated.
+Nov 15 has been used in earlier
+model development, so it is a diagnostic report, not an unused holdout.
 
 ### 3.7 Search reranker hyperparameters (optional)
 
@@ -762,7 +859,7 @@ python -m mindrec.cli rerank_eval --config configs/mind_large_temporal_mpnet.yam
   - `metrics/`: ranking, calibration, diversity, fairness, and slice benchmarks.
 - `configs/`: composable Large temporal, submission, MPNet, and reranker
   experiment configs.
-- `scripts/`: the promoted MPNet phase runner, KG-triples builder, and GPU check.
+- `scripts/`: the original MPNet phase runner, KG-triples builder, and GPU check.
 - `tests/`: focused tests for adaptation, hard negatives, candidate attention,
   taxonomy handling, reranking, recency, age, and submission integrity.
 - `docs/`: experiment registry, metric definitions, and the detailed reranking

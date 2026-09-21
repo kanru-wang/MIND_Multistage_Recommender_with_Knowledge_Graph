@@ -1,0 +1,21 @@
+extends: "mind_large_ensemble_mpnet_minilm.yaml"
+
+run_name: "mind_large_ensemble_mpnet_p1_minilm_rank_v1"
+
+ensemble:
+  # MPNet from feature/lr_sweep_2 commit 31ab682: text adaptation lr=1e-5.
+  # Both temporal models fit before Nov 14; both ZIPs use Train+Dev refits.
+  members:
+    - name: "mpnet_p1_candidate_attention"
+      config: "configs/promoted/mind_large_mpnet_p1/phase2_selected.yaml"
+      prediction_zip: "runs/mind_large_submission_mpnet_p1_output/submission/prediction.zip"
+    - name: "minilm_candidate_attention"
+      config: "configs/mind_large_temporal_candidate_attention.yaml"
+      prediction_zip: "runs/mind_large_submission_text_adapt_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.zip"
+
+  # Search selects on Nov 14 and records the selection before reporting Nov 15.
+  # Submission consumes that completed search automatically; no YAML edit needed.
+  selection_source: "search_artifact"
+  selection_artifact: "runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/ensemble/search.json"
+  selected_primary_weight: null
+  frozen: false

@@ -1,0 +1,284 @@
+{
+  "selected": {
+    "primary_weight": 0.75,
+    "secondary_weight": 0.25,
+    "auc": 0.6985958769292223,
+    "mrr": 0.33641022375789814,
+    "ndcg@5": 0.3682385374576485,
+    "ndcg@10": 0.42755655934577114
+  },
+  "selection_frozen": true,
+  "selection_context": {
+    "schema_version": 2,
+    "scoring_protocol": "integer_borda_recency_reference_guard_v2",
+    "data_artifacts": {
+      "id_maps.json": {
+        "path": "data/processed/MINDlarge_temporal_tune/id_maps.json",
+        "sha256": "11761ea46c02eed056cdef522d3c5f3cc33fcb7b519c90a32dd6d118ed2c5913"
+      },
+      "news.parquet": {
+        "path": "data/processed/MINDlarge_temporal_tune/news.parquet",
+        "sha256": "f178b71e60e089bde60b42de98d5eccd7ba0e26d4360de031274ef6c48f764cb"
+      },
+      "rerank_tune_impressions.parquet": {
+        "path": "data/processed/MINDlarge_temporal_tune/rerank_tune_impressions.parquet",
+        "sha256": "daf29b3ed0cce5d882754e8f0e6f11e6a64fd96b2ce811de916c3dd6985e8b24"
+      },
+      "rerank_test_impressions.parquet": {
+        "path": "data/processed/MINDlarge_temporal_tune/rerank_test_impressions.parquet",
+        "sha256": "9f7e7ce81c713288d4a6a05a157ae2797fb05f4e673ec601385bca7a74acfbf1"
+      },
+      "age_index": {
+        "path": "data/processed/MINDlarge_submission/item_age_index.npz",
+        "sha256": "7003dec351536a22cd96d57e3357ff7bdb02b1a264d2934d58c9ac50e62672e0"
+      },
+      "age_id_maps": {
+        "path": "data/processed/MINDlarge_submission/id_maps.json",
+        "sha256": "025089465a0d693d4a62afe6bbbc31f3059526035024148d62ba88b6037fc0a8"
+      }
+    },
+    "members": [
+      {
+        "name": "mpnet_p1_candidate_attention",
+        "checkpoint": {
+          "path": "runs/mind_large_temporal_mpnet_p1_promoted/ranker/best.pt",
+          "sha256": "d54181f8706246241941ec6eba52c64f78d07c298000c8b63327372784c4dd47"
+        },
+        "item_embeddings": {
+          "path": "runs/mind_large_temporal_mpnet_p1_promoted/teacher/item_ranker_base_emb.npy",
+          "sha256": "e75848d62afc0d1d48b0443d9482ff4e477d2d493940cb040506dcb548c566b6"
+        },
+        "prediction_content_sha256": "0f428e4e818feafeaac1ad6a710671a5aee1298b1f47563038e54372b59a54fe"
+      },
+      {
+        "name": "minilm_candidate_attention",
+        "checkpoint": {
+          "path": "runs/mind_large_temporal_text_adapt_candidate_attention_v1/ranker/best.pt",
+          "sha256": "991868ce78bf2145123bf0b8502689b1cd16171e4ee151446bd4b1ee301d8e2c"
+        },
+        "item_embeddings": {
+          "path": "runs/mind_large_temporal_text_adapt_v1/teacher/item_ranker_base_emb.npy",
+          "sha256": "6935c3350066810fd746c169bb607016bdd5561a05173f077904f5209a3e8cb3"
+        },
+        "prediction_content_sha256": "3f3abd7bb67d2286b3f06f9d27c2a8e82526124055e3be94042797282bc8743c"
+      }
+    ],
+    "primary_weight_grid": [
+      0.0,
+      0.05,
+      0.1,
+      0.15,
+      0.2,
+      0.25,
+      0.3,
+      0.35,
+      0.4,
+      0.45,
+      0.5,
+      0.55,
+      0.6,
+      0.65,
+      0.7,
+      0.75,
+      0.8,
+      0.85,
+      0.9,
+      0.95,
+      1.0
+    ],
+    "tune_split": "rerank_tune",
+    "report_split": "rerank_test",
+    "method": "weighted_borda_rank_fusion",
+    "rank_tiebreaker": "primary_rank",
+    "recency": {
+      "enabled": true,
+      "alpha": 0.02,
+      "age_dataset_name": "MINDlarge_submission",
+      "max_age_hours": 720.0
+    },
+    "scoring": {
+      "batch_size": 2048,
+      "candidate_buffer_size": 65536,
+      "item_encoding_batch_size": 8192,
+      "exact_rank_guard_threshold": 1e-05,
+      "reference_batch_size": 2048
+    }
+  },
+  "tune": {
+    "split": "rerank_tune",
+    "n_impressions": 431517,
+    "n_scored_impressions": 431517,
+    "n_skipped_impressions": 0,
+    "recency_alpha": 0.02,
+    "metrics": [
+      {
+        "primary_weight": 0.0,
+        "secondary_weight": 1.0,
+        "auc": 0.6752676117353305,
+        "mrr": 0.31892607504301734,
+        "ndcg@5": 0.34672107643056566,
+        "ndcg@10": 0.40732320677226774
+      },
+      {
+        "primary_weight": 0.05,
+        "secondary_weight": 0.95,
+        "auc": 0.675730582124995,
+        "mrr": 0.31927297849603237,
+        "ndcg@5": 0.3472087302398492,
+        "ndcg@10": 0.40781381164865704
+      },
+      {
+        "primary_weight": 0.1,
+        "secondary_weight": 0.9,
+        "auc": 0.6771884749644186,
+        "mrr": 0.3204197838477828,
+        "ndcg@5": 0.34879507780685204,
+        "ndcg@10": 0.40942216153936867
+      },
+      {
+        "primary_weight": 0.15,
+        "secondary_weight": 0.85,
+        "auc": 0.6789621299222588,
+        "mrr": 0.3217972039876311,
+        "ndcg@5": 0.3505929283671128,
+        "ndcg@10": 0.41121645779089805
+      },
+      {
+        "primary_weight": 0.2,
+        "secondary_weight": 0.8,
+        "auc": 0.6815163838944975,
+        "mrr": 0.3239149777977226,
+        "ndcg@5": 0.35323300196707497,
+        "ndcg@10": 0.4136361734985993
+      },
+      {
+        "primary_weight": 0.25,
+        "secondary_weight": 0.75,
+        "auc": 0.6840617889556027,
+        "mrr": 0.3258981859549555,
+        "ndcg@5": 0.3555446887504469,
+        "ndcg@10": 0.4158510563401014
+      },
+      {
+        "primary_weight": 0.3,
+        "secondary_weight": 0.7,
+        "auc": 0.6853913825554352,
+        "mrr": 0.32650158102574967,
+        "ndcg@5": 0.35648749514454753,
+        "ndcg@10": 0.41684652744144207
+      },
+      {
+        "primary_weight": 0.35,
+        "secondary_weight": 0.65,
+        "auc": 0.6882216371574792,
+        "mrr": 0.32893874322792827,
+        "ndcg@5": 0.3593861359991389,
+        "ndcg@10": 0.41932796476182616
+      },
+      {
+        "primary_weight": 0.4,
+        "secondary_weight": 0.6,
+        "auc": 0.6900491054051132,
+        "mrr": 0.3298809353633836,
+        "ndcg@5": 0.3608698609733102,
+        "ndcg@10": 0.42067375546779806
+      },
+      {
+        "primary_weight": 0.45,
+        "secondary_weight": 0.55,
+        "auc": 0.691150134624264,
+        "mrr": 0.33030518831374805,
+        "ndcg@5": 0.3615189779127767,
+        "ndcg@10": 0.4213705579376467
+      },
+      {
+        "primary_weight": 0.5,
+        "secondary_weight": 0.5,
+        "auc": 0.6958049413348497,
+        "mrr": 0.33443473465566964,
+        "ndcg@5": 0.3657156651933225,
+        "ndcg@10": 0.4252080600429072
+      },
+      {
+        "primary_weight": 0.55,
+        "secondary_weight": 0.44999999999999996,
+        "auc": 0.6962430083911686,
+        "mrr": 0.33456442392859104,
+        "ndcg@5": 0.3659309617313565,
+        "ndcg@10": 0.42545032860719395
+      },
+      {
+        "primary_weight": 0.6,
+        "secondary_weight": 0.4,
+        "auc": 0.697198808803471,
+        "mrr": 0.33506094865197134,
+        "ndcg@5": 0.3666360683512319,
+        "ndcg@10": 0.42611672487671365
+      },
+      {
+        "primary_weight": 0.65,
+        "secondary_weight": 0.35,
+        "auc": 0.6975637277661756,
+        "mrr": 0.3352066555444839,
+        "ndcg@5": 0.36686194233562025,
+        "ndcg@10": 0.42637910935379936
+      },
+      {
+        "primary_weight": 0.7,
+        "secondary_weight": 0.30000000000000004,
+        "auc": 0.6983287608825671,
+        "mrr": 0.33603367134979983,
+        "ndcg@5": 0.3678427415956906,
+        "ndcg@10": 0.4271282679744528
+      },
+      {
+        "primary_weight": 0.75,
+        "secondary_weight": 0.25,
+        "auc": 0.6985958769292223,
+        "mrr": 0.33641022375789814,
+        "ndcg@5": 0.3682385374576485,
+        "ndcg@10": 0.42755655934577114
+      },
+      {
+        "primary_weight": 0.8,
+        "secondary_weight": 0.19999999999999996,
+        "auc": 0.6985509030291159,
+        "mrr": 0.33645325063471326,
+        "ndcg@5": 0.36831251653089986,
+        "ndcg@10": 0.4276305580287518
+      },
+      {
+        "primary_weight": 0.85,
+        "secondary_weight": 0.15000000000000002,
+        "auc": 0.6983878085652665,
+        "mrr": 0.3364715065573133,
+        "ndcg@5": 0.36825562898358033,
+        "ndcg@10": 0.427586199527535
+      },
+      {
+        "primary_weight": 0.9,
+        "secondary_weight": 0.09999999999999998,
+        "auc": 0.6979946779602828,
+        "mrr": 0.33626569735206036,
+        "ndcg@5": 0.36806497109577324,
+        "ndcg@10": 0.4272493168147031
+      },
+      {
+        "primary_weight": 0.95,
+        "secondary_weight": 0.050000000000000044,
+        "auc": 0.6976639277010114,
+        "mrr": 0.33619147439985,
+        "ndcg@5": 0.3679872680228667,
+        "ndcg@10": 0.4270555015150673
+      },
+      {
+        "primary_weight": 1.0,
+        "secondary_weight": 0.0,
+        "auc": 0.6975270139105747,
+        "mrr": 0.3360966632898934,
+        "ndcg@5": 0.36784742792759134,
+        "ndcg@10": 0.4269498778649349
+      }
+    ]
+  }
+}

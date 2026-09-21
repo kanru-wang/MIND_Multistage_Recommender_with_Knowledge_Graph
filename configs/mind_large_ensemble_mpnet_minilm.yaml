@@ -4,6 +4,12 @@ data:
   processed_root: "data/processed"
   dataset_name: "MINDlarge_temporal_tune"
 
+posthoc_recency:
+  enabled: true
+  age_dataset_name: "MINDlarge_submission"
+  alpha: 0.02
+  max_age_hours: 720.0
+
 ensemble:
   # MPNet is primary so exact fusion ties fall back to the stronger model.
   members:
@@ -21,6 +27,8 @@ ensemble:
   batch_size: 2048
   candidate_buffer_size: 65536
   item_encoding_batch_size: 8192
+  exact_rank_guard_threshold: 1.0e-5
+  reference_batch_size: 2048
 
   # Selected by mean impression AUC on Nov 14 (rerank_tune). The frozen weight
   # improved AUC again on Nov 15 (rerank_test), from 0.683811 to 0.684632.

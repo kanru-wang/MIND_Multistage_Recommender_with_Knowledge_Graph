@@ -1,0 +1,14 @@
+extends: "../../mind_large_temporal_mpnet.yaml"
+
+# Inference reference for the completed priority-1 candidate from 31ab682.
+# Full training reproduction uses feature/lr_sweep_2 at that commit; this
+# branch only imports the config chain needed to load its retained artifacts.
+run_name: "mind_large_temporal_mpnet_p1_sweep_ta_lr_1em05_t_5em02_u12000_v500"
+
+teacher:
+  text_adaptation:
+    lr: 1.0e-5
+    max_optimizer_updates: 12000
+    early_stopping:
+      validation_interval_updates: 500
+      patience: 6

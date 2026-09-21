@@ -24,7 +24,7 @@ __pycache__/
 *.pt
 
 # Ignore tests
-tests/
+tests/*
 
 # Ignore certain runs
 # SentenceTransformer checkpoints are large generated artifacts. Keep their
