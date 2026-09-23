@@ -131,6 +131,13 @@ def _normalize_relevance(scores: np.ndarray, mode: str) -> np.ndarray:
     )
 
 
+DEFAULT_OBJECTIVE_WEIGHTS = {
+    "relevance_weight": 0.90,
+    "novelty_weight": 0.05,
+    "coverage_weight": 0.05,
+}
+
+
 def validate_rerank_config(rr_cfg: dict[str, Any]) -> None:
     """Fail early on invalid or silently ineffective reranker settings."""
 
@@ -158,11 +165,7 @@ def validate_rerank_config(rr_cfg: dict[str, Any]) -> None:
             "rerank.relevance_normalization must be 'minmax' or 'none'."
         )
 
-    weights = [
-        float(rr_cfg.get("relevance_weight", 0.85)),
-        float(rr_cfg.get("novelty_weight", 0.10)),
-        float(rr_cfg.get("coverage_weight", 0.05)),
-    ]
+    weights = [float(rr_cfg.get(name, default)) for name, default in DEFAULT_OBJECTIVE_WEIGHTS.items()]
     if not all(np.isfinite(weight) and weight >= 0.0 for weight in weights):
         raise ValueError(
             "Reranker relevance/novelty/coverage weights must be finite and "
@@ -405,7 +408,7 @@ def greedy_rerank(
             )
 
             if fairness_cfg.get("enabled", False):
-                val -= float(fairness_cfg.get("penalty_weight", 0.5)) * fairness_penalty(i)
+                val -= float(fairness_cfg.get("penalty_weight", 0.0)) * fairness_penalty(i)
 
             if val > best_val:
                 best_val = val

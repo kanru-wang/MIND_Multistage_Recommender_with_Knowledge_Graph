@@ -3,25 +3,23 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pandas as pd
-import torch
-from tqdm import tqdm
 
 from mindrec.config import ensure_dir
 from mindrec.pipeline.rerank_metrics import (
     MetricAccumulator,
-    ScoredRerankImpression,
     baseline_metrics_for_impression,
     candidate_metrics_for_impression,
 )
 from mindrec.pipeline.rerank_scoring import (
     load_rerank_scoring_assets,
-    prepare_rerank_score_group,
+    iter_scored_impressions,
     resolve_rerank_protocol,
-    score_rerank_groups,
 )
-from mindrec.rerank.greedy import build_news_meta, validate_rerank_config
+from mindrec.pipeline.rerank_policy import (
+    _constraint_check, _make_constraint, resolve_guardrails, resolve_policy, SELECTION_METHOD,
+)
+from mindrec.rerank.greedy import build_news_meta
 from mindrec.utils import (
     impression_artifact_path,
     log_device,
@@ -50,6 +48,7 @@ def _write_rerank_report(out_root: Path, out: dict[str, Any]) -> None:
     baseline = out["baseline"]
     reranked = out["reranked"]
     delta = out["delta"]
+    reporting_note = out.get("selection", {}).get("reporting_note")
     lines = [
         "# Reranker Evaluation",
         "",
@@ -57,6 +56,7 @@ def _write_rerank_report(out_root: Path, out: dict[str, Any]) -> None:
         f"Evaluated impressions: {out['n_impressions_evaluated']}  ",
         f"Top-K / pool: {out['k_out']} / {out['pool_size']}",
         "",
+        *([f"Evaluation context: {reporting_note}", ""] if reporting_note else []),
         "| Metric | Baseline | Reranked | Delta |",
         "|---|---:|---:|---:|",
     ]
@@ -79,6 +79,9 @@ def _write_rerank_report(out_root: Path, out: dict[str, Any]) -> None:
         [
             "",
             f"Relative nDCG drop: {100.0 * delta['ndcg_drop_ratio']:.3f}%",
+            f"Guardrails passed: {out['constraint']['feasible']}",
+            "Failed guardrails: "
+            + (", ".join(out["constraint"]["failed_guardrails"]) or "none"),
             "",
             (
                 "Lower is better for fairness KL and fairness Gini; higher is "
@@ -91,10 +94,14 @@ def _write_rerank_report(out_root: Path, out: dict[str, Any]) -> None:
 
 
 def run_rerank_eval(cfg: dict[str, Any]) -> None:
+    rr_cfg = cfg["rerank"]
+    policy = resolve_policy(rr_cfg)
+    resolve_guardrails(rr_cfg.get("search", {}))
+    protocol = resolve_rerank_protocol(cfg, require_frozen=True)
     ds = cfg["data"]["dataset_name"]
     proc_root = Path(cfg["data"]["processed_root"]) / ds
     runs_root = ensure_dir(Path("runs") / cfg["run_name"])
-    out_root = ensure_dir(runs_root / "eval")
+    out_root = ensure_dir(runs_root / cfg["rerank"].get("output_subdir", "rerank"))
 
     device = resolve_device(cfg["ranker"].get("device", "cuda"))
     log_device(device, "Rerank eval")
@@ -102,80 +109,57 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
     news = pd.read_parquet(proc_root / "news.parquet")
     news_meta = build_news_meta(news)
 
-    rr_cfg = cfg["rerank"]
-    validate_rerank_config(rr_cfg)
-    protocol = resolve_rerank_protocol(cfg, require_frozen=True)
     eval_split = protocol.reporting_split
     impr = pd.read_parquet(impression_artifact_path(proc_root, eval_split))
 
     scoring_assets = load_rerank_scoring_assets(cfg, proc_root, device)
     teacher_item = scoring_assets.teacher_item
-    k_out = int(rr_cfg["k_out"])
-    pool_size = int(rr_cfg["pool_size"])
-    pos_mode = rr_cfg.get("position_bias", "log")
+    k_out = policy["k_out"]
+    pool_size = policy["pool_size"]
+    pos_mode = policy["position_bias"]
 
-    rel_w = float(rr_cfg.get("relevance_weight", 0.85))
-    nov_w = float(rr_cfg.get("novelty_weight", 0.10))
-    cov_w = float(rr_cfg.get("coverage_weight", 0.05))
-    novelty_sim = str(rr_cfg.get("novelty_sim", "teacher_cosine"))
-    relevance_normalization = str(
-        rr_cfg.get("relevance_normalization", "none")
-    )
-    coverage_cfg = dict(rr_cfg.get("coverage", {}))
-    fairness_cfg = dict(rr_cfg.get("fairness", {}))
-    fairness_cfg["position_bias"] = pos_mode
+    rel_w = policy["relevance_weight"]
+    nov_w = policy["novelty_weight"]
+    cov_w = policy["coverage_weight"]
+    novelty_sim = policy["novelty_sim"]
+    relevance_normalization = policy["relevance_normalization"]
+    coverage_cfg = dict(policy["coverage"])
+    fairness_cfg = dict(policy["fairness"])
 
     baseline_accumulator = MetricAccumulator()
     reranked_accumulator = MetricAccumulator()
 
-    with torch.no_grad():
-        for _, r in tqdm(impr.iterrows(), total=len(impr), desc="Rerank eval"):
-            labels = np.array(r["cand_label"], dtype=np.int32)
-            if labels.sum() <= 0:
-                continue
-            prepared = prepare_rerank_score_group(r)
-            scores = score_rerank_groups(
-                scoring_assets,
-                [prepared],
-                device,
-            )[0]
-            scored = ScoredRerankImpression(
-                labels=labels,
-                cand_news_id=list(r["cand_news_id"]),
-                cand_news_idx=prepared["cand_news_idx"],
-                cand_is_new=prepared["cand_is_new"].astype(int).tolist(),
-                scores=scores,
+    for scored in iter_scored_impressions(impr, scoring_assets, device):
+        baseline_accumulator.add(
+            baseline_metrics_for_impression(
+                row=scored,
+                teacher_item=teacher_item,
+                news_meta=news_meta,
+                k_out=k_out,
+                pool_size=pool_size,
+                position_bias=pos_mode,
+                category_target=str(
+                    fairness_cfg.get("category_target", "catalog")
+                ),
             )
-            baseline_accumulator.add(
-                baseline_metrics_for_impression(
-                    row=scored,
-                    teacher_item=teacher_item,
-                    news_meta=news_meta,
-                    k_out=k_out,
-                    pool_size=pool_size,
-                    position_bias=pos_mode,
-                    category_target=str(
-                        fairness_cfg.get("category_target", "catalog")
-                    ),
-                )
+        )
+        reranked_accumulator.add(
+            candidate_metrics_for_impression(
+                row=scored,
+                teacher_item=teacher_item,
+                news_meta=news_meta,
+                k_out=k_out,
+                pool_size=pool_size,
+                position_bias=pos_mode,
+                coverage_cfg=coverage_cfg,
+                fairness_cfg=fairness_cfg,
+                relevance_weight=rel_w,
+                novelty_weight=nov_w,
+                coverage_weight=cov_w,
+                novelty_sim=novelty_sim,
+                relevance_normalization=relevance_normalization,
             )
-            reranked_accumulator.add(
-                candidate_metrics_for_impression(
-                    row=scored,
-                    teacher_item=teacher_item,
-                    news_meta=news_meta,
-                    k_out=k_out,
-                    pool_size=pool_size,
-                    position_bias=pos_mode,
-                    coverage_cfg=coverage_cfg,
-                    fairness_cfg=fairness_cfg,
-                    relevance_weight=rel_w,
-                    novelty_weight=nov_w,
-                    coverage_weight=cov_w,
-                    novelty_sim=novelty_sim,
-                    relevance_normalization=relevance_normalization,
-                )
-            )
+        )
 
     if baseline_accumulator.count == 0:
         raise RuntimeError(
@@ -184,7 +168,11 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
 
     baseline = baseline_accumulator.mean()
     reranked = reranked_accumulator.mean()
+    constraint = _make_constraint(baseline, rr_cfg.get("search", {}))
     out = {
+        "selection_method": SELECTION_METHOD,
+        "product_constraint": constraint,
+        "constraint": _constraint_check(baseline, reranked, constraint),
         "k_out": k_out,
         "pool_size": pool_size,
         "n_impressions_evaluated": baseline_accumulator.count,

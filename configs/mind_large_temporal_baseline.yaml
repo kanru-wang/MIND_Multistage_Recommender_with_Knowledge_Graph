@@ -114,6 +114,7 @@ ranker:
     max_iter: 100
 
 rerank:
+  output_subdir: "rerank"
   k_out: 10
   pool_size: 50
   eval_split: "rerank_test"  # Nov 15; run once after freezing the Day-1 selection.
@@ -146,54 +147,18 @@ rerank:
     new_item_floor: 0.20
     penalty_weight: 0.25
   search:
-    split: "rerank_tune"  # Nov 14; all priority iteration stays on this split.
+    split: "rerank_tune"
     seed: 13
-    # A larger deterministic screen reduces shortlist churn observed with the
-    # earlier 2,000-impression sample; full validation remains bounded below.
     sample_size: 5000
     shortlist_size: 15
-    novelty_sims: ["teacher_cosine"]
-    weight_pairs:
-      - [0.00, 0.00]
-      - [0.025, 0.00]
-      - [0.00, 0.025]
-      - [0.025, 0.025]
-      - [0.05, 0.00]
-      - [0.00, 0.05]
-      - [0.05, 0.05]
-      - [0.04, 0.075]
-      - [0.05, 0.065]
-      - [0.075, 0.05]
-      - [0.05, 0.075]
-      - [0.06, 0.075]
-      - [0.05, 0.085]
-      - [0.10, 0.05]
-      - [0.05, 0.10]
-      - [0.10, 0.10]
-    fairness_penalties: [0.00, 0.10, 0.15, 0.175, 0.20, 0.225, 0.25, 0.30, 0.40]
-    new_item_floors: [0.00, 0.10, 0.20, 0.30]
-    # These guardrails and utility coefficients are provisional starting
-    # priorities. Iterate and document them on Nov 14 before freezing selection.
+    # The shared search defaults define the 156-setting broad grid.
+    # Override grid fields only for a deliberate experiment (e.g. MPNet refinement).
+    # Provisional aggregate requirements; iterate using tuning data only.
     relative_guardrails:
-      max_ndcg_drop_ratio: 0.021
-      min_new_item_exposure_gain: 0.00
-      min_category_coverage_gain: 0.25
-      min_fairness_kl_pool_improvement: 0.04
-    # One utility unit represents a product-meaningful change. In particular,
-    # a 1 percentage-point new-item gain is not divided by the disabled zero
-    # guardrail, and the full allowed nDCG drop consumes one relevance unit.
-    utility_scales:
-      ndcg_drop_ratio: 0.021
-      new_item_exposure_gain: 0.01
-      category_coverage_gain: 0.25
-      fairness_kl_pool_improvement: 0.04
-    utility_coefficients:
-      ndcg_retention_units: 4.0
-      new_item_exposure_gain_units: 0.5
-      # Coverage and category-fairness are correlated, so avoid counting each
-      # as heavily as before while retaining both views of the trade-off.
-      category_coverage_gain_units: 1.0
-      fairness_kl_pool_improvement_units: 1.0
+      max_ndcg_drop_ratio: 0.02           # At most 2% relative nDCG loss.
+      min_new_item_exposure_gain: 0.00   # No decline, not a disabled check.
+      min_category_coverage_gain: 0.25   # Additional categories/list on average.
+      min_fairness_kl_pool_improvement: 0.03  # Absolute KL reduction.
 
 eval:
   report_splits: ["val"]

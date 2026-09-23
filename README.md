@@ -389,14 +389,14 @@ Why there is no `train_impressions.parquet`:
 | --- | --- | --- | --- | ---: |
 | Nov 9–13 | `MINDlarge_train` before the cutoff | Large Temporal Train | Not used | 1,801,231 |
 | Nov 14 | Tail of `MINDlarge_train` | Part of Large Temporal Val | Tune priorities and policy | 431,517 |
-| Nov 15 | `MINDlarge_dev` | Part of Large Temporal Val | One-time frozen-policy report | 376,471 |
+| Nov 15 | `MINDlarge_dev` | Part of Large Temporal Val | Frozen-setting follow-up report | 376,471 |
 | Nov 16–22 | `MINDlarge_test` | Hidden competition test; labels unavailable | Not used | 2,370,727 |
 
 Large Temporal Val therefore contains 807,988 impressions across the middle two
 rows. Upstream encoder, teacher, and ranker selection used that combined
-validation set. The reranker later reused it as two chronological views, so its
-reporting day is independent of reranker tuning but not independent of earlier
-upstream model development.
+validation set. Reranking uses two chronological views, but November 15 was
+also reused while refining requirements. Its results are follow-up measurements,
+not an independent test.
 
 In Phase 3, the selected encoder continues on Large Temporal Val, and the
 teacher/ranker fit uses all labeled Train + Dev impressions. Hidden Test click
@@ -508,7 +508,7 @@ The orchestration script uses these config roles:
   defaults inherited by the promoted temporal config; it is not a separate
   prerequisite run.
 - `mind_large_temporal_mpnet.yaml` selects MPNet and candidate attention in
-  Phases 1–2 and records the already-frozen reranker policy.
+  Phases 1–2 and records the frozen Approach 1 reranker selection.
 - `mind_large_submission_mpnet_text_continue.yaml` continues the selected
   update-9,000 encoder for exactly 2,000 successful optimizer updates on Large
   Temporal Val, without another early-stopping decision.
@@ -631,95 +631,145 @@ The official MIND evaluator reads `prediction.txt` lines as `impression_id [rank
 Optional submission ensembling is documented separately in
 [Ensembling: MPNet and MiniLM](docs/ensembling.md), including results and CLI commands.
 
-### 3.6 Search reranker hyperparameters (optional)
+### 3.6 Reranking: search offline, use fixed weights in production
 
-Reranking is not part of the leaderboard submission, but this is a current
-workflow for demonstrating how to select a product-style relevance/diversity/fairness
-trade-off.
+**Offline search finds the parameter combination with the highest mean
+nDCG@10 among combinations that meet every aggregate guardrail.** It uses one
+frozen ranker checkpoint, without ensembling. **Each candidate parameter set is
+used to build actual top-10 lists, not just to score an already-built list.**
+Click labels are used afterward to evaluate those lists; they are not inputs
+to the greedy article-selection score. **The parameter set that produces the
+highest mean nDCG@10 among qualifying settings is the set used in production**,
+with the same score definitions, candidate-pool construction, and greedy
+algorithm. Changing a bonus, floor, normalization, or list length afterward
+would change the reranker that was evaluated.
 
-Two scores operate at different levels:
+For candidate article `i` and the ordered list `S` already selected, the score is:
 
-- The greedy **reranking score** chooses the next item for one impression under
-  one chosen hyperparameter setting.
-- The experiment-level **scalar utility** compares complete settings after they
-  have been evaluated across many impressions.
+```text
+score(i | S) = wR * R(i) + wN * N(i, S) + wC * C(i, S) - lambda * P(i, S; f)
+```
 
-Before searching, define the decision rule: the coverage bonuses, metric
-guardrails, utility scales, and utility coefficients. Those choices encode the
-product priorities; the grid search then chooses local novelty, coverage, and
-fairness weights consistently under that rule. Product stakeholders can
-usually reason about global outcomes—how much relevance may be traded for a
-meaningful diversity or fairness gain—more reliably than they can guess the
-local greedy weights directly.
+- `R(i)`: the ranker's predicted relevance, min-max normalized within its top-50 pool.
+- `N(i, S)`: negative maximum teacher-embedding cosine similarity to selected articles; zero when `S` is empty. Less similar articles receive a higher novelty score.
+- `C(i, S)`: a bonus for a newly covered category plus bonuses for newly covered entities, capped per article.
+- `P(i, S; f)`: a soft penalty computed for the prospective list after adding `i`. It measures category-exposure mismatch and any shortfall below new-item exposure target `f`.
 
-The search problem therefore starts with:
+The penalty is `0.5 * KL(p || q) + 0.5 * L1(p, q) + 2 * max(0, f - e)`:
+`p` is the prospective list's position-weighted category exposure, `q` is the
+candidate pool's category mix, and `e` is its new-item exposure fraction.
+The penalty weight `lambda` controls its influence; `f` is a soft target,
+not a mandatory quota. Category fairness here concerns topic exposure.
 
-- `coverage.category_bonus` and `coverage.entity_bonus`, which define what a
-  newly covered topic or entity is worth during greedy selection.
-- Guardrails for acceptable nDCG loss and required coverage, fairness, and
-  new-item-exposure changes.
-- Utility scales, which define one meaningful unit for each metric.
-- Utility coefficients, which express the relative importance of those units.
+**What is fixed before searching, and what is searched?**
 
-A useful review sequence is:
+| Fixed before search | Chosen by search |
+| --- | --- |
+| Ranker checkpoint, teacher embeddings, candidate pool of 50, output length of 10, and evaluation splits | Novelty weight `wN` |
+| Score/metric definitions and the four guardrails below | Fairness penalty weight `lambda` |
+| Coverage weight `wC = 0.025`; bonuses of 1.0 per new category and 0.3 per new entity, capped at 3 entities | Soft new-item floor `f` |
 
-1. Decide the largest acceptable relative nDCG loss.
-2. Set minimum gains for coverage, fairness, and new-item exposure.
-3. Give every metric a meaningful scale, then choose utility coefficients.
-4. Inspect baseline and reranked examples and ask:
-   - Does the baseline feel repetitive?
-   - Do new items appear in reasonable positions?
-   - Does relevance visibly degrade?
-   - Does coverage feel diverse but still relevant, or effectively random?
+Relevance weight is derived as `wR = 1 - wN - wC`. Coverage weight is also a searchable hyperparameter; this compact grid fixes
+it at 0.025. That is a scope choice for this search, not a business requirement. Score definitions use min-max
+relevance, cosine novelty, and logarithmic position weights. There are no scalar-utility
+coefficients: nDCG is the selection objective, and the other requirements
+control eligibility. The coverage bonuses and entity cap are technical score-design choices, not
+business guardrails. Fixing them defines the meaning and scale of coverage;
+search then determines how strongly to reward it. See the guide's
+[parameter and grid guidance](docs/reranking.md#choosing-score-definitions-and-a-search-grid).
+The MPNet config searches:
 
-For the completed Large MPNet experiment, the normalized units were:
+```yaml
+weight_pairs: [[0.00, 0.025], [0.025, 0.025], [0.05, 0.025]] # [wN, wC]
+fairness_penalties: [0.05, 0.075, 0.10]                    # lambda
+new_item_floors: [0.30, 0.40]                             # f
+shortlist_size: 18
+```
 
-- `R = 1 - relative_ndcg_drop / 0.021`
-- `N = new_item_exposure_gain / 0.01`
-- `C = category_coverage_gain / 0.25`
-- `F = fairness_kl_pool_improvement / 0.04`
-- `scalar_utility = 4.0 * R + 0.5 * N + 1.0 * C + 1.0 * F`
+**Offline procedure:**
 
-The corresponding feasibility guardrails allowed at most a `2.1%` relative
-nDCG@10 drop, no decline in new-item exposure, at least `0.25` additional
-categories in coverage@10, and at least `0.04` improvement in
-`fairness_kl_pool`. Scales control the size of one utility unit; guardrails
-separately decide whether a policy is acceptable.
+1. Score each labeled November 14 tuning impression with the frozen ranker.
+   The original ranker's top-10 list provides the comparison baseline.
+2. For each of the 18 parameter combinations, build complete lists with the
+   greedy score above. The 5,000-impression screen uses seed 13; all 18 settings
+   proceed to the full 431,517-impression tuning evaluation.
+3. Calculate mean nDCG@10 using the recorded click labels, plus exposure,
+   coverage, and KL metrics. Reject combinations that fail any requirement.
+4. Select the remaining combination with the **highest full-tuning nDCG@10**,
+   even if another qualifying combination has larger diversity gains. Freeze
+   its parameters and evaluate on November 15. If none qualifies, select none.
 
-`rerank_search` uses two passes. It screens every grid point on a deterministic
-sample (5,000 impressions in the Large experiment), then fully evaluates a
-bounded shortlist. Its outputs include:
+| Aggregate requirement, relative to the original ranker | Threshold |
+| --- | ---: |
+| Maximum relative nDCG@10 loss | 2% |
+| Minimum new-item exposure gain | 0 |
+| Minimum mean category-coverage gain | +0.25 categories/list |
+| Minimum mean pool-KL reduction | 0.03 |
 
-- `best_feasible`: highest utility among policies satisfying every guardrail.
-- `best_scalar_utility`: highest utility regardless of feasibility.
-- `pareto_frontier`: nondominated policies from the full-evaluation shortlist.
+Thus the search solves `argmax mean_nDCG@10(theta)` over the grid subject to
+these constraints. Its result is the best measured eligible grid point, not a
+guaranteed optimum over all possible rerankers.
 
-The intended workflow is to run `rerank_search` only on the tuning split,
-inspect these three views, copy the chosen operating point and its provenance
-into the experiment config, mark the selection frozen, and then run
-`rerank_eval` once on a distinct reporting split. Priority iteration belongs
-before that final report.
+**Production reranking uses the found parameters, without searching again.**
+The selected score is:
 
-The completed search used only the tuning view shown in the timeline. It
-selected and froze:
+```text
+score(i | S) = 0.95 * R(i) + 0.025 * N(i, S) + 0.025 * C(i, S)
+              - 0.05 * P(i, S; f=0.40)
+```
 
-- relevance / novelty / coverage weights: `0.85 / 0.05 / 0.10`
-- novelty: `teacher_cosine`, with min-max-normalized relevance
-- fairness penalty: `0.10`
-- new-item exposure floor: `0.30`
+For each request, take the ranker's top 50 candidates and start with an empty
+list. At each step, score every remaining article, select the highest-scoring
+one, update the selected articles, covered categories/entities, similarities,
+and exposure totals, then repeat until 10 articles are selected or the pool
+is exhausted. Novelty, coverage, and penalties change as the list grows; the
+selected weights remain fixed.
 
-The frozen policy was then evaluated once on the reporting view. That split is
-now consumed: changing priorities in response to its result would make a
-follow-up diagnostic, not a new independent evaluation. For a new experiment,
-use a new run/config and reserve an unused chronological reporting split.
+**Why not enforce the aggregate guardrails "up to this item"?** They describe
+average changes in *completed lists across many impressions*. A single prefix
+is neither a completed top-10 list nor that population. For example, the first
+position contains one category regardless of the eventual list diversity;
+requiring an immediate +0.25 category gain would reject a prefix that could
+produce a useful diverse list. The prefix penalty helps steer selection, but
+it does not enforce those aggregate guarantees. Hard per-list rules would
+require a separate constraint mechanism; aggregate outcomes need monitoring
+over traffic windows.
 
-The completed experiment used these commands; rerunning them reproduces the
-same search/report protocol but does not create a new independent report:
+**Why not maximize actual nDCG at each step?** At serving time we do not know
+which candidate articles the user will click or find relevant, so ground-truth
+nDCG cannot be computed. Predicted relevance is an estimate, not a click label.
+We maximize the available greedy score at each step; offline labels allow us
+to compare the complete lists produced by different parameter combinations.
+The repository provides this algorithm and offline evaluation, not a deployed
+serving or monitoring service.
+
+Sixteen of the 18 settings meet the tuning requirements. The selected setting
+has 0.183% relative tuning nDCG loss. On 376,471 November 15 impressions:
+
+| Metric | Original ranker | Reranked | Change |
+| --- | ---: | ---: | ---: |
+| nDCG@10 | 0.439457 | 0.438176 | 0.291% relative loss |
+| New-item exposure | 89.1707% | 89.3975% | +0.2269 percentage points |
+| Categories/list | 4.955561 | 5.209905 | +0.254344 |
+| Pool KL | 0.442187 | 0.408160 | Reduction 0.034026 |
+
+All four requirements pass. November 15 was reused while refining the
+requirements; these are follow-up results, not an independent test.
+
+With the prepared data and frozen checkpoint, rerun the current process using:
 
 ```powershell
 python -m mindrec.cli rerank_search --config configs/mind_large_temporal_mpnet.yaml
 python -m mindrec.cli rerank_eval --config configs/mind_large_temporal_mpnet.yaml
 ```
+
+Outputs go to `runs/mind_large_temporal_mpnet_candidate_attention_v1/rerank/`.
+The checked-in config contains the selected parameters and provenance path;
+search regenerates that artifact without requiring an earlier experiment.
+If inputs or requirements change and search selects different parameters, copy
+`best_feasible` into the config and freeze them before evaluation; evaluation
+checks that the saved selection matches. See the [reranking guide](docs/reranking.md)
+for metric definitions, reproducibility details, and a concrete list example.
 
 ---
 

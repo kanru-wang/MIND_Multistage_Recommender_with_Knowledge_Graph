@@ -13,7 +13,7 @@ This registry names the split protocol behind each major result set. Use it befo
 | Large temporal text-adapt v1 | Adapt MiniLM on Large Temporal Train, select its update count on Large Temporal Val, and train the temporal teacher/ranker with the selected encoder. | Current repo | `configs/mind_large_temporal_text_adapt.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_v1` | `runs/mind_large_temporal_text_adapt_v1/eval/ranker_eval_val.json` |
 | Large temporal candidate-attention v1 | Reuse the text-adapt v1 teacher and replace only student mean history pooling with candidate-aware attention. | Current repo; completed | `configs/mind_large_temporal_candidate_attention.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_candidate_attention_v1` | `runs/mind_large_temporal_text_adapt_candidate_attention_v1/eval/ranker_eval_val.json` |
 | Large temporal MPNet backbone v1 | Replace MiniLM with adapted `all-mpnet-base-v2` in the selected candidate-attention pipeline; keep the temporal split, objective, negative policy, and downstream settings fixed. | Completed; promoted to Phase 3 | `configs/mind_large_temporal_mpnet.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_mpnet_candidate_attention_v1` | `runs/mind_large_temporal_mpnet_candidate_attention_v1/eval/ranker_eval_val.json` |
-| Large temporal MPNet reranker | Select reranker priorities and weights on Nov 14 (`rerank_tune`), freeze them, and report once on Nov 15 (`rerank_test`). | Completed 2026-09-01; reporting split consumed | `configs/mind_large_temporal_mpnet.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_mpnet_candidate_attention_v1` | `runs/mind_large_temporal_mpnet_candidate_attention_v1/eval/rerank_eval.json` |
+| Large temporal MPNet reranker | Highest full-tuning nDCG subject to aggregate guardrails on Nov 14; frozen Nov-15 follow-up. | Completed; all four guardrails pass; reporting split reused | `configs/mind_large_temporal_mpnet.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_mpnet_candidate_attention_v1/rerank` | `runs/mind_large_temporal_mpnet_candidate_attention_v1/rerank/rerank_eval.json` |
 | Original Large submission MPNet candidate attention + recency | Continue selected MPNet on Large Temporal Val, then fixed four-epoch teacher, fixed two-epoch candidate-attention ranker, and recency `alpha=0.02`. | Completed historical baseline, Large Test AUC `0.6948` | `configs/mind_large_submission_mpnet_candidate_attention_recency_alpha_002.yaml` | `data/processed/MINDlarge_submission` | `runs/mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1` | `runs/mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.zip` |
 | Large MPNet + MiniLM rank ensemble | Select a weighted-Borda MPNet weight on Nov 14, freeze it, report on Nov 15, then fuse the two recency-adjusted hidden-test rank ZIPs. | Completed; user-reported Large Test AUC `0.6960` | `configs/mind_large_ensemble_mpnet_minilm.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_ensemble_mpnet_minilm_rank_v1` | `runs/mind_large_ensemble_mpnet_minilm_rank_v1/ensemble/search.json` |
 | Improved MPNet (lr=1e-5) + MiniLM rank ensemble | Retune the Borda weight using the promoted temporal MPNet from `31ab682`, then fuse its maximum-data ZIP with the same selected MiniLM. | Completed; best reported Large Test AUC `0.6972`; selected 75/25 | `configs/mind_large_ensemble_mpnet_p1_minilm.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1` | `runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/ensemble/search.json` |
@@ -137,37 +137,18 @@ rank permutations, a clean ZIP CRC, and an exact hash match between zipped and
 external prediction text. The prediction SHA-256 is
 `1705ef49e0ecec2492cd5d25890bc566b1ce9f0c98d07630c533f966013cc68c`.
 
-## Completed MPNet Reranker Learning Experiment
+## MPNet Reranking
 
-Reranker selection screened 528 policies on a deterministic 5,000-impression
-sample from Nov 14 and full-evaluated a bounded shortlist on all 431,517
-`rerank_tune` impressions. The frozen policy used relevance, novelty, and
-coverage weights `0.85 / 0.05 / 0.10`, fairness penalty `0.10`, new-item floor
-`0.30`, teacher-cosine novelty, and min-max relevance normalization. It was both
-the best feasible and best scalar-utility policy under the frozen decision rule.
+The current reranker selects the highest-nDCG eligible setting from an 18-point
+grid evaluated on all 431,517 November 14 impressions. Sixteen settings qualify.
+Selected weights are `0.95 / 0.025 / 0.025`, penalty `0.05`, and soft floor `0.40`.
+On 376,471 November 15 impressions it loses 0.291% relative nDCG, gains 0.2269
+percentage points of new-item exposure and 0.254344 categories/list, and reduces
+pool KL by 0.034026. All four configured requirements pass. November 15 was
+reused while refining requirements, so this is a follow-up result.
+See [reranking](reranking.md) for the method, results, and reproduction commands.
 
-The policy was then evaluated once on all 376,471 Nov 15 `rerank_test`
-impressions:
-
-| Metric | Nov 14 baseline | Nov 14 reranked | Nov 15 baseline | Nov 15 reranked |
-| --- | ---: | ---: | ---: | ---: |
-| nDCG@10 | 0.424166 | 0.416061 | 0.439458 | 0.429121 |
-| Recall@10 | 0.665385 | 0.651837 | 0.697698 | 0.681919 |
-| ILD | 0.573309 | 0.592805 | 0.590850 | 0.602857 |
-| Category coverage@10 | 5.286098 | 6.301406 | 4.955558 | 5.932425 |
-| Category entropy@10 | 1.450114 | 1.646196 | 1.389270 | 1.574498 |
-| Fairness KL, pool | 0.417462 | 0.298561 | 0.442187 | 0.322946 |
-| Fairness KL, full | 0.478427 | 0.352478 | 0.505674 | 0.380620 |
-| Fairness Gini | 0.546331 | 0.476888 | 0.557054 | 0.492202 |
-| New-item exposure | 0.714745 | 0.736300 | 0.891707 | 0.898008 |
-
-The relative nDCG drop moved from `1.911%` on tuning to `2.352%` on reporting,
-which is `0.252` percentage points above the frozen `2.1%` tuning guardrail.
-Coverage and fairness improvements transferred closely. The smaller reporting
-gain in new-item exposure is consistent with its much higher baseline exposure.
-This is the final, non-retuned learning result. Nov 15 must not be reused as an
-independent reporting split for another policy selected in response to these
-metrics.
+## MPNet Ranker Experiments
 
 ### Rejected controlled student-width 56 -> 96 experiment
 
@@ -372,14 +353,10 @@ and retain the 4-head, zero-dropout direct candidate-attention run at
 configs were discarded; the item-only distillation config is retained so its
 negative result remains reproducible.
 
-This statement describes historical upstream architecture experiments. The
-completed reranker protocol preserved that combined validation artifact but
-split it chronologically for post-ranking work: Nov 14 (`431,517` impressions)
-was `rerank_tune`, and Nov 15 (`376,471` impressions) was `rerank_test`. All
-priority iteration remained on the former; the latter was evaluated once after
-selection was frozen. Because upstream model selection previously examined both
-days, `rerank_test` was independent for the new reranker selection, not a
-completely untouched end-to-end model holdout. It is now consumed.
+This statement describes upstream architecture experiments. Reranking uses
+Nov 14 (`431,517` impressions) for tuning and Nov 15 (`376,471` impressions)
+for reporting. Both days were used in upstream model development, and Nov 15
+was reused while refining reranking requirements; it is not an independent test.
 
 | Experiment | Temporal AUC | Delta vs direct | Decision |
 | --- | ---: | ---: | --- |

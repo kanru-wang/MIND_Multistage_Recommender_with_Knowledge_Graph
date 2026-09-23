@@ -108,6 +108,7 @@ ranker:
     evaluate: true
 
 rerank:
+  output_subdir: "rerank"
   k_out: 10
   pool_size: 50
   eval_split: "val"  # Temporal tuning has no independent processed test split.
@@ -131,30 +132,18 @@ rerank:
     new_item_floor: 0.20
     penalty_weight: 0.25
   search:
+    split: "val"
     seed: 13
-    sample_size: 500
-    shortlist_size: 10
-    novelty_sims: ["teacher_cosine"]
-    weight_pairs:
-      - [0.05, 0.05]
-      - [0.04, 0.05]
-      - [0.05, 0.04]
-      - [0.06, 0.05]
-      - [0.05, 0.06]
-      - [0.075, 0.05]
-      - [0.05, 0.075]
-    fairness_penalties: [0.20, 0.25, 0.30]
-    new_item_floors: [0.15, 0.175, 0.20]
+    sample_size: 5000
+    shortlist_size: 15
+    # The shared search defaults define the 156-setting broad grid.
+    # Override grid fields only for a deliberate experiment (e.g. MPNet refinement).
+    # Provisional aggregate requirements; iterate using tuning data only.
     relative_guardrails:
-      max_ndcg_drop_ratio: 0.021
-      min_new_item_exposure_gain: 0.00
-      min_category_coverage_gain: 0.25
-      min_fairness_kl_pool_improvement: 0.04
-    utility_coefficients:
-      ndcg_retention_units: 4.0
-      new_item_exposure_gain_units: 0.5
-      category_coverage_gain_units: 1.5
-      fairness_kl_pool_improvement_units: 1.5
+      max_ndcg_drop_ratio: 0.02           # At most 2% relative nDCG loss.
+      min_new_item_exposure_gain: 0.00   # No decline, not a disabled check.
+      min_category_coverage_gain: 0.25   # Additional categories/list on average.
+      min_fairness_kl_pool_improvement: 0.03  # Absolute KL reduction.
 
 eval:
   report_splits: ["val"]

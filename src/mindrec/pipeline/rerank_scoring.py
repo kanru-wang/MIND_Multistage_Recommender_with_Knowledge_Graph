@@ -2,12 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import numpy as np
 import torch
+from tqdm import tqdm
+
+from mindrec.pipeline.rerank_metrics import ScoredRerankImpression
 
 from mindrec.pipeline.evaluate import _load_model
+from mindrec.pipeline.rerank_policy import validate_selection_artifact
 from mindrec.pipeline.ranker_scoring import (
     precompute_item_semantics,
     score_prepared_groups,
@@ -76,18 +80,21 @@ def resolve_rerank_protocol(
                 "Final reranker evaluation is blocked because "
                 "rerank.selection.frozen is false."
             )
-        if bool(selection.get("require_provenance_for_eval", False)):
-            missing = [
-                key
-                for key in ("search_artifact", "decision_note")
-                if selection.get(key) is None
-                or not str(selection.get(key, "")).strip()
-            ]
-            if missing:
-                raise RuntimeError(
-                    "Final reranker evaluation requires frozen-selection provenance; "
-                    "missing rerank.selection fields: " + ", ".join(missing)
-                )
+
+    if require_frozen and bool(selection.get("require_provenance_for_eval", False)):
+        missing = [
+            key
+            for key in ("search_artifact", "decision_note")
+            if selection.get(key) is None
+            or not str(selection.get(key, "")).strip()
+        ]
+        if missing:
+            raise RuntimeError(
+                "Final reranker evaluation requires frozen-selection provenance; "
+                "missing rerank.selection fields: " + ", ".join(missing)
+            )
+
+        validate_selection_artifact(cfg, search_split, reporting_split)
 
     return RerankProtocol(
         search_split=search_split,
@@ -210,3 +217,34 @@ def score_rerank_groups(
         batch_size=assets.score_batch_size,
         device=device,
     )
+
+
+def iter_scored_impressions(
+    impressions: Any, assets: RerankScoringAssets, device: torch.device
+) -> Iterator[ScoredRerankImpression]:
+    """Shared batched scoring; yield only the labeled positive-click cohort."""
+    pending = []
+
+    def flush() -> Iterator[ScoredRerankImpression]:
+        groups = [entry[0] for entry in pending]
+        with torch.no_grad():
+            score_arrays = score_rerank_groups(assets, groups, device)
+        for (group, labels, news_ids), scores in zip(pending, score_arrays):
+            yield ScoredRerankImpression(
+                labels=labels,
+                cand_news_id=news_ids,
+                cand_news_idx=group["cand_news_idx"],
+                cand_is_new=group["cand_is_new"].astype(int).tolist(),
+                scores=scores,
+            )
+        pending.clear()
+
+    for _, row in tqdm(impressions.iterrows(), total=len(impressions), desc="Score impressions"):
+        labels = np.asarray(row["cand_label"], dtype=np.int32)
+        if labels.sum() <= 0:
+            continue
+        pending.append((prepare_rerank_score_group(row), labels, list(row["cand_news_id"])))
+        if len(pending) >= assets.impression_batch_size:
+            yield from flush()
+    if pending:
+        yield from flush()
