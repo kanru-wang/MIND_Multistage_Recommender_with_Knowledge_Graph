@@ -7,6 +7,12 @@
 - **Recall@K**: fraction of clicked items captured in top-K.
 - **MAP@K**: precision integrated over ranks up to K.
 
+### MIND submission evaluation
+
+The official MIND evaluator reads `prediction.txt` lines as `impression_id [rank,...]`, where rank `1` is the highest-scored candidate. Local MIND metrics report AUC, MRR, nDCG@5, and nDCG@10 using the same per-impression ranking definitions as the official evaluator; leaderboard rank is primarily by AUC.
+
+See the [submission reference](submission.md) for the recency adjustment applied before ranks are written.
+
 ## Calibration (global, over all scored pairs)
 - **Brier score**: mean squared error of predicted probability vs label.
 - **ECE (Expected Calibration Error)**: bins predictions; compares bin accuracy vs confidence.

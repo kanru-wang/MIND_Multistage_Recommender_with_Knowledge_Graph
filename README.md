@@ -374,9 +374,17 @@ Evaluation also divides each holdout into chronological `time_period__...` slice
 
 ## 3) End-to-end Large MPNet workflow
 
-Sections 3.1--3.5 reproduce the original MPNet (`lr=2e-5`, Large Test AUC `0.6948`). The best reported single model uses `lr=1e-5` and achieves `0.6960`; its complete training workflow is retained at commit `31ab682` on `feature/lr_sweep_2`. The phase runner below reproduces the original model.
+Sections 3.1--3.4 reproduce the original MPNet (`lr=2e-5`, Large Test AUC `0.6948`). The best reported single model uses `lr=1e-5` and achieves `0.6960`; its complete training workflow is retained at commit `31ab682` on `feature/lr_sweep_2`. The phase runner below reproduces the original model.
 
-The promoted workflow first selects the model on the chronological Large temporal split, then performs a maximum-data fit for the hidden leaderboard test. Run one phase at a time so each selection decision can be reviewed before the next phase consumes more data.
+The promoted workflow first selects the model on the chronological Large temporal split, then performs a maximum-data fit for the hidden leaderboard test.
+
+| Phase | Work performed | Data and output |
+| --- | --- | --- |
+| **1: Select the text encoder** | Adapt MPNet and select its checkpoint using temporal validation. | Train on Nov 9–13; validate on Nov 14–15. Output: the selected update-9,000 encoder. |
+| **2: Validate the complete model** | Freeze the selected encoder, train the teacher and student ranker, and evaluate the complete temporal model. | Train on Nov 9–13; validate on Nov 14–15. Output: temporal checkpoints and evaluation reports. |
+| **3: Train on all labeled data and submit** | Continue the encoder, train the teacher and ranker with fixed schedules, and rank every hidden-test candidate. | Continue the encoder on Nov 14–15; train the teacher/ranker on all Train + Dev. Output: the Nov 16–22 hidden-test submission. |
+
+These are training and submission phases. Optional ANN retrieval evaluation and reranking experiments follow in Sections 3.5 and 3.6.
 
 ### 3.1 Prepare Large temporal data
 
@@ -410,27 +418,31 @@ The ranker evaluation also reports chronological, history-length, cold/new-item,
 
 ![images/AUC_by_cold_warm_user.png](images/AUC_by_cold_warm_user.png) ![images/nDCG_by_cold_warm_user.png](images/nDCG_by_cold_warm_user.png)
 
-### 3.4 Optional ANN retrieval evaluation
+#### Architecture validated in Phase 2
 
-ANN retrieval is useful for a production-style full-catalog recommender but is not needed when writing a MIND submission, because each test impression already provides its candidate set. To evaluate retrieval from the Phase 2 teacher:
+Phase 2 trains and validates the following architecture, which Phase 3 carries into the maximum-data fit:
 
-```powershell
-python -m mindrec.cli build_index --config configs/mind_large_temporal_mpnet.yaml
-python -m mindrec.cli eval_retrieval --config configs/mind_large_temporal_mpnet.yaml
-python -m mindrec.cli eval_retrieval_sweep --config configs/mind_large_temporal_mpnet.yaml
-```
+- The **text backbone** encodes article text. The promoted model uses `all-mpnet-base-v2` (768 dimensions); the earlier MiniLM experiments are retained in the [experiment registry](docs/experiment_registry.md).
+- Text adaptation contrasts each clicked candidate with impression negatives against the mean of up to 10 recent-history article embeddings. Cold users with usable history receive one hard and three random negatives; warm users use random negatives.
+- The **two-tower teacher** projects item text into a 384-dimensional retrieval space and uses multi-head attention to pool the clicked history. It supplies retrieval embeddings plus logit and representation targets for distillation.
+- The **student DLRM-style ranker** combines learned ID/category features, dense behavioral features, text-plus-KG item semantics, and candidate-aware attention over text-plus-KG history semantics.
+- The competition submission scores every supplied impression candidate with the student ranker. The selected submission adds only the label-free recency tiebreaker (`alpha=0.02`); it does not run ANN retrieval or the optional diversity/fairness reranker.
 
-The retrieval reports include chronological, history-length, popularity, category, and subcategory slices. The configured sweep compares the text-only fallback weight and oversampling choices, then selects the best held-out `recall@K` setting.
+##### Candidate-aware history attention
 
-### 3.5 Build a MIND-large leaderboard submission
+Mean pooling gives every candidate in an impression the same semantic user vector. Candidate-aware pooling instead projects the current candidate as the query in four-head attention over the clicked-history item states as keys and values. The resulting user vector is therefore different for, say, a sports candidate and a health candidate shown to the same user. Empty histories map to a zero semantic user vector, leaving the ID, taxonomy, item-semantic, and dense branches to score the candidate. This change improved the matched MiniLM temporal AUC from `0.664328` to `0.671593` and was retained in the promoted MPNet ranker.
 
-The original MPNet submission is produced by Phase 3:
+Implementation details and completed temporal results are recorded in the [MPNet experiment reference](docs/experiment_registry.md#controlled-mpnet-backbone-experiment).
+
+### 3.4 Phase 3: train on all labeled data and build the leaderboard submission
+
+Phase 3 uses all labeled data to build the final leaderboard model. It continues the selected Phase 1 encoder on Large Temporal Val, then trains the teacher and ranker on all Large Train + Dev impressions using the architecture validated in Phase 2. Finally, it scores every supplied hidden-test candidate and writes the submission ranks:
 
 ```powershell
 .\scripts\run_mpnet_backbone.ps1 -Phase phase3
 ```
 
-The orchestration script directly uses these configs in the current training and submission path:
+The orchestration script implements all three phases and checks artifact provenance before reuse. It directly uses these configs:
 
 - `mind_large_temporal_mpnet.yaml` selects MPNet and candidate attention in Phases 1–2 and configures the reranker search and selection.
 - `mind_large_submission_mpnet_text_continue.yaml` continues the selected update-9,000 encoder for exactly 2,000 successful optimizer updates on Large Temporal Val, without another early-stopping decision.
@@ -441,47 +453,29 @@ Here the schedules are **locked before maximum-data training**: the encoder upda
 
 Inherited defaults and configs for reproducing other baselines are documented in the [configuration background](docs/experiment_registry.md#configuration-background).
 
-Completed Large temporal metrics, protocol details, and rejected experiments are recorded in [docs/experiment_registry.md](docs/experiment_registry.md).
+#### Submission execution and completed result
 
-#### Architecture carried into Phase 3
-
-The three phases separate encoder selection, full temporal-model validation, and the locked-schedule maximum-data fit. Phase 3 preserves the architecture validated in Phase 2:
-
-The major architecture elements are deliberately separated:
-
-- The **text backbone** encodes article text. The promoted model uses `all-mpnet-base-v2` (768 dimensions); the earlier MiniLM experiments are retained in the [experiment registry](docs/experiment_registry.md).
-- Text adaptation contrasts each clicked candidate with impression negatives against the mean of up to 10 recent-history article embeddings. Cold users with usable history receive one hard and three random negatives; warm users use random negatives.
-- The **two-tower teacher** projects item text into a 384-dimensional retrieval space and uses multi-head attention to pool the clicked history. It supplies retrieval embeddings plus logit and representation targets for distillation.
-- The **student DLRM-style ranker** combines learned ID/category features, dense behavioral features, text-plus-KG item semantics, and candidate-aware attention over text-plus-KG history semantics.
-- The competition submission scores every supplied impression candidate with the student ranker. The selected submission adds only the label-free recency tiebreaker (`alpha=0.02`); it does not run ANN retrieval or the optional diversity/fairness reranker.
-
-##### Candidate-aware history attention
-
-Mean pooling gives every candidate in an impression the same semantic user vector. Candidate-aware pooling instead projects the current candidate as the query in four-head attention over the clicked-history item states as keys and values. The resulting user vector is therefore different for, say, a sports candidate and a health candidate shown to the same user. Empty histories map to a zero semantic user vector, leaving the ID, taxonomy, item-semantic, and dense branches to score the candidate. Item and history encodings are cached, but the small attention operation is evaluated for each candidate. This change improved the matched MiniLM temporal AUC from `0.664328` to `0.671593` and was retained in the promoted MPNet ranker.
-
-The current MPNet orchestration script implements all three phases and performs artifact/provenance checks before reuse. The detailed historical MiniLM phase results and rejected experiments live in the experiment registry rather than being duplicated here.
-
-#### Phase 3 execution and completed result
-
-Before training, Phase 3 verifies the Phase 2 metrics and selected update-9,000 checkpoint. It then continues MPNet for exactly 2,000 successful optimizer updates, trains the maximum-data teacher for four complete epochs, trains the candidate-attention ranker for two complete epochs, builds or reuses the item-age index, and scores the hidden candidate sets with `alpha=0.02` recency. Compatible completed stages are reused; incompatible metadata is rejected instead of silently mixing runs.
-
-MPNet adaptation uses FP16 autocasting, transformer gradient checkpointing, and chunked article encoding to fit the target GPU without changing logical batch membership. Candidate-attention scoring caches item and history states, then runs only the small candidate-conditioned attention operation per candidate.
+Before training, Phase 3 verifies the Phase 2 metrics and selected update-9,000 checkpoint. After the fixed training schedule, it builds or reuses the item-age index and scores the hidden candidate sets with `alpha=0.02` recency. Compatible completed stages are reused; incompatible metadata is rejected instead of silently mixing runs.
 
 The original MPNet submission achieved Large Test AUC **`0.6948`**. This is `+0.0079` over the selected MiniLM candidate-attention submission (`0.6869`), `+0.0100` over text-adapt v1 (`0.6848`), and `+0.0224` over frozen MiniLM (`0.6724`). Its 2,370,727 impression rankings passed sequential-ID, rank-permutation, ZIP-integrity, and content-hash checks.
 
 To write the candidate-attention model without the recency tiebreaker, use `python -m mindrec.cli write_submission --config configs/mind_large_submission_mpnet_candidate_attention.yaml`; that path does not require `build_item_age`.
 
-##### Article age and the recency clock
-
-MIND does not provide publication timestamps, so “age” is an exposure-age proxy. `build_item_age` scans the candidate lists in Large Train, Dev, and Test behaviors—never their click labels—and records each news ID's earliest observed candidate-impression timestamp. That first observable appearance starts the clock.
-
-An article already in circulation when Large Train begins is therefore assigned age zero at its first candidate appearance inside the dataset; earlier history mentions do not start the clock, and the system cannot recover how long the article existed before the observation window. An ID absent from the age index, or an impression with an unparseable timestamp, falls back to age zero.
-
-At each scored impression, age is `max(0, impression_time - first_seen_time)` in hours, capped at 720 hours and stored as `log1p(age_hours)`. Within that impression, the youngest candidate gets freshness near `+1`, the oldest near `-1`, and tied ages share a rank. The resulting submission score is `zscore(ranker_logit) + 0.02 * freshness_percentile`. Thus age is calculated at scoring time relative to each impression, rather than once relative to the start or end of the dataset.
-
-The official MIND evaluator reads `prediction.txt` lines as `impression_id [rank,...]`, where rank `1` is the highest-scored candidate. Local MIND metrics report AUC, MRR, nDCG@5, and nDCG@10 using the same per-impression ranking definitions as the official evaluator; leaderboard rank is primarily by AUC.
+MIND has no publication timestamps, so the recency adjustment uses an exposure-age proxy: time since an article first appeared as a candidate in the observed dataset. The clock is evaluated separately for each impression and uses no click labels. The [submission reference](docs/submission.md) explains the age calculation, missing-value behavior, and scoring formula; the [metrics guide](docs/metrics.md#mind-submission-evaluation) explains the evaluator format.
 
 Optional submission ensembling is documented separately in [Ensembling: MPNet and MiniLM](docs/ensembling.md), including results and CLI commands.
+
+### 3.5 Optional ANN retrieval evaluation
+
+ANN retrieval is useful for a production-style full-catalog recommender but is not needed when writing a MIND submission, because each test impression already provides its candidate set. To evaluate retrieval from the Phase 2 teacher:
+
+```powershell
+python -m mindrec.cli build_index --config configs/mind_large_temporal_mpnet.yaml
+python -m mindrec.cli eval_retrieval --config configs/mind_large_temporal_mpnet.yaml
+python -m mindrec.cli eval_retrieval_sweep --config configs/mind_large_temporal_mpnet.yaml
+```
+
+The retrieval reports include chronological, history-length, popularity, category, and subcategory slices. The configured sweep compares the text-only fallback weight and oversampling choices, then selects the best held-out `recall@K` setting.
 
 ### 3.6 Reranking: search offline, use fixed weights in production
 
@@ -548,10 +542,6 @@ Too strong: nDCG loss exceeds the allowed limit
 
 Individual improvements do not prove joint feasibility: one setting might pass coverage while another passes exposure, with neither passing both. Reported parameter profiles take the best results across other parameter choices; they help locate promising regions but do not isolate one weight's causal effect.
 
-A **zero-weight control** disables one component, such as `wC=0` to remove coverage or `lambda=0` to remove KL. Keep the other independent weight fixed; `wR=1-wC` is still recalculated. Setting both to zero recovers the ranker's ordering, a useful baseline even if it fails improvement guardrails.
-
-A grid need not contain a failing setting. Compare eligible settings by nDCG and investigate promising boundaries instead of expanding solely to force a failure. If new-item exposure repeatedly fails, inspect candidate availability and consider a direct new-item bonus separately; the current score has none.
-
 #### Serving behavior
 
 **Production uses the same winning parameters and list builder as offline evaluation, without searching again.** Take the ranker's top 50 candidates, start with an empty list, and repeatedly select the highest-scoring remaining article. Update covered categories/entities and exposure state after each selection. Stop at ten articles or when the pool is exhausted. Component values change as the list grows; the selected weights stay fixed.
@@ -573,9 +563,7 @@ Production monitoring should compare completed-list metrics over traffic windows
 | Categories/list | 4.955561 | 5.236411 | Pass: +0.280850, above +0.25 |
 | Pool KL | 0.442187 | 0.413450 | **Fail:** reduction 0.028736, below 0.03 |
 
-Teacher-cosine ILD increased from 0.590850 to 0.592673; it remains diagnostic. The pool-KL shortfall is 0.001264. The run matches the frozen selection, but it has not met every acceptance requirement. The frozen config preserves the experiment for reproduction; it does not indicate production approval.
-
-Results, thresholds, and parameters remain unchanged. Outputs share `runs/mind_large_temporal_mpnet_candidate_attention_v1/rerank/`. To reproduce:
+To reproduce the search and frozen-setting evaluation:
 
 ```powershell
 python -m mindrec.cli rerank_search --config configs/mind_large_temporal_mpnet.yaml
@@ -598,6 +586,6 @@ November 15 was reused while refining requirements; this is a follow-up report, 
 - `configs/`: composable Large temporal, submission, MPNet, and reranker experiment configs.
 - `scripts/`: the promoted MPNet phase runner, KG-triples builder, and GPU check.
 - `tests/`: focused tests for adaptation, hard negatives, candidate attention, taxonomy handling, reranking, recency, age, and submission integrity.
-- `docs/`: experiment registry, metric definitions, and the detailed reranking workflow.
+- `docs/`: experiment registry, metric definitions, submission reference, and the detailed reranking and ensembling workflows.
 - `notebooks/` and `images/`: evaluation-slice visualization and README figures.
 - `data/` and `runs/`: local raw/processed datasets and generated experiment artifacts; neither contains the implementation itself.

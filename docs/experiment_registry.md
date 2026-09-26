@@ -6,7 +6,7 @@ This registry names the split protocol behind each major result set. Use it befo
 
 `configs/mind_large_temporal_baseline.yaml` defines the temporal split and shared defaults inherited by the current MPNet temporal config. It is a configuration dependency, not a separate prerequisite run. Running it directly reproduces the random-negative baseline listed below.
 
-`mind_large_temporal_tune.yaml`, `mind_large_tune.yaml`, and the MiniLM submission configs remain available to reproduce other baselines; they are not commands in the current MPNet training path. Their protocols and results are recorded in this registry. The configs directly used by `scripts/run_mpnet_backbone.ps1` are listed in the [README training workflow](../README.md#35-build-a-mind-large-leaderboard-submission).
+`mind_large_temporal_tune.yaml`, `mind_large_tune.yaml`, and the MiniLM submission configs remain available to reproduce other baselines; they are not commands in the current MPNet training path. Their protocols and results are recorded in this registry. The configs directly used by `scripts/run_mpnet_backbone.ps1` are listed in the [README training workflow](../README.md#34-phase-3-train-on-all-labeled-data-and-build-the-leaderboard-submission).
 
 ## Result Sets
 
@@ -66,6 +66,8 @@ Phase 3 loaded the selected update-6,000 encoder and continued adaptation for ex
 `configs/mind_large_temporal_mpnet.yaml` changes the selected temporal pipeline's text backbone to `sentence-transformers/all-mpnet-base-v2`. It otherwise retains the natural Large Temporal Train/Val distribution, text-adaptation loss and early stopping, cold-user 1-hard/3-random policy, teacher settings, and the candidate-aware ranker. The 768-dimensional encoder is inferred at runtime; the teacher still projects to the fixed 384-dimensional hidden space.
 
 The tuned MiniLM configured training schedule is retained: physical batch size 16, four gradient-accumulation steps, up to 10,000 optimizer updates, and validation every 1,000 updates. On the 6 GB target GPU, MPNet instead saves memory through FP16 autocasting, whole-encoder activation checkpointing, and chunked article encoding. Article embeddings are reassembled before the loss, so batch membership and the 16-example in-batch-negative set remain unchanged. Offline text-encoding batches are reduced to 64 independently of training.
+
+Candidate-attention scoring caches item and history states, then runs only the small candidate-conditioned attention operation per candidate. These implementation details support the [three-phase workflow](../README.md#3-end-to-end-large-mpnet-workflow) within the target GPU's memory budget.
 
 Phase 1 selected update 9,000. The full Phase 2 evaluation produced AUC `0.688880`, MRR `0.336397`, nDCG@5 `0.371215`, and nDCG@10 `0.431291` across 807,988 impressions, exceeding the matched MiniLM candidate-attention AUC of `0.671593`. This passed the promotion gate.
 

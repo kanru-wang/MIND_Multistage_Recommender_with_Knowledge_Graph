@@ -67,6 +67,10 @@ Use this process in the same config, keeping guardrails fixed:
 
 Profiles take the best results across other parameter choices; they are not isolated causal effects. Suggestions do not change selection or edit the config automatically. ILD does not influence eligibility, selection, or range flags.
 
+A **zero-weight control** disables one component, such as `wC=0` to remove coverage or `lambda=0` to remove KL. Keep the other independent weight fixed; `wR=1-wC` is still recalculated. Setting both to zero recovers the ranker's ordering, a useful baseline even if it fails improvement guardrails.
+
+A grid need not contain a failing setting. Compare eligible settings by nDCG and investigate promising boundaries instead of expanding solely to force a failure. If new-item exposure repeatedly fails, inspect candidate availability and consider a direct new-item bonus as a separate experiment; the current score has none.
+
 ## Current status and reproduction
 
 The final search evaluated all 15 combinations on 431,517 November 14 tuning impressions; 11 passed every guardrail. The frozen selection is coverage weight **0.035**, KL penalty **0**, and derived relevance weight **0.965**. Both the screening sample and full-tuning evaluation selected this setting.
