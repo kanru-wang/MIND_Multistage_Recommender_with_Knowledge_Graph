@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Callable
 
 import numpy as np
 
@@ -35,11 +34,6 @@ def kl_divergence(
             continue
         s += pk * np.log((pk + eps) / (qk + eps))
     return float(s)
-
-
-def l1_distance(p: dict[int, float], q: dict[int, float]) -> float:
-    keys = set(p) | set(q)
-    return float(sum(abs(p.get(k, 0.0) - q.get(k, 0.0)) for k in keys))
 
 
 def gini(values: list[float]) -> float:

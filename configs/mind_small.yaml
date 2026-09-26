@@ -106,10 +106,7 @@ rerank:
   k_out: 10  # Number of items to output after re-ranking
   pool_size: 50  # Number of candidates to consider for re-ranking. Should be >= k_out.
   position_bias: "log"  # log|linear
-  relevance_weight: 0.875
-  novelty_weight: 0.05
   coverage_weight: 0.075
-  novelty_sim: "teacher_cosine"  # teacher_cosine|entity_jaccard|category
   relevance_normalization: "minmax"  # Keeps objective weights comparable across ranker checkpoints.
   scoring:
     batch_size: 2048
@@ -122,15 +119,14 @@ rerank:
   fairness:
     enabled: true
     category_target: "catalog"  # catalog|uniform
-    new_item_floor: 0.20  # minimum fraction of exposure in top-k to new items
     penalty_weight: 0.25
   search:
     split: "val"
     seed: 13
     sample_size: 5000
-    shortlist_size: 15
-    # The shared search defaults define the 156-setting broad grid.
-    # Override grid fields only for a deliberate experiment (e.g. MPNet refinement).
+    shortlist_size: 20
+    # The shared search defaults define the 20-setting broad grid.
+    # Override grid fields only for a deliberate experiment (e.g. local refinement).
     # Provisional aggregate requirements; iterate using tuning data only.
     relative_guardrails:
       max_ndcg_drop_ratio: 0.02           # At most 2% relative nDCG loss.

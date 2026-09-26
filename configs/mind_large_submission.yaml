@@ -110,10 +110,7 @@ rerank:
   k_out: 10
   pool_size: 50
   position_bias: "log"
-  relevance_weight: 0.875
-  novelty_weight: 0.05
   coverage_weight: 0.075
-  novelty_sim: "teacher_cosine"
   coverage:
     max_new_entities_per_item: 3
     category_bonus: 1.0
@@ -121,7 +118,6 @@ rerank:
   fairness:
     enabled: true
     category_target: "catalog"
-    new_item_floor: 0.20
     penalty_weight: 0.25
   search:
     relative_guardrails:

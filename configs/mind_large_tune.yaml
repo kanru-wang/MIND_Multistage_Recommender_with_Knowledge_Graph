@@ -108,10 +108,7 @@ rerank:
   pool_size: 50
   eval_split: "val"  # Diagnostic only; MINDlarge test labels are hidden.
   position_bias: "log"
-  relevance_weight: 0.875
-  novelty_weight: 0.05
   coverage_weight: 0.075
-  novelty_sim: "teacher_cosine"
   relevance_normalization: "minmax"
   scoring:
     batch_size: 2048
@@ -124,15 +121,14 @@ rerank:
   fairness:
     enabled: true
     category_target: "catalog"
-    new_item_floor: 0.20
     penalty_weight: 0.25
   search:
     split: "val"
     seed: 13
     sample_size: 5000
-    shortlist_size: 15
-    # The shared search defaults define the 156-setting broad grid.
-    # Override grid fields only for a deliberate experiment (e.g. MPNet refinement).
+    shortlist_size: 20
+    # The shared search defaults define the 20-setting broad grid.
+    # Override grid fields only for a deliberate experiment (e.g. local refinement).
     # Provisional aggregate requirements; iterate using tuning data only.
     relative_guardrails:
       max_ndcg_drop_ratio: 0.02           # At most 2% relative nDCG loss.

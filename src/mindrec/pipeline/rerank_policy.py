@@ -12,6 +12,7 @@ from mindrec.rerank.greedy import DEFAULT_OBJECTIVE_WEIGHTS, validate_rerank_con
 from mindrec.utils import teacher_artifact_root
 
 SELECTION_METHOD = "max_ndcg_subject_to_guardrails"
+SCORING_VERSION = "relevance_coverage_pool_kl_v1"
 DEFAULT_GUARDRAILS = {
     "max_ndcg_drop_ratio": 0.02,
     "min_new_item_exposure_gain": 0.0,
@@ -21,7 +22,9 @@ DEFAULT_GUARDRAILS = {
 
 
 def resolve_guardrails(search_cfg: dict[str, Any]) -> dict[str, float]:
-    obsolete = {"utility_scales", "utility_coefficients"}.intersection(search_cfg)
+    if "new_item_floors" in search_cfg:
+        raise ValueError("Remove rerank.search.new_item_floors; the new-item shortfall penalty was removed.")
+    obsolete = {"utility_scales", "utility_coefficients", "novelty_sims", "novelty_weights", "weight_pairs"}.intersection(search_cfg)
     if obsolete:
         raise ValueError(
             "Approach 1 selects by nDCG subject to guardrails; remove obsolete "
@@ -50,16 +53,22 @@ def resolve_guardrails(search_cfg: dict[str, Any]) -> dict[str, float]:
 
 def resolve_policy(rr_cfg: dict[str, Any]) -> dict[str, Any]:
     """Materialize defaults once so search, evaluation, and provenance agree."""
+    obsolete = {"novelty_weight", "novelty_sim"}.intersection(rr_cfg)
+    if obsolete:
+        raise ValueError("Semantic novelty is diagnostic only; remove rerank fields: " + ", ".join(sorted(obsolete)))
+    coverage_weight = float(rr_cfg.get("coverage_weight", DEFAULT_OBJECTIVE_WEIGHTS["coverage_weight"]))
+    if "relevance_weight" in rr_cfg:
+        raise ValueError("Remove rerank.relevance_weight; it is derived automatically as 1 - coverage_weight.")
+    if not 0.0 <= coverage_weight < 1.0:
+        raise ValueError("Expected 0 <= coverage_weight < 1.")
+    relevance_weight = 1.0 - coverage_weight
     policy = {
         "k_out": int(rr_cfg.get("k_out", 0)),
         "pool_size": int(rr_cfg.get("pool_size", 0)),
         "position_bias": str(rr_cfg.get("position_bias", "log")),
-        "novelty_sim": str(rr_cfg.get("novelty_sim", "teacher_cosine")),
         "relevance_normalization": str(rr_cfg.get("relevance_normalization", "none")),
-        **{
-            name: float(rr_cfg.get(name, value))
-            for name, value in DEFAULT_OBJECTIVE_WEIGHTS.items()
-        },
+        "relevance_weight": relevance_weight,
+        "coverage_weight": coverage_weight,
         "coverage": {
             "category_bonus": 1.0,
             "entity_bonus": 0.3,
@@ -69,7 +78,6 @@ def resolve_policy(rr_cfg: dict[str, Any]) -> dict[str, Any]:
         "fairness": {
             "enabled": False,
             "category_target": "catalog",
-            "new_item_floor": 0.0,
             "penalty_weight": 0.0,
             **rr_cfg.get("fairness", {}),
         },
@@ -81,6 +89,7 @@ def resolve_policy(rr_cfg: dict[str, Any]) -> dict[str, Any]:
 
 def selection_context(cfg: dict[str, Any]) -> dict[str, Any]:
     return {
+        "scoring_version": SCORING_VERSION,
         "policy": resolve_policy(cfg["rerank"]),
         "guardrails": resolve_guardrails(cfg["rerank"].get("search", {})),
         "ranker_run_name": str(cfg.get("artifacts", {}).get("ranker_run_name", cfg["run_name"])),
@@ -117,10 +126,13 @@ def validate_selection_artifact(
         raise RuntimeError("Selection artifact tuning/reporting splits do not match the config.")
     try:
         expected = deepcopy(artifact["selection_context"])
+        if not isinstance(expected, dict):
+            raise TypeError("selection_context must be an object")
+        if expected.get("scoring_version") != SCORING_VERSION:
+            raise RuntimeError("Selection artifact uses an obsolete scoring formula; run rerank_search again.")
         policy = expected["policy"]
-        for name in ("relevance", "novelty", "coverage"):
+        for name in ("relevance", "coverage"):
             policy[f"{name}_weight"] = selected["weights"][name]
-        policy["novelty_sim"] = selected["novelty_sim"]
         policy["fairness"].update(selected["fairness"])
         valid = _constraint_check(artifact["baseline"], selected, artifact["product_constraint"])["feasible"]
     except (KeyError, TypeError, ValueError) as exc:

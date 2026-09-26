@@ -17,7 +17,7 @@ from mindrec.pipeline.rerank_scoring import (
     resolve_rerank_protocol,
 )
 from mindrec.pipeline.rerank_policy import (
-    _constraint_check, _make_constraint, resolve_guardrails, resolve_policy, SELECTION_METHOD,
+    _constraint_check, _make_constraint, resolve_guardrails, resolve_policy, SELECTION_METHOD, SCORING_VERSION,
 )
 from mindrec.rerank.greedy import build_news_meta
 from mindrec.utils import (
@@ -55,6 +55,7 @@ def _write_rerank_report(out_root: Path, out: dict[str, Any]) -> None:
         f"Split: `{out['eval_split']}`  ",
         f"Evaluated impressions: {out['n_impressions_evaluated']}  ",
         f"Top-K / pool: {out['k_out']} / {out['pool_size']}",
+        "ILD is a teacher-cosine diagnostic, not a score term or guardrail.",
         "",
         *([f"Evaluation context: {reporting_note}", ""] if reporting_note else []),
         "| Metric | Baseline | Reranked | Delta |",
@@ -119,9 +120,7 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
     pos_mode = policy["position_bias"]
 
     rel_w = policy["relevance_weight"]
-    nov_w = policy["novelty_weight"]
     cov_w = policy["coverage_weight"]
-    novelty_sim = policy["novelty_sim"]
     relevance_normalization = policy["relevance_normalization"]
     coverage_cfg = dict(policy["coverage"])
     fairness_cfg = dict(policy["fairness"])
@@ -154,9 +153,7 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
                 coverage_cfg=coverage_cfg,
                 fairness_cfg=fairness_cfg,
                 relevance_weight=rel_w,
-                novelty_weight=nov_w,
                 coverage_weight=cov_w,
-                novelty_sim=novelty_sim,
                 relevance_normalization=relevance_normalization,
             )
         )
@@ -171,6 +168,7 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
     constraint = _make_constraint(baseline, rr_cfg.get("search", {}))
     out = {
         "selection_method": SELECTION_METHOD,
+        "scoring_version": SCORING_VERSION,
         "product_constraint": constraint,
         "constraint": _constraint_check(baseline, reranked, constraint),
         "k_out": k_out,
@@ -181,10 +179,8 @@ def run_rerank_eval(cfg: dict[str, Any]) -> None:
         "delta": _metric_deltas(baseline, reranked),
         "weights": {
             "relevance": rel_w,
-            "novelty": nov_w,
             "coverage": cov_w,
         },
-        "novelty_sim": novelty_sim,
         "relevance_normalization": relevance_normalization,
         "coverage": coverage_cfg,
         "fairness": fairness_cfg,

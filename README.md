@@ -71,8 +71,7 @@ The current repo/CLI does not implement online index updates; it builds and writ
 
 ## Hybrid retrieval scoring
 
-During `eval_retrieval`, the teacher retrieval query is built by taking the impression's clicked history news, looking up their teacher item embeddings, and passing those vectors through `TeacherTwoTower.encode_user_from_item_vectors()`.
-The base retrieval query is built by averaging the impression's clicked history news' raw sentence-transformer `item_base_emb.npy` embeddings.
+During `eval_retrieval`, the teacher retrieval query is built by taking the impression's clicked history news, looking up their teacher item embeddings, and passing those vectors through `TeacherTwoTower.encode_user_from_item_vectors()`. The base retrieval query is built by averaging the impression's clicked history news' raw sentence-transformer `item_base_emb.npy` embeddings.
 
 Faiss returns scalar similarity scores:
 - `teacher_score`: similarity between the teacher user query and a candidate `item_teacher_emb.npy` vector
@@ -157,26 +156,22 @@ Category and clicked-item-popularity slices help check whether the model is robu
 
 ## Re-ranking (Optional; not used by the competition submission)
 
-- The focused workflow and configuration reference live in
-  [docs/reranking.md](docs/reranking.md); this section is only a conceptual overview.
+- The focused workflow and configuration reference live in [docs/reranking.md](docs/reranking.md); this section is only a conceptual overview.
 - In this project, re-ranking is a **deterministic optimization layer** on top of ranker scores.
-- It is controlled by hyperparameters/constraints (relevance, novelty, coverage, fairness).
+- It is controlled by hyperparameters/constraints (relevance, coverage, fairness).
 - **No training loop is required** for this re-ranking stage.
 - `rerank_search` uses the "Nov 14" data to choose an operating point; `rerank_eval` reports that selected setting on the "Nov 15" data (Large Temporal Val is Nov 14 + 15. See the dataset timeline below.)
-- Both commands first obtain the ordinary student-ranker scores and then apply
-  the optional greedy reranker. The reranker experiment does not replace or
-  retrain the student model.
+- Both commands first obtain the ordinary student-ranker scores and then apply the optional greedy reranker. The reranker experiment does not replace or retrain the student model.
 
 #### Re-ranking process
 
 - `greedy_rerank()` takes the top `pool_size` candidates by ranker score, then builds the final top-`k_out` list one item at a time.
-- With the recommended `relevance_normalization: minmax`, ranker logits inside each pool are mapped to `[0, 1]`. This keeps relevance, novelty, and coverage weights interpretable when ranker checkpoints have different logit scales. Set it to `none` only to reproduce legacy raw-logit experiments.
+- With the recommended `relevance_normalization: minmax`, ranker logits inside each pool are mapped to `[0, 1]`. This keeps relevance and coverage weights interpretable when ranker checkpoints have different logit scales. Set it to `none` only to reproduce legacy raw-logit experiments.
 - At each step it scores every remaining candidate with:
 - `relevance_weight * relevance`
-- `+ novelty_weight * novelty`
 - `+ coverage_weight * coverage`
 - `- fairness.penalty_weight * fairness_penalty`
-- It then picks the candidate with the highest total value, adds it to the list, updates the running novelty/coverage/fairness state, and repeats until `k_out` items are selected.
+- It then picks the candidate with the highest total value, adds it to the list, updates the running coverage/fairness state, and repeats until `k_out` items are selected.
 
 #### Exposure fairness
 
@@ -192,49 +187,55 @@ Category and clicked-item-popularity slices help check whether the model is robu
 - `rerank_eval` and `rerank_search` report both `fairness_kl_pool` and `fairness_kl_full`. Fairness Gini includes zero-exposure categories present in the pool target.
 - Product constraints in reranker search use `fairness_kl_pool`, because that matches the reranker's actual optimization target.
 
-#### Worked examples for novelty, coverage, and fairness
+#### Worked examples for coverage, fairness, and diagnostic semantic diversity
 
-These examples use the current scoring definitions. The numbers are
-illustrative; the active weights and constraints come from the experiment
-config.
+These examples use dummy articles and the current scoring definitions. The frozen weights are relevance `0.965`, coverage `0.035`, and KL penalty `0`. We show three positions to keep the arithmetic short; the real reranker continues to ten articles, then reports metrics on the completed list.
 
-- Suppose the reranker has already selected two items: `A` and `B`.
-- Candidate `C` has ranker relevance score `0.80`, category `Sports`, entities `{Messi, Inter Miami}`, and is marked as a new item.
-- Candidate `D` has relevance score `0.78`, category `Health`, entities `{WHO, vaccine, pandemic, hospital}`, and is not new.
+Suppose the selected prefix is `[A, B]`: `A` is Sports, `B` is Politics, and their entities together are `{Messi, Real Madrid}`. Neither article is flagged as new/rare. Two candidates compete for the next position:
 
-- **Novelty example with `teacher_cosine`**:
-  - If `C` has teacher-embedding cosine similarities `0.90` to `A` and `0.35` to `B`, then `novelty(C) = -max(0.90, 0.35) = -0.90`.
-  - If `D` has similarities `0.20` to `A` and `0.10` to `B`, then `novelty(D) = -0.20`.
-  - Because `-0.20 > -0.90`, `D` is treated as more novel than `C`.
+| Candidate | Normalized relevance | Category | Entities | New/rare flag |
+| --- | ---: | --- | --- | --- |
+| `C` | 0.80 | Sports | Messi, Inter Miami | Yes |
+| `D` | 0.78 | Health | WHO, vaccine, pandemic, hospital | No |
 
 - **Coverage example**:
-  - Suppose the selected list has already covered categories `{Sports, Politics}` and entities `{Messi, Real Madrid}`.
-  - If `coverage.category_bonus = 1.0`, `coverage.entity_bonus = 0.3`, and `max_new_entities_per_item = 3`:
-  - `C` is in `Sports`, which is already covered, so it gets no category bonus. It adds one new entity, `Inter Miami`, so `coverage(C) = 0.3`.
-  - `D` is in `Health`, which is new, so it gets `1.0` category bonus. Its four entities are all new, but only the first `max_new_entities_per_item = 3` new entities can contribute, so its entity bonus is `3 * 0.3 = 0.9` and `coverage(D) = 1.9`.
+  - The category bonus is `1.0`, the bonus per newly covered entity is `0.3`, and at most three new entities contribute per article.
+  - `C` adds no category because Sports is already covered. Only Inter Miami is a new entity, so `coverage(C) = 0 + 0.3 * 1 = 0.3`.
+  - `D` adds Health and four new entities. The entity cap limits the rewarded count to three, so `coverage(D) = 1.0 + 0.3 * 3 = 1.9`.
+  - After selecting `D`, Health and all four of its entities enter the covered sets. The cap limits the reward for that selection; it does not leave the fourth entity eligible for a later new-entity bonus.
 
-- **Exposure fairness example**:
-  - Suppose the current top-3 list has categories `[Sports, Sports, Health]`.
-  - With log position weights, a typical exposure pattern is roughly `[1.00, 0.63, 0.50]`.
-  - Then the actual category exposure map is:
-  - `Sports: 1.00 + 0.63 = 1.63`
-  - `Health: 0.50`
-  - After normalization, this becomes approximately `p = {Sports: 0.765, Health: 0.235}`.
-  - If the reference candidate pool category mix is `Sports: 50%`, `Health: 30%`, `Politics: 20%`, that normalized mix is `q`.
-  - While choosing each next item, the reranker computes the prospective penalty as `0.5 * KL(p || q) + 0.5 * L1(p, q)`. The reported fairness metrics are calculated separately after the list is complete.
+- **Choosing the next article with the frozen weights**:
+  - `score(C) = 0.965 * 0.80 + 0.035 * 0.3 = 0.7825`.
+  - `score(D) = 0.965 * 0.78 + 0.035 * 1.9 = 0.8192`.
+  - `D` wins despite slightly lower predicted relevance because its coverage contribution more than compensates. The KL contribution is zero at the frozen penalty weight.
+  - After adding `D`, the reranker recomputes scores for the remaining candidates using the updated coverage and exposure state. For example, another Health article no longer receives a new-category bonus. Weights stay fixed throughout list construction.
+  - No click labels enter this calculation. Offline nDCG evaluates the resulting complete lists; the greedy step itself does not calculate actual nDCG.
 
-- **New-item exposure penalty example**:
-  - Suppose `new_item_floor = 0.20`.
-  - If only the rank-3 item is new, then new-item exposure is `0.50`.
-  - Total exposure is `1.00 + 0.63 + 0.50 = 2.13`.
-  - So `new_item_exposure_frac = 0.50 / 2.13 = 0.235`, which is above the floor, so no extra penalty is added.
-  - If no selected item is new, then `new_item_exposure_frac = 0.0`; the prospective fairness penalty receives an additional `2 * (0.20 - 0.0) = 0.40` before the configured global fairness-penalty weight is applied.
+- **Category-exposure fairness example**:
+  - Suppose the accessible candidate pool contains 50% Sports, 20% Politics, and 30% Health. This gives the target `q = {Sports: 0.50, Politics: 0.20, Health: 0.30}`.
+  - Log position weights for the first three positions are approximately `[1.0000, 0.6309, 0.5000]`, with total exposure `2.1309`.
+  - Adding `C` gives `[Sports, Politics, Sports]`. Normalized exposure is approximately `pC = {Sports: 0.7039, Politics: 0.2961, Health: 0}`, and `KL(pC || q) = 0.3569`.
+  - Adding `D` gives `[Sports, Politics, Health]`. Normalized exposure is approximately `pD = {Sports: 0.4693, Politics: 0.2961, Health: 0.2346}`, and `KL(pD || q) = 0.0287`.
+  - KL uses `sum(p[c] * ln(p[c] / q[c]))`, with zero-exposure terms contributing zero and numerical smoothing in the implementation. Here, adding `D` produces exposure closer to the pool mix.
+  - A trial penalty weight of `0.025` would subtract approximately `0.0089` from `C` and `0.0007` from `D`. The frozen weight is `0`, so these KL values do not affect the current selection score; completed-list pool KL still determines whether an offline setting satisfies its aggregate guardrail.
+
+- **Diagnostic semantic diversity example**:
+  - Suppose teacher-cosine similarities are `sim(A, B) = 0.60`, `sim(A, C) = 0.90`, and `sim(B, C) = 0.35`. The illustrative list `[A, B, C]` has `ILD = 1 - (0.60 + 0.90 + 0.35) / 3 = 0.3833`.
+  - Suppose instead `sim(A, D) = 0.20` and `sim(B, D) = 0.10`. The illustrative list `[A, B, D]` has `ILD = 1 - (0.60 + 0.20 + 0.10) / 3 = 0.7000`.
+  - The second list is more semantically diverse under this diagnostic. These similarities do not enter the current reranking score, guardrails, or selection tie-breaker. For actual top-ten lists, ILD averages all 45 distinct article pairs.
+
+- **New-item exposure metric example**:
+  - If `C` occupies position three and only `C` is new/rare, new-item exposure for the illustrative three-item list is `0.5000 / 2.1309 = 0.2346`, or about 23.46%.
+  - If `D` occupies position three, none of these three articles is new/rare, so exposure is zero. An individual list can gain coverage while losing new-item exposure.
+  - Search compares mean position-weighted new-item exposure against the baseline across completed top-ten lists. The non-decrease requirement applies to that aggregate, not to each prefix or impression. There is no new-item bonus, shortfall penalty, or per-list quota in the current formula.
+  - Here, new/rare is defined by training click counts; it does not necessarily mean recently published.
+
 
 ## Evaluation
 - **Ranking quality**: AUC, MRR, nDCG@K, MAP@K, Recall@K
 - **Calibration**: ECE (expected calibration error), Brier score
 - **Diversity**: intra-list diversity (ILD), category coverage@K, category entropy@K
-- **Exposure fairness**: position-weighted exposure, disparity vs target distribution (KL / L1 / Gini), new-item exposure floor
+- **Exposure fairness**: position-weighted exposure, disparity vs target distribution (KL / Gini), new-item exposure fraction
 
 The official MIND leaderboard reports `AUC`, `MRR`, `nDCG@5`, and `nDCG@10` (see each `ranker_eval_*.json`). The official leaderboard uses the full/large hidden test set. Local metrics are split-dependent, so compare runs only when they use the same validation protocol.
 
@@ -246,10 +247,8 @@ The split protocols and current result locations are tracked in [docs/experiment
 
 This repo is designed to run on a powerful Windows laptop:
 - trains and scores the neural models on a CUDA GPU through PyTorch
-- uses **faiss-cpu only for ANN index construction and search**; this avoids a
-  separate GPU-Faiss dependency and does not imply that model training runs on CPU
-- uses the promoted MPNet text backbone with memory-bounded encoding,
-  mixed-precision adaptation, and cached item representations
+- uses **faiss-cpu only for ANN index construction and search**; this avoids a separate GPU-Faiss dependency and does not imply that model training runs on CPU
+- uses the promoted MPNet text backbone with memory-bounded encoding, mixed-precision adaptation, and cached item representations
 - supports full MIND-large processing plus optional config-driven subsampling
 
 ---
@@ -272,11 +271,7 @@ data/raw/MINDlarge_train/
 data/raw/MINDlarge_dev/
 data/raw/MINDlarge_test/
 ```
-Each folder should contain its MIND `behaviors.tsv` and `news.tsv` files. The
-hidden-test behaviors have no click labels. The reranker may use the entity
-annotation columns already present in `news.tsv` for coverage when
-`rerank.coverage.entity_bonus > 0`.
-When `knowledge_graph.enabled: true`, the model also needs to use `entity_embedding.vec` and `relation_embedding.vec`.
+Each folder should contain its MIND `behaviors.tsv` and `news.tsv` files. The hidden-test behaviors have no click labels. The reranker may use the entity annotation columns already present in `news.tsv` for coverage when `rerank.coverage.entity_bonus > 0`. When `knowledge_graph.enabled: true`, the model also needs to use `entity_embedding.vec` and `relation_embedding.vec`.
 
 ---
 
@@ -324,9 +319,7 @@ How this repo uses MIND entity annotations:
 - During greedy reranking, the reranker tracks covered entities for the entity coverage bonus.
 - Reranker entity coverage is separate from the neural KG feature path: coverage decides list diversity, while KG features affect the learned ranker representation.
 
-The accepted design is **text-only retrieval plus a KG-enhanced ranker**. Rejected
-retrieval variants are recorded in the
-[experiment registry](docs/experiment_registry.md#rejected-historical-retrieval-experiments).
+The accepted design is **text-only retrieval plus a KG-enhanced ranker**. Rejected retrieval variants are recorded in the [experiment registry](docs/experiment_registry.md#rejected-historical-retrieval-experiments).
 
 ---
 
@@ -334,17 +327,12 @@ retrieval variants are recorded in the
 
 `run_preprocess()` converts raw MIND TSV files into model-ready parquet/json files.
 
-Main steps for Large temporal configs such as
-`configs/mind_large_temporal_mpnet.yaml`:
+Main steps for Large temporal configs such as `configs/mind_large_temporal_mpnet.yaml`:
 - Read `news.tsv` and `behaviors.tsv` from train/dev.
 - Build ID mappings (`user_id/news_id/category/subcategory -> integer index`).
 - Move the final day of `train_dir` into validation, then append all of `dev_dir` to that same validation split.
-- Build reproducible random training/validation pairs. The random training pairs
-  are kept because the same processed dataset supports the random-negative
-  baseline; the promoted hard-negative ranker instead constructs temporary
-  examples from grouped behaviors when ranker training begins.
-- Build impression-level validation data plus separate chronological views for
-  reranker tuning and reporting.
+- Build reproducible random training/validation pairs. The random training pairs are kept because the same processed dataset supports the random-negative baseline; the promoted hard-negative ranker instead constructs temporary examples from grouped behaviors when ranker training begins.
+- Build impression-level validation data plus separate chronological views for reranker tuning and reporting.
 
 How pairs are created:
 
@@ -354,34 +342,14 @@ How pairs are created:
 
 #### Negative selection by training stage
 
-- **Text adaptation (Phases 1 and 3):** samples are generated lazily each
-  epoch. For a cold user with usable history, a frozen snapshot of the text
-  encoder at the start of that phase scores a random pool of up to 20
-  same-impression negatives; one hard and three random negatives are retained.
-  Phase 1 uses the base backbone snapshot, while Phase 3 uses the selected
-  Phase 1 checkpoint. Warm users receive four random negatives, and impressions
-  without usable history are omitted because the adaptation objective requires
-  a history representation.
-- **Teacher training:** this is independent of the hard-negative machinery. It
-  randomly samples up to eight non-clicked candidates from the same impression
-  for each positive and also uses in-batch positives as contrastive negatives.
-- **Student-ranker training (Phases 2 and 3):** before ranker optimization, the
-  frozen trained teacher scores a random same-impression pool of up to 20. Cold
-  users with 1–4 usable history items retain one teacher-hard and three random
-  negatives; warm and zero-history users retain four random negatives. These
-  temporary rows are built from grouped training behaviors, independently of
-  the retained baseline `train_pairs.parquet` artifact.
-- To avoid teacher/student label conflict, teacher-hard candidates are selected
-  only from negatives that the teacher scores no higher than the clicked
-  positive in the same impression. Ranker distillation is disabled on those
-  teacher-mined rows by default. Text adaptation applies the analogous
-  positive-consistency filter using its frozen encoder snapshot.
+- **Text adaptation (Phases 1 and 3):** samples are generated lazily each epoch. For a cold user with usable history, a frozen snapshot of the text encoder at the start of that phase scores a random pool of up to 20 same-impression negatives; one hard and three random negatives are retained. Phase 1 uses the base backbone snapshot, while Phase 3 uses the selected Phase 1 checkpoint. Warm users receive four random negatives, and impressions without usable history are omitted because the adaptation objective requires a history representation.
+- **Teacher training:** this is independent of the hard-negative machinery. It randomly samples up to eight non-clicked candidates from the same impression for each positive and also uses in-batch positives as contrastive negatives.
+- **Student-ranker training (Phases 2 and 3):** before ranker optimization, the frozen trained teacher scores a random same-impression pool of up to 20. Cold users with 1–4 usable history items retain one teacher-hard and three random negatives; warm and zero-history users retain four random negatives. These temporary rows are built from grouped training behaviors, independently of the retained baseline `train_pairs.parquet` artifact.
+- To avoid teacher/student label conflict, teacher-hard candidates are selected only from negatives that the teacher scores no higher than the clicked positive in the same impression. Ranker distillation is disabled on those teacher-mined rows by default. Text adaptation applies the analogous positive-consistency filter using its frozen encoder snapshot.
 
 Why there is no `train_impressions.parquet`:
 - Ranker training uses pairwise rows, either persisted in `train_pairs.parquet` for random sampling or built dynamically from `train_behaviors.parquet` for hard mining.
-- Impression-grouped data is mainly needed for ranking evaluation. Temporal-tune
-  configs generate combined `val`; Large temporal configs additionally generate
-  reranker-only `rerank_tune` and `rerank_test` views.
+- Impression-grouped data is mainly needed for ranking evaluation. Temporal-tune configs generate combined `val`; Large temporal configs additionally generate reranker-only `rerank_tune` and `rerank_test` views.
 
 #### Large data timeline
 
@@ -392,18 +360,11 @@ Why there is no `train_impressions.parquet`:
 | Nov 15 | `MINDlarge_dev` | Part of Large Temporal Val | Frozen-setting follow-up report | 376,471 |
 | Nov 16–22 | `MINDlarge_test` | Hidden competition test; labels unavailable | Not used | 2,370,727 |
 
-Large Temporal Val therefore contains 807,988 impressions across the middle two
-rows. Upstream encoder, teacher, and ranker selection used that combined
-validation set. Reranking uses two chronological views, but November 15 was
-also reused while refining requirements. Its results are follow-up measurements,
-not an independent test.
+Large Temporal Val therefore contains 807,988 impressions across the middle two rows. Upstream encoder, teacher, and ranker selection used that combined validation set. Reranking uses two chronological views, but November 15 was also reused while refining requirements. Its results are follow-up measurements, not an independent test.
 
-In Phase 3, the selected encoder continues on Large Temporal Val, and the
-teacher/ranker fit uses all labeled Train + Dev impressions. Hidden Test click
-labels are never available or used.
+In Phase 3, the selected encoder continues on Large Temporal Val, and the teacher/ranker fit uses all labeled Train + Dev impressions. Hidden Test click labels are never available or used.
 
-Evaluation also divides each holdout into chronological `time_period__...`
-slices so regressions can be checked against impression order:
+Evaluation also divides each holdout into chronological `time_period__...` slices so regressions can be checked against impression order:
 
 ![images/AUC_over_time.png](images/AUC_over_time.png)
 
@@ -413,28 +374,19 @@ slices so regressions can be checked against impression order:
 
 ## 3) End-to-end Large MPNet workflow
 
-Sections 3.1--3.5 reproduce the original MPNet (`lr=2e-5`, Large Test AUC
-`0.6948`). The best reported single model uses `lr=1e-5` and achieves `0.6960`;
-its complete training workflow is retained at commit `31ab682` on
-`feature/lr_sweep_2`. The phase runner below reproduces the original model.
+Sections 3.1--3.5 reproduce the original MPNet (`lr=2e-5`, Large Test AUC `0.6948`). The best reported single model uses `lr=1e-5` and achieves `0.6960`; its complete training workflow is retained at commit `31ab682` on `feature/lr_sweep_2`. The phase runner below reproduces the original model.
 
-The promoted workflow first selects the model on the chronological Large
-temporal split, then performs a maximum-data fit for the hidden leaderboard
-test. Run one phase at a time so each selection decision can be reviewed before
-the next phase consumes more data.
+The promoted workflow first selects the model on the chronological Large temporal split, then performs a maximum-data fit for the hidden leaderboard test. Run one phase at a time so each selection decision can be reviewed before the next phase consumes more data.
 
 ### 3.1 Prepare Large temporal data
 
-After placing the Large raw files and building the KG triples described above,
-run:
+After placing the Large raw files and building the KG triples described above, run:
 
 ```powershell
 python -m mindrec.cli preprocess --config configs/mind_large_temporal_mpnet.yaml
 ```
 
-This creates the training, validation, and reranker views shown in the timeline
-above. The promoted phase runner performs this step automatically when the
-compatible processed data is not already present.
+This creates the training, validation, and reranker views shown in the timeline above. The promoted phase runner performs this step automatically when the compatible processed data is not already present.
 
 ### 3.2 Phase 1: select the adapted MPNet checkpoint
 
@@ -442,20 +394,9 @@ compatible processed data is not already present.
 .\scripts\run_mpnet_backbone.ps1 -Phase phase1
 ```
 
-Phase 1 adapts `all-mpnet-base-v2` on Large Temporal Train for at most 10,000
-successful optimizer updates. Every 1,000 updates it evaluates the text
-objective on Large Temporal Val; early stopping selected update 9,000. This
-phase selects only the text encoder—it does not yet train the final two-tower
-teacher or student ranker.
+Phase 1 adapts `all-mpnet-base-v2` on Large Temporal Train for at most 10,000 successful optimizer updates. Every 1,000 updates it evaluates the text objective on Large Temporal Val; early stopping selected update 9,000. This phase selects only the text encoder—it does not yet train the final two-tower teacher or student ranker.
 
-For each training impression, MPNet encodes every article as
-`title [SEP] abstract`; the mean of up to 10 clicked-history embeddings becomes
-the temporary user vector. A temperature-scaled contrastive loss trains the
-encoder to score the clicked candidate above four same-impression negatives and
-also separates mismatched user/positive pairs within the batch. AdamW updates
-the encoder itself (`lr=2e-5`, weight decay `0.01`) using batches of 16 with
-four-step gradient accumulation. Phase 3 later continues the same objective
-from the selected checkpoint.
+For each training impression, MPNet encodes every article as `title [SEP] abstract`; the mean of up to 10 clicked-history embeddings becomes the temporary user vector. A temperature-scaled contrastive loss trains the encoder to score the clicked candidate above four same-impression negatives and also separates mismatched user/positive pairs within the batch. AdamW updates the encoder itself (`lr=2e-5`, weight decay `0.01`) using batches of 16 with four-step gradient accumulation. Phase 3 later continues the same objective from the selected checkpoint.
 
 ### 3.3 Phase 2: train and evaluate the complete temporal model
 
@@ -463,25 +404,15 @@ from the selected checkpoint.
 .\scripts\run_mpnet_backbone.ps1 -Phase phase2
 ```
 
-Phase 2 loads the selected update-9,000 encoder, trains the two-tower teacher,
-then trains the candidate-attention student with the hard-negative and
-distillation policies described above. It finally evaluates the student on all
-807,988 Large Temporal Val impressions. The completed model reached AUC
-`0.688880`, MRR `0.336397`, nDCG@5 `0.371215`, and nDCG@10 `0.431291`.
+Phase 2 loads the selected update-9,000 encoder, trains the two-tower teacher, then trains the candidate-attention student with the hard-negative and distillation policies described above. It finally evaluates the student on all 807,988 Large Temporal Val impressions. The completed model reached AUC `0.688880`, MRR `0.336397`, nDCG@5 `0.371215`, and nDCG@10 `0.431291`.
 
-The ranker evaluation also reports chronological, history-length, cold/new-item,
-popularity, category, and subcategory slices. A slice such as
-`impressions_with_clicked_new_item` evaluates whole impressions containing at
-least one clicked new item; it does not evaluate only the new candidates.
+The ranker evaluation also reports chronological, history-length, cold/new-item, popularity, category, and subcategory slices. A slice such as `impressions_with_clicked_new_item` evaluates whole impressions containing at least one clicked new item; it does not evaluate only the new candidates.
 
-![images/AUC_by_cold_warm_user.png](images/AUC_by_cold_warm_user.png)
-![images/nDCG_by_cold_warm_user.png](images/nDCG_by_cold_warm_user.png)
+![images/AUC_by_cold_warm_user.png](images/AUC_by_cold_warm_user.png) ![images/nDCG_by_cold_warm_user.png](images/nDCG_by_cold_warm_user.png)
 
 ### 3.4 Optional ANN retrieval evaluation
 
-ANN retrieval is useful for a production-style full-catalog recommender but is
-not needed when writing a MIND submission, because each test impression already
-provides its candidate set. To evaluate retrieval from the Phase 2 teacher:
+ANN retrieval is useful for a production-style full-catalog recommender but is not needed when writing a MIND submission, because each test impression already provides its candidate set. To evaluate retrieval from the Phase 2 teacher:
 
 ```powershell
 python -m mindrec.cli build_index --config configs/mind_large_temporal_mpnet.yaml
@@ -489,10 +420,7 @@ python -m mindrec.cli eval_retrieval --config configs/mind_large_temporal_mpnet.
 python -m mindrec.cli eval_retrieval_sweep --config configs/mind_large_temporal_mpnet.yaml
 ```
 
-The retrieval reports include chronological, history-length, popularity,
-category, and subcategory slices. The configured sweep compares the text-only
-fallback weight and oversampling choices, then selects the best held-out
-`recall@K` setting.
+The retrieval reports include chronological, history-length, popularity, category, and subcategory slices. The configured sweep compares the text-only fallback weight and oversampling choices, then selects the best held-out `recall@K` setting.
 
 ### 3.5 Build a MIND-large leaderboard submission
 
@@ -502,274 +430,159 @@ The original MPNet submission is produced by Phase 3:
 .\scripts\run_mpnet_backbone.ps1 -Phase phase3
 ```
 
-The orchestration script uses these config roles:
+The orchestration script directly uses these configs in the current training and submission path:
 
-- `mind_large_temporal_baseline.yaml` defines the temporal split and shared
-  defaults inherited by the promoted temporal config; it is not a separate
-  prerequisite run.
-- `mind_large_temporal_mpnet.yaml` selects MPNet and candidate attention in
-  Phases 1–2 and records the frozen Approach 1 reranker selection.
-- `mind_large_submission_mpnet_text_continue.yaml` continues the selected
-  update-9,000 encoder for exactly 2,000 successful optimizer updates on Large
-  Temporal Val, without another early-stopping decision.
-- `mind_large_submission_mpnet.yaml` and
-  `mind_large_submission_mpnet_candidate_attention.yaml` train the teacher for
-  four complete epochs and the candidate-attention ranker for two complete
-  epochs on Large Train + Dev, with early stopping disabled.
-- `mind_large_submission_mpnet_candidate_attention_recency_alpha_002.yaml`
-  applies the constant, non-learned recency coefficient `alpha=0.02` and writes
-  the submission.
+- `mind_large_temporal_mpnet.yaml` selects MPNet and candidate attention in Phases 1–2 and configures the reranker search and selection.
+- `mind_large_submission_mpnet_text_continue.yaml` continues the selected update-9,000 encoder for exactly 2,000 successful optimizer updates on Large Temporal Val, without another early-stopping decision.
+- `mind_large_submission_mpnet.yaml` and `mind_large_submission_mpnet_candidate_attention.yaml` train the teacher for four complete epochs and the candidate-attention ranker for two complete epochs on Large Train + Dev, with early stopping disabled.
+- `mind_large_submission_mpnet_candidate_attention_recency_alpha_002.yaml` applies the constant, non-learned recency coefficient `alpha=0.02` and writes the submission.
 
-Here the schedules are **locked before maximum-data training**: the encoder
-update count and teacher/ranker epoch counts are no longer selected in Phase 3,
-because no labeled local holdout remains. The teacher and ranker parameters are
-still trained normally; “locked” describes their training schedules, not frozen
-model weights. Likewise, `alpha=0.02` is a configured post-hoc constant rather
-than a learned parameter.
+Here the schedules are **locked before maximum-data training**: the encoder update count and teacher/ranker epoch counts are no longer selected in Phase 3, because no labeled local holdout remains. The teacher and ranker parameters are still trained normally; “locked” describes their training schedules, not frozen model weights. Likewise, `alpha=0.02` is a configured post-hoc constant rather than a learned parameter.
 
-`mind_large_temporal_tune.yaml`, `mind_large_tune.yaml`, and the MiniLM
-submission configs remain reproducibility baselines; they are not the current
-champion path.
+Inherited defaults and configs for reproducing other baselines are documented in the [configuration background](docs/experiment_registry.md#configuration-background).
 
 Completed Large temporal metrics, protocol details, and rejected experiments are recorded in [docs/experiment_registry.md](docs/experiment_registry.md).
 
 #### Architecture carried into Phase 3
 
-The three phases separate encoder selection, full temporal-model validation,
-and the locked-schedule maximum-data fit. Phase 3 preserves the architecture
-validated in Phase 2:
+The three phases separate encoder selection, full temporal-model validation, and the locked-schedule maximum-data fit. Phase 3 preserves the architecture validated in Phase 2:
 
 The major architecture elements are deliberately separated:
 
-- The **text backbone** encodes article text. The promoted model uses
-  `all-mpnet-base-v2` (768 dimensions); the earlier MiniLM experiments are
-  retained in the [experiment registry](docs/experiment_registry.md).
-- Text adaptation contrasts each clicked candidate with impression negatives
-  against the mean of up to 10 recent-history article embeddings. Cold users
-  with usable history receive one hard and three random negatives; warm users
-  use random negatives.
-- The **two-tower teacher** projects item text into a 384-dimensional retrieval
-  space and uses multi-head attention to pool the clicked history. It supplies
-  retrieval embeddings plus logit and representation targets for distillation.
-- The **student DLRM-style ranker** combines learned ID/category features,
-  dense behavioral features, text-plus-KG item semantics, and candidate-aware
-  attention over text-plus-KG history semantics.
-- The competition submission scores every supplied impression candidate with
-  the student ranker. The selected submission adds only the label-free recency
-  tiebreaker (`alpha=0.02`); it does not run ANN retrieval or the optional
-  diversity/fairness reranker.
+- The **text backbone** encodes article text. The promoted model uses `all-mpnet-base-v2` (768 dimensions); the earlier MiniLM experiments are retained in the [experiment registry](docs/experiment_registry.md).
+- Text adaptation contrasts each clicked candidate with impression negatives against the mean of up to 10 recent-history article embeddings. Cold users with usable history receive one hard and three random negatives; warm users use random negatives.
+- The **two-tower teacher** projects item text into a 384-dimensional retrieval space and uses multi-head attention to pool the clicked history. It supplies retrieval embeddings plus logit and representation targets for distillation.
+- The **student DLRM-style ranker** combines learned ID/category features, dense behavioral features, text-plus-KG item semantics, and candidate-aware attention over text-plus-KG history semantics.
+- The competition submission scores every supplied impression candidate with the student ranker. The selected submission adds only the label-free recency tiebreaker (`alpha=0.02`); it does not run ANN retrieval or the optional diversity/fairness reranker.
 
 ##### Candidate-aware history attention
 
-Mean pooling gives every candidate in an impression the same semantic user
-vector. Candidate-aware pooling instead projects the current candidate as the
-query in four-head attention over the clicked-history item states as keys and
-values. The resulting user vector is therefore different for, say, a sports
-candidate and a health candidate shown to the same user. Empty histories map to
-a zero semantic user vector, leaving the ID, taxonomy, item-semantic, and dense
-branches to score the candidate. Item and history encodings are cached, but the
-small attention operation is evaluated for each candidate. This change improved
-the matched MiniLM temporal AUC from `0.664328` to `0.671593` and was retained
-in the promoted MPNet ranker.
+Mean pooling gives every candidate in an impression the same semantic user vector. Candidate-aware pooling instead projects the current candidate as the query in four-head attention over the clicked-history item states as keys and values. The resulting user vector is therefore different for, say, a sports candidate and a health candidate shown to the same user. Empty histories map to a zero semantic user vector, leaving the ID, taxonomy, item-semantic, and dense branches to score the candidate. Item and history encodings are cached, but the small attention operation is evaluated for each candidate. This change improved the matched MiniLM temporal AUC from `0.664328` to `0.671593` and was retained in the promoted MPNet ranker.
 
-The current MPNet orchestration script implements all three phases and performs
-artifact/provenance checks before reuse. The detailed historical MiniLM phase
-results and rejected experiments live in the experiment registry rather than
-being duplicated here.
+The current MPNet orchestration script implements all three phases and performs artifact/provenance checks before reuse. The detailed historical MiniLM phase results and rejected experiments live in the experiment registry rather than being duplicated here.
 
 #### Phase 3 execution and completed result
 
-Before training, Phase 3 verifies the Phase 2 metrics and selected update-9,000
-checkpoint. It then continues MPNet for exactly 2,000 successful optimizer
-updates, trains the maximum-data teacher for four complete epochs, trains the
-candidate-attention ranker for two complete epochs, builds or reuses the
-item-age index, and scores the hidden candidate sets with `alpha=0.02` recency.
-Compatible completed stages are reused; incompatible metadata is rejected
-instead of silently mixing runs.
+Before training, Phase 3 verifies the Phase 2 metrics and selected update-9,000 checkpoint. It then continues MPNet for exactly 2,000 successful optimizer updates, trains the maximum-data teacher for four complete epochs, trains the candidate-attention ranker for two complete epochs, builds or reuses the item-age index, and scores the hidden candidate sets with `alpha=0.02` recency. Compatible completed stages are reused; incompatible metadata is rejected instead of silently mixing runs.
 
-MPNet adaptation uses FP16 autocasting, transformer gradient checkpointing, and
-chunked article encoding to fit the target GPU without changing logical batch
-membership. Candidate-attention scoring caches item and history states, then
-runs only the small candidate-conditioned attention operation per candidate.
+MPNet adaptation uses FP16 autocasting, transformer gradient checkpointing, and chunked article encoding to fit the target GPU without changing logical batch membership. Candidate-attention scoring caches item and history states, then runs only the small candidate-conditioned attention operation per candidate.
 
-The original MPNet submission achieved Large Test AUC **`0.6948`**.
-This is `+0.0079` over the selected MiniLM
-candidate-attention submission (`0.6869`), `+0.0100` over text-adapt v1
-(`0.6848`), and `+0.0224` over frozen MiniLM (`0.6724`). Its 2,370,727
-impression rankings passed sequential-ID, rank-permutation, ZIP-integrity, and
-content-hash checks.
+The original MPNet submission achieved Large Test AUC **`0.6948`**. This is `+0.0079` over the selected MiniLM candidate-attention submission (`0.6869`), `+0.0100` over text-adapt v1 (`0.6848`), and `+0.0224` over frozen MiniLM (`0.6724`). Its 2,370,727 impression rankings passed sequential-ID, rank-permutation, ZIP-integrity, and content-hash checks.
 
-To write the candidate-attention model without the recency tiebreaker, use
-`python -m mindrec.cli write_submission --config configs/mind_large_submission_mpnet_candidate_attention.yaml`;
-that path does not require `build_item_age`.
+To write the candidate-attention model without the recency tiebreaker, use `python -m mindrec.cli write_submission --config configs/mind_large_submission_mpnet_candidate_attention.yaml`; that path does not require `build_item_age`.
 
 ##### Article age and the recency clock
 
-MIND does not provide publication timestamps, so “age” is an exposure-age
-proxy. `build_item_age` scans the candidate lists in Large Train, Dev, and Test
-behaviors—never their click labels—and records each news ID's earliest observed
-candidate-impression timestamp. That first observable appearance starts the
-clock.
+MIND does not provide publication timestamps, so “age” is an exposure-age proxy. `build_item_age` scans the candidate lists in Large Train, Dev, and Test behaviors—never their click labels—and records each news ID's earliest observed candidate-impression timestamp. That first observable appearance starts the clock.
 
-An article already in circulation when Large Train begins is therefore assigned
-age zero at its first candidate appearance inside the dataset; earlier history
-mentions do not start the clock, and the system cannot recover how long the
-article existed before the observation window. An ID absent from the age index,
-or an impression with an unparseable timestamp, falls back to age zero.
+An article already in circulation when Large Train begins is therefore assigned age zero at its first candidate appearance inside the dataset; earlier history mentions do not start the clock, and the system cannot recover how long the article existed before the observation window. An ID absent from the age index, or an impression with an unparseable timestamp, falls back to age zero.
 
-At each scored impression, age is
-`max(0, impression_time - first_seen_time)` in hours, capped at 720 hours and
-stored as `log1p(age_hours)`. Within that impression, the youngest candidate
-gets freshness near `+1`, the oldest near `-1`, and tied ages share a rank. The
-resulting submission score is
-`zscore(ranker_logit) + 0.02 * freshness_percentile`. Thus age is calculated at
-scoring time relative to each impression, rather than once relative to the
-start or end of the dataset.
+At each scored impression, age is `max(0, impression_time - first_seen_time)` in hours, capped at 720 hours and stored as `log1p(age_hours)`. Within that impression, the youngest candidate gets freshness near `+1`, the oldest near `-1`, and tied ages share a rank. The resulting submission score is `zscore(ranker_logit) + 0.02 * freshness_percentile`. Thus age is calculated at scoring time relative to each impression, rather than once relative to the start or end of the dataset.
 
 The official MIND evaluator reads `prediction.txt` lines as `impression_id [rank,...]`, where rank `1` is the highest-scored candidate. Local MIND metrics report AUC, MRR, nDCG@5, and nDCG@10 using the same per-impression ranking definitions as the official evaluator; leaderboard rank is primarily by AUC.
 
-Optional submission ensembling is documented separately in
-[Ensembling: MPNet and MiniLM](docs/ensembling.md), including results and CLI commands.
+Optional submission ensembling is documented separately in [Ensembling: MPNet and MiniLM](docs/ensembling.md), including results and CLI commands.
 
 ### 3.6 Reranking: search offline, use fixed weights in production
 
-**Offline search finds the parameter combination with the highest mean
-nDCG@10 among combinations that meet every aggregate guardrail.** It uses one
-frozen ranker checkpoint, without ensembling. **Each candidate parameter set is
-used to build actual top-10 lists, not just to score an already-built list.**
-Click labels are used afterward to evaluate those lists; they are not inputs
-to the greedy article-selection score. **The parameter set that produces the
-highest mean nDCG@10 among qualifying settings is the set used in production**,
-with the same score definitions, candidate-pool construction, and greedy
-algorithm. Changing a bonus, floor, normalization, or list length afterward
-would change the reranker that was evaluated.
+**Offline search finds the parameter combination with the highest mean nDCG@10 among those meeting every aggregate guardrail.** It uses one frozen ranker, without ensembling. Each combination builds actual top-10 lists; labels are used afterward to evaluate those lists. **The winning combination is also the combination used in production**, with the same score definitions and greedy list builder.
 
-For candidate article `i` and the ordered list `S` already selected, the score is:
+For candidate article `i` and already-selected list `S`:
 
 ```text
-score(i | S) = wR * R(i) + wN * N(i, S) + wC * C(i, S) - lambda * P(i, S; f)
+score(i | S) = wR * R(i) + wC * C(i, S) - lambda * KL(p || q)
+wR = 1 - wC
 ```
 
-- `R(i)`: the ranker's predicted relevance, min-max normalized within its top-50 pool.
-- `N(i, S)`: negative maximum teacher-embedding cosine similarity to selected articles; zero when `S` is empty. Less similar articles receive a higher novelty score.
-- `C(i, S)`: a bonus for a newly covered category plus bonuses for newly covered entities, capped per article.
-- `P(i, S; f)`: a soft penalty computed for the prospective list after adding `i`. It measures category-exposure mismatch and any shortfall below new-item exposure target `f`.
+- `R`: predicted relevance, min-max normalized within the ranker's top-50 pool.
+- `C`: `1.0 * new_category + 0.3 * min(new_entity_count, 3)`.
+- `p`: prospective prefix's position-weighted category exposure after adding `i`; `q`: the accessible candidate pool's category mix.
 
-The penalty is `0.5 * KL(p || q) + 0.5 * L1(p, q) + 2 * max(0, f - e)`:
-`p` is the prospective list's position-weighted category exposure, `q` is the
-candidate pool's category mix, and `e` is its new-item exposure fraction.
-The penalty weight `lambda` controls its influence; `f` is a soft target,
-not a mandatory quota. Category fairness here concerns topic exposure.
-
-**What is fixed before searching, and what is searched?**
+Semantic novelty is absent from the score and search. Teacher-cosine ILD is reported on completed lists for diagnosis only. There is no L1 or new-item shortfall penalty; new-item exposure remains an aggregate guardrail.
 
 | Fixed before search | Chosen by search |
 | --- | --- |
-| Ranker checkpoint, teacher embeddings, candidate pool of 50, output length of 10, and evaluation splits | Novelty weight `wN` |
-| Score/metric definitions and the four guardrails below | Fairness penalty weight `lambda` |
-| Coverage weight `wC = 0.025`; bonuses of 1.0 per new category and 0.3 per new entity, capped at 3 entities | Soft new-item floor `f` |
+| Ranker, pool size 50, output length 10, tuning/reporting splits | Coverage weight `wC` |
+| Score/metric definitions, category/entity bonuses and entity cap | Pool-KL penalty weight `lambda` |
+| Aggregate guardrails below and teacher embeddings for diagnostic ILD | Relevance weight is derived: `1 - wC` |
 
-Relevance weight is derived as `wR = 1 - wN - wC`. Coverage weight is also a searchable hyperparameter; this compact grid fixes
-it at 0.025. That is a scope choice for this search, not a business requirement. Score definitions use min-max
-relevance, cosine novelty, and logarithmic position weights. There are no scalar-utility
-coefficients: nDCG is the selection objective, and the other requirements
-control eligibility. The coverage bonuses and entity cap are technical score-design choices, not
-business guardrails. Fixing them defines the meaning and scale of coverage;
-search then determines how strongly to reward it. See the guide's
-[parameter and grid guidance](docs/reranking.md#choosing-score-definitions-and-a-search-grid).
-The MPNet config searches:
+Relevance weight is derived automatically as `1 - coverage_weight`; do not configure it separately. Bonuses and caps are technical modeling choices; business stakeholders specify acceptable outcomes. There are no scalar-utility scales or coefficients. Logarithmic position weights and min-max relevance normalization stay fixed during search.
 
-```yaml
-weight_pairs: [[0.00, 0.025], [0.025, 0.025], [0.05, 0.025]] # [wN, wC]
-fairness_penalties: [0.05, 0.075, 0.10]                    # lambda
-new_item_floors: [0.30, 0.40]                             # f
-shortlist_size: 18
-```
-
-**Offline procedure:**
-
-1. Score each labeled November 14 tuning impression with the frozen ranker.
-   The original ranker's top-10 list provides the comparison baseline.
-2. For each of the 18 parameter combinations, build complete lists with the
-   greedy score above. The 5,000-impression screen uses seed 13; all 18 settings
-   proceed to the full 431,517-impression tuning evaluation.
-3. Calculate mean nDCG@10 using the recorded click labels, plus exposure,
-   coverage, and KL metrics. Reject combinations that fail any requirement.
-4. Select the remaining combination with the **highest full-tuning nDCG@10**,
-   even if another qualifying combination has larger diversity gains. Freeze
-   its parameters and evaluate on November 15. If none qualifies, select none.
-
-| Aggregate requirement, relative to the original ranker | Threshold |
+| Aggregate requirement relative to the original ranker | Threshold |
 | --- | ---: |
 | Maximum relative nDCG@10 loss | 2% |
-| Minimum new-item exposure gain | 0 |
+| Minimum new-item exposure gain | 0 (non-regression) |
 | Minimum mean category-coverage gain | +0.25 categories/list |
 | Minimum mean pool-KL reduction | 0.03 |
 
-Thus the search solves `argmax mean_nDCG@10(theta)` over the grid subject to
-these constraints. Its result is the best measured eligible grid point, not a
-guaranteed optimum over all possible rerankers.
+**Offline procedure and practical range discovery:**
 
-**Production reranking uses the found parameters, without searching again.**
-The selected score is:
+1. Score the labeled November 14 tuning impressions with the frozen ranker. Its original top-ten lists form the comparison baseline.
+2. Build lists for the current 15-setting local grid on a deterministic 5,000-impression sample: `wC` in `[0.025, 0.03, 0.035, 0.04, 0.05]`, and `lambda` in `[0, 0.025, 0.05]`. It retains the best feasible tuning setting (`wC=0.035`, `lambda=0`) and includes nearby coverage adjustments.
+3. Evaluate **all 15 combinations on full tuning data** (`shortlist_size: 15`). Screening supplies diagnostics and cannot exclude a grid point. Remove settings failing any guardrail; choose the remaining setting with the **highest full-tuning nDCG@10**. If none qualifies, select none.
+4. Inspect `grid_diagnostics` in `rerank_search.json` or the readable `pareto_frontier.md`: relevance-gap scales, candidate-pool opportunity, failures by guardrail, feasibility across parameter values, and boundary winners. These profiles and flags use full-tuning results when available; partial grids are labeled, with untested points left empty. Pool-opportunity statistics remain sample-based. Extend an upper range only when the profile supports it. A boundary winner alone does not prove larger weights help.
+5. Refine around the full-tuning winner using the report's suggested midpoint values. Edit this same config and make `shortlist_size` large enough to fully evaluate the local grid. Keep the previous winning combination. Use full-tuning results when they disagree with the sample; increase evaluation coverage if an expanded grid was only partially evaluated. Keep thresholds fixed during these comparisons.
+6. Copy the winning coverage and KL penalty weights into the serving configuration, record the selection provenance, freeze, then report on November 15.
+
+This solves `argmax mean_nDCG@10(theta)` subject to the guardrails over the fully evaluated grid. It does not establish a global optimum beyond that grid. See the [grid-range process](docs/reranking.md#choosing-score-definitions-and-a-search-grid) for scale examples, failure diagnosis, expansion and stopping guidance.
+
+**Inspect feasibility before interpreting the winner:**
+
+A useful pattern to look for as reranking becomes stronger is:
 
 ```text
-score(i | S) = 0.95 * R(i) + 0.025 * N(i, S) + 0.025 * C(i, S)
-              - 0.05 * P(i, S; f=0.40)
+Too weak: coverage or KL improvement fails
+    ↓
+Useful region: all guardrails pass
+    ↓
+Too strong: nDCG loss exceeds the allowed limit
 ```
 
-For each request, take the ranker's top 50 candidates and start with an empty
-list. At each step, score every remaining article, select the highest-scoring
-one, update the selected articles, covered categories/entities, similarities,
-and exposure totals, then repeat until 10 articles are selected or the pool
-is exhausted. Novelty, coverage, and penalties change as the list grows; the
-selected weights remain fixed.
+| Observation | Interpretation and next action |
+| --- | --- |
+| Some settings pass every guardrail | Compare their full-tuning nDCG and inspect the region around the best. |
+| Low weights fail coverage, moderate weights pass, high weights lose too much nDCG | A useful region may lie between insufficient change and excessive relevance loss. |
+| Rankings barely change | Weights may be weak, but components might also be constant or favor the same articles as relevance. Inspect before increasing them. |
+| Coverage fails throughout the grid | Check whether pools contain enough additional categories and whether exposing them fits the nDCG budget. Larger weights cannot create missing candidates. |
+| New-item exposure consistently declines | Increasing coverage or KL weights may not solve it; neither directly targets new items. |
 
-**Why not enforce the aggregate guardrails "up to this item"?** They describe
-average changes in *completed lists across many impressions*. A single prefix
-is neither a completed top-10 list nor that population. For example, the first
-position contains one category regardless of the eventual list diversity;
-requiring an immediate +0.25 category gain would reject a prefix that could
-produce a useful diverse list. The prefix penalty helps steer selection, but
-it does not enforce those aggregate guarantees. Hard per-list rules would
-require a separate constraint mechanism; aggregate outcomes need monitoring
-over traffic windows.
+Individual improvements do not prove joint feasibility: one setting might pass coverage while another passes exposure, with neither passing both. Reported parameter profiles take the best results across other parameter choices; they help locate promising regions but do not isolate one weight's causal effect.
 
-**Why not maximize actual nDCG at each step?** At serving time we do not know
-which candidate articles the user will click or find relevant, so ground-truth
-nDCG cannot be computed. Predicted relevance is an estimate, not a click label.
-We maximize the available greedy score at each step; offline labels allow us
-to compare the complete lists produced by different parameter combinations.
-The repository provides this algorithm and offline evaluation, not a deployed
-serving or monitoring service.
+A **zero-weight control** disables one component, such as `wC=0` to remove coverage or `lambda=0` to remove KL. Keep the other independent weight fixed; `wR=1-wC` is still recalculated. Setting both to zero recovers the ranker's ordering, a useful baseline even if it fails improvement guardrails.
 
-Sixteen of the 18 settings meet the tuning requirements. The selected setting
-has 0.183% relative tuning nDCG loss. On 376,471 November 15 impressions:
+A grid need not contain a failing setting. Compare eligible settings by nDCG and investigate promising boundaries instead of expanding solely to force a failure. If new-item exposure repeatedly fails, inspect candidate availability and consider a direct new-item bonus separately; the current score has none.
 
-| Metric | Original ranker | Reranked | Change |
-| --- | ---: | ---: | ---: |
-| nDCG@10 | 0.439457 | 0.438176 | 0.291% relative loss |
-| New-item exposure | 89.1707% | 89.3975% | +0.2269 percentage points |
-| Categories/list | 4.955561 | 5.209905 | +0.254344 |
-| Pool KL | 0.442187 | 0.408160 | Reduction 0.034026 |
+#### Serving behavior
 
-All four requirements pass. November 15 was reused while refining the
-requirements; these are follow-up results, not an independent test.
+**Production uses the same winning parameters and list builder as offline evaluation, without searching again.** Take the ranker's top 50 candidates, start with an empty list, and repeatedly select the highest-scoring remaining article. Update covered categories/entities and exposure state after each selection. Stop at ten articles or when the pool is exhausted. Component values change as the list grows; the selected weights stay fixed.
 
-With the prepared data and frozen checkpoint, rerun the current process using:
+**Why do guardrails not apply "up to this item"?** They concern average changes in completed lists across many impressions. One prefix is neither a completed list nor that population. The first position always has at most one category; requiring an immediate +0.25 category gain could reject a useful eventual list. Prefix KL guides selection without enforcing aggregate guarantees. Production outcomes need monitoring over traffic windows.
+
+**Why not maximize actual nDCG at each step?** Serving has no ground-truth click or relevance labels. The algorithm maximizes its available predicted score; offline labels let us compare the complete lists generated by different weights.
+
+Production monitoring should compare completed-list metrics over traffic windows, with an agreed fallback to the original ranker when aggregate outcomes fail. A single list missing an aggregate target is not itself such a failure. This repo implements the algorithm and offline evaluation; serving, monitoring, and rollback services are not implemented.
+
+#### Current results and reproduction
+
+**Current status: evaluation complete; three of four reporting guardrails pass.** The frozen setting uses coverage **0.035**, KL penalty **0**, and derived relevance **0.965**. It was the highest-nDCG eligible setting among 15 fully evaluated combinations on 431,517 tuning impressions. All tuning requirements passed, but the pool-KL requirement did not hold on the 376,471 November 15 reporting impressions:
+
+| Metric | Reporting baseline | Reranked | Guardrail outcome |
+| --- | ---: | ---: | --- |
+| nDCG@10 | 0.439457 | 0.438302 | Pass: 0.263% relative loss, within 2% |
+| New-item exposure | 89.1707% | 89.2423% | Pass: +0.0716 percentage points |
+| Categories/list | 4.955561 | 5.236411 | Pass: +0.280850, above +0.25 |
+| Pool KL | 0.442187 | 0.413450 | **Fail:** reduction 0.028736, below 0.03 |
+
+Teacher-cosine ILD increased from 0.590850 to 0.592673; it remains diagnostic. The pool-KL shortfall is 0.001264. The run matches the frozen selection, but it has not met every acceptance requirement. The frozen config preserves the experiment for reproduction; it does not indicate production approval.
+
+Results, thresholds, and parameters remain unchanged. Outputs share `runs/mind_large_temporal_mpnet_candidate_attention_v1/rerank/`. To reproduce:
 
 ```powershell
 python -m mindrec.cli rerank_search --config configs/mind_large_temporal_mpnet.yaml
 python -m mindrec.cli rerank_eval --config configs/mind_large_temporal_mpnet.yaml
 ```
 
-Outputs go to `runs/mind_large_temporal_mpnet_candidate_attention_v1/rerank/`.
-The checked-in config contains the selected parameters and provenance path;
-search regenerates that artifact without requiring an earlier experiment.
-If inputs or requirements change and search selects different parameters, copy
-`best_feasible` into the config and freeze them before evaluation; evaluation
-checks that the saved selection matches. See the [reranking guide](docs/reranking.md)
-for metric definitions, reproducibility details, and a concrete list example.
+November 15 was reused while refining requirements; this is a follow-up report, not an independent test. The [reranking guide](docs/reranking.md) records the selection decision, tuning and reporting metrics, and the unmet requirement.
 
 ---
 
@@ -777,21 +590,14 @@ for metric definitions, reproducibility details, and a concrete list example.
 
 - `src/mindrec/`
   - `cli.py` and `config.py`: command entry points and inherited YAML loading.
-  - `data/`: MIND parsing, datasets, feature/KG construction, item-age indexing,
-    and the recency adjustment.
-  - `models/`: the two-tower teacher, DLRM-style student, distillation, and
-    calibration modules.
-  - `pipeline/`: preprocessing, text adaptation, teacher/ranker training,
-    hard-negative mining, retrieval, evaluation, reranking, and submission.
+  - `data/`: MIND parsing, datasets, feature/KG construction, item-age indexing, and the recency adjustment.
+  - `models/`: the two-tower teacher, DLRM-style student, distillation, and calibration modules.
+  - `pipeline/`: preprocessing, text adaptation, teacher/ranker training, hard-negative mining, retrieval, evaluation, reranking, and submission.
   - `rerank/`: the deterministic greedy relevance/diversity/fairness policy.
   - `metrics/`: ranking, calibration, diversity, fairness, and slice benchmarks.
-- `configs/`: composable Large temporal, submission, MPNet, and reranker
-  experiment configs.
+- `configs/`: composable Large temporal, submission, MPNet, and reranker experiment configs.
 - `scripts/`: the promoted MPNet phase runner, KG-triples builder, and GPU check.
-- `tests/`: focused tests for adaptation, hard negatives, candidate attention,
-  taxonomy handling, reranking, recency, age, and submission integrity.
-- `docs/`: experiment registry, metric definitions, and the detailed reranking
-  workflow.
+- `tests/`: focused tests for adaptation, hard negatives, candidate attention, taxonomy handling, reranking, recency, age, and submission integrity.
+- `docs/`: experiment registry, metric definitions, and the detailed reranking workflow.
 - `notebooks/` and `images/`: evaluation-slice visualization and README figures.
-- `data/` and `runs/`: local raw/processed datasets and generated experiment
-  artifacts; neither contains the implementation itself.
+- `data/` and `runs/`: local raw/processed datasets and generated experiment artifacts; neither contains the implementation itself.

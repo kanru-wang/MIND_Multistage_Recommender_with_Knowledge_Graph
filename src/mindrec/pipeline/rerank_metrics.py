@@ -15,7 +15,7 @@ from mindrec.metrics.fairness import (
     uniform_target,
 )
 from mindrec.metrics.ranking import ndcg_from_order, recall_from_order
-from mindrec.rerank.greedy import cosine_sim_matrix, greedy_rerank
+from mindrec.rerank.greedy import greedy_rerank
 from mindrec.utils import position_bias_weights
 
 
@@ -138,7 +138,7 @@ def _metrics_for_order(
     return {
         "ndcg@k": ndcg_from_order(row.labels, order_array, k_out),
         "recall@k": recall_from_order(row.labels, order_array, k_out),
-        "ild": ild_from_similarity(cosine_sim_matrix(ranked_embeddings)),
+        "ild": ild_from_similarity(ranked_embeddings @ ranked_embeddings.T),
         "category_coverage": category_coverage(
             [category for category in ranked_categories if category != 0]
         ),
@@ -187,24 +187,18 @@ def candidate_metrics_for_impression(
     coverage_cfg: dict[str, Any],
     fairness_cfg: dict[str, Any],
     relevance_weight: float,
-    novelty_weight: float,
     coverage_weight: float,
-    novelty_sim: str,
     relevance_normalization: str,
 ) -> dict[str, float]:
     pool_order = np.argsort(-row.scores, kind="stable")[:pool_size]
     reranked = greedy_rerank(
         cand_news_id=row.cand_news_id,
         cand_scores=row.scores,
-        cand_is_new=row.cand_is_new,
         news_meta=news_meta,
-        item_teacher_emb=teacher_item[row.cand_news_idx[pool_order]],
         k_out=k_out,
         pool_size=pool_size,
         relevance_weight=relevance_weight,
-        novelty_weight=novelty_weight,
         coverage_weight=coverage_weight,
-        novelty_sim=novelty_sim,
         coverage_cfg=coverage_cfg,
         fairness_cfg=fairness_cfg,
         relevance_normalization=relevance_normalization,
@@ -241,14 +235,11 @@ def evaluate_candidate(
     metrics: dict[str, Any] = accumulator.mean()
     metrics["weights"] = {
         "relevance": kwargs["relevance_weight"],
-        "novelty": kwargs["novelty_weight"],
         "coverage": kwargs["coverage_weight"],
     }
     fairness_cfg = kwargs["fairness_cfg"]
     metrics["fairness"] = {
         "penalty_weight": float(fairness_cfg.get("penalty_weight", 0.0)),
-        "new_item_floor": float(fairness_cfg.get("new_item_floor", 0.0)),
         "category_target": fairness_cfg.get("category_target", "catalog"),
     }
-    metrics["novelty_sim"] = kwargs["novelty_sim"]
     return metrics

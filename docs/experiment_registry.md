@@ -2,6 +2,12 @@
 
 This registry names the split protocol behind each major result set. Use it before comparing metrics: runs are only comparable when their validation protocol is the same.
 
+## Configuration background
+
+`configs/mind_large_temporal_baseline.yaml` defines the temporal split and shared defaults inherited by the current MPNet temporal config. It is a configuration dependency, not a separate prerequisite run. Running it directly reproduces the random-negative baseline listed below.
+
+`mind_large_temporal_tune.yaml`, `mind_large_tune.yaml`, and the MiniLM submission configs remain available to reproduce other baselines; they are not commands in the current MPNet training path. Their protocols and results are recorded in this registry. The configs directly used by `scripts/run_mpnet_backbone.ps1` are listed in the [README training workflow](../README.md#35-build-a-mind-large-leaderboard-submission).
+
 ## Result Sets
 
 | Label | Protocol | Reference | Config | Processed data | Run artifacts | Primary eval file |
@@ -13,7 +19,7 @@ This registry names the split protocol behind each major result set. Use it befo
 | Large temporal text-adapt v1 | Adapt MiniLM on Large Temporal Train, select its update count on Large Temporal Val, and train the temporal teacher/ranker with the selected encoder. | Current repo | `configs/mind_large_temporal_text_adapt.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_v1` | `runs/mind_large_temporal_text_adapt_v1/eval/ranker_eval_val.json` |
 | Large temporal candidate-attention v1 | Reuse the text-adapt v1 teacher and replace only student mean history pooling with candidate-aware attention. | Current repo; completed | `configs/mind_large_temporal_candidate_attention.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_candidate_attention_v1` | `runs/mind_large_temporal_text_adapt_candidate_attention_v1/eval/ranker_eval_val.json` |
 | Large temporal MPNet backbone v1 | Replace MiniLM with adapted `all-mpnet-base-v2` in the selected candidate-attention pipeline; keep the temporal split, objective, negative policy, and downstream settings fixed. | Completed; promoted to Phase 3 | `configs/mind_large_temporal_mpnet.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_mpnet_candidate_attention_v1` | `runs/mind_large_temporal_mpnet_candidate_attention_v1/eval/ranker_eval_val.json` |
-| Large temporal MPNet reranker | Highest full-tuning nDCG subject to aggregate guardrails on Nov 14; frozen Nov-15 follow-up. | Completed; all four guardrails pass; reporting split reused | `configs/mind_large_temporal_mpnet.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_mpnet_candidate_attention_v1/rerank` | `runs/mind_large_temporal_mpnet_candidate_attention_v1/rerank/rerank_eval.json` |
+| Large temporal MPNet reranker | Highest full-tuning nDCG subject to aggregate guardrails on Nov 14; frozen Nov-15 follow-up. | Evaluated; 3/4 reporting guardrails pass (pool KL fails) | `configs/mind_large_temporal_mpnet.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_mpnet_candidate_attention_v1/rerank` | `runs/mind_large_temporal_mpnet_candidate_attention_v1/rerank/rerank_eval.json` |
 | Original Large submission MPNet candidate attention + recency | Continue selected MPNet on Large Temporal Val, then fixed four-epoch teacher, fixed two-epoch candidate-attention ranker, and recency `alpha=0.02`. | Completed historical baseline, Large Test AUC `0.6948` | `configs/mind_large_submission_mpnet_candidate_attention_recency_alpha_002.yaml` | `data/processed/MINDlarge_submission` | `runs/mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1` | `runs/mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.zip` |
 | Large MPNet + MiniLM rank ensemble | Select a weighted-Borda MPNet weight on Nov 14, freeze it, report on Nov 15, then fuse the two recency-adjusted hidden-test rank ZIPs. | Completed; user-reported Large Test AUC `0.6960` | `configs/mind_large_ensemble_mpnet_minilm.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_ensemble_mpnet_minilm_rank_v1` | `runs/mind_large_ensemble_mpnet_minilm_rank_v1/ensemble/search.json` |
 | Improved MPNet (lr=1e-5) + MiniLM rank ensemble | Retune the Borda weight using the promoted temporal MPNet from `31ab682`, then fuse its maximum-data ZIP with the same selected MiniLM. | Completed; best reported Large Test AUC `0.6972`; selected 75/25 | `configs/mind_large_ensemble_mpnet_p1_minilm.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1` | `runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/ensemble/search.json` |
@@ -27,12 +33,7 @@ This registry names the split protocol behind each major result set. Use it befo
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | 807,988 | 4 | 1 | 0.646597 | 0.304210 | 0.330920 | 0.393785 |
 
-This run trains on `MINDlarge_train` impressions before Nov 14 and evaluates
-the full validation window formed from the Nov 14 tail of `MINDlarge_train`
-plus all of `MINDlarge_dev` on Nov 15. The teacher stopped at epoch 6 and
-selected epoch 4; the ranker stopped at epoch 3 and selected epoch 1. These are
-full impression-ranking metrics from `ranker_eval_val.json`; the ranker's
-sampled-pair early-stopping AUC is a different quantity.
+This run trains on `MINDlarge_train` impressions before Nov 14 and evaluates the full validation window formed from the Nov 14 tail of `MINDlarge_train` plus all of `MINDlarge_dev` on Nov 15. The teacher stopped at epoch 6 and selected epoch 4; the ranker stopped at epoch 3 and selected epoch 1. These are full impression-ranking metrics from `ranker_eval_val.json`; the ranker's sampled-pair early-stopping AUC is a different quantity.
 
 ## Latest Completed Large Temporal Hard-Negative V4
 
@@ -42,28 +43,15 @@ This result uses the same 807,988 validation impressions as the baseline.
 | ---: | ---: | ---: | ---: |
 | 0.654199 | 0.304433 | 0.331107 | 0.394609 |
 
-V4 uses `configs/mind_large_temporal_tune.yaml`. Its zero-history groups use
-four random negatives; cold users with usable history use one teacher-hard
-plus three random negatives.
+V4 uses `configs/mind_large_temporal_tune.yaml`. Its zero-history groups use four random negatives; cold users with usable history use one teacher-hard plus three random negatives.
 
-The previously recorded `0.645785` AUC belongs to the separate
-`mind_large_temporal_hard_neg_v4_ranker_lr_3em04` run, not the canonical
-`mind_large_temporal_hard_neg_v4` artifact.
+The previously recorded `0.645785` AUC belongs to the separate `mind_large_temporal_hard_neg_v4_ranker_lr_3em04` run, not the canonical `mind_large_temporal_hard_neg_v4` artifact.
 
 ## Completed MiniLM Text Adaptation V1
 
-Phase 1 adapted `sentence-transformers/all-MiniLM-L6-v2` on Large Temporal
-Train and evaluated the raw history-mean/candidate-cosine objective every 1,000
-optimizer updates on 785,325 evaluable Large Temporal Val impressions. The
-base encoder scored `0.623156` AUC. Update 6,000 was selected at `0.670009`
-AUC; update 7,000 reached `0.670094`, but its `+0.000084` change did not meet
-the configured `1e-4` minimum improvement. Early stopping fired at update
-9,000.
+Phase 1 adapted `sentence-transformers/all-MiniLM-L6-v2` on Large Temporal Train and evaluated the raw history-mean/candidate-cosine objective every 1,000 optimizer updates on 785,325 evaluable Large Temporal Val impressions. The base encoder scored `0.623156` AUC. Update 6,000 was selected at `0.670009` AUC; update 7,000 reached `0.670094`, but its `+0.000084` change did not meet the configured `1e-4` minimum improvement. Early stopping fired at update 9,000.
 
-Phase 2 froze the selected update-6,000 encoder and trained the temporal
-teacher/ranker. These metrics use the full 807,988-impression Large Temporal
-Val evaluation and are directly comparable with the canonical frozen-MiniLM
-hard-negative v4 run:
+Phase 2 froze the selected update-6,000 encoder and trained the temporal teacher/ranker. These metrics use the full 807,988-impression Large Temporal Val evaluation and are directly comparable with the canonical frozen-MiniLM hard-negative v4 run:
 
 | Model | AUC | MRR | nDCG@5 | nDCG@10 |
 | --- | ---: | ---: | ---: | ---: |
@@ -71,103 +59,43 @@ hard-negative v4 run:
 | Adapted MiniLM v1 | 0.664328 | 0.311520 | 0.341145 | 0.403632 |
 | Absolute gain | +0.010130 | +0.007087 | +0.010038 | +0.009023 |
 
-Phase 3 loaded the selected update-6,000 encoder and continued adaptation for
-exactly 2,000 updates on Large Temporal Val with a fresh optimizer. The final
-encoder therefore records 8,000 cumulative staged updates. The maximum-data
-teacher and ranker were then fitted on `MINDlarge_train + MINDlarge_dev` with
-four teacher epochs and one ranker epoch. No labeled local validation split was
-retained for this final fit.
+Phase 3 loaded the selected update-6,000 encoder and continued adaptation for exactly 2,000 updates on Large Temporal Val with a fresh optimizer. The final encoder therefore records 8,000 cumulative staged updates. The maximum-data teacher and ranker were then fitted on `MINDlarge_train + MINDlarge_dev` with four teacher epochs and one ranker epoch. No labeled local validation split was retained for this final fit.
 
 ## Controlled MPNet Backbone Experiment
 
-`configs/mind_large_temporal_mpnet.yaml` changes the selected temporal pipeline's
-text backbone to `sentence-transformers/all-mpnet-base-v2`. It otherwise retains
-the natural Large Temporal Train/Val distribution, text-adaptation loss and
-early stopping, cold-user 1-hard/3-random policy, teacher settings, and the
-candidate-aware ranker. The 768-dimensional encoder is inferred at runtime;
-the teacher still projects to the fixed 384-dimensional hidden space.
+`configs/mind_large_temporal_mpnet.yaml` changes the selected temporal pipeline's text backbone to `sentence-transformers/all-mpnet-base-v2`. It otherwise retains the natural Large Temporal Train/Val distribution, text-adaptation loss and early stopping, cold-user 1-hard/3-random policy, teacher settings, and the candidate-aware ranker. The 768-dimensional encoder is inferred at runtime; the teacher still projects to the fixed 384-dimensional hidden space.
 
-The tuned MiniLM configured training schedule is retained: physical batch size 16,
-four gradient-accumulation steps, up to 10,000 optimizer updates, and validation
-every 1,000 updates. On the 6 GB target GPU, MPNet instead saves memory through
-FP16 autocasting, whole-encoder activation checkpointing, and chunked article
-encoding. Article embeddings are reassembled before the loss, so batch
-membership and the 16-example in-batch-negative set remain unchanged. Offline
-text-encoding batches are reduced to 64 independently of training.
+The tuned MiniLM configured training schedule is retained: physical batch size 16, four gradient-accumulation steps, up to 10,000 optimizer updates, and validation every 1,000 updates. On the 6 GB target GPU, MPNet instead saves memory through FP16 autocasting, whole-encoder activation checkpointing, and chunked article encoding. Article embeddings are reassembled before the loss, so batch membership and the 16-example in-batch-negative set remain unchanged. Offline text-encoding batches are reduced to 64 independently of training.
 
-Phase 1 selected update 9,000. The full Phase 2 evaluation produced AUC
-`0.688880`, MRR `0.336397`, nDCG@5 `0.371215`, and nDCG@10 `0.431291` across
-807,988 impressions, exceeding the matched MiniLM candidate-attention AUC of
-`0.671593`. This passed the promotion gate.
+Phase 1 selected update 9,000. The full Phase 2 evaluation produced AUC `0.688880`, MRR `0.336397`, nDCG@5 `0.371215`, and nDCG@10 `0.431291` across 807,988 impressions, exceeding the matched MiniLM candidate-attention AUC of `0.671593`. This passed the promotion gate.
 
-The original `lr=2e-5` Phase 3 workflow on this branch is implemented by
-`scripts/run_mpnet_backbone.ps1 -Phase phase3`. It is locked to the selected
-update-9,000 encoder and exactly 2,000 successful continuation optimizer updates
-on Large Temporal Val (11,000 cumulative), followed by four fixed teacher epochs
-and two fixed maximum-data candidate-attention ranker epochs. It retains
-`lr=1e-4`, `weight_decay=3e-5`, four attention heads, zero attention dropout,
-full representation distillation, and submission recency `alpha=0.02`. The
-workflow verifies temporal results and stage metadata before reusing artifacts;
-all MPNet artifacts are isolated from the MiniLM submission runs.
+The original `lr=2e-5` Phase 3 workflow on this branch is implemented by `scripts/run_mpnet_backbone.ps1 -Phase phase3`. It is locked to the selected update-9,000 encoder and exactly 2,000 successful continuation optimizer updates on Large Temporal Val (11,000 cumulative), followed by four fixed teacher epochs and two fixed maximum-data candidate-attention ranker epochs. It retains `lr=1e-4`, `weight_decay=3e-5`, four attention heads, zero attention dropout, full representation distillation, and submission recency `alpha=0.02`. The workflow verifies temporal results and stage metadata before reusing artifacts; all MPNet artifacts are isolated from the MiniLM submission runs.
 
-The completed continuation used the locked batch size 16 and four accumulation
-steps. Four FP16-overflow attempts were skipped and replaced, so the artifact
-records exactly 2,000 successful optimizer updates (11,000 cumulative), 8,016
-microbatches, and 128,256 examples versus nominal counts of 8,000 and 128,000.
-The configured update count and logical batch construction therefore remained
-unchanged.
+The completed continuation used the locked batch size 16 and four accumulation steps. Four FP16-overflow attempts were skipped and replaced, so the artifact records exactly 2,000 successful optimizer updates (11,000 cumulative), 8,016 microbatches, and 128,256 examples versus nominal counts of 8,000 and 128,000. The configured update count and logical batch construction therefore remained unchanged.
 
-The maximum-data teacher completed four fixed epochs with 768-dimensional text
-features and a 384-dimensional teacher space. The ranker completed two fixed
-epochs, loaded `mind_large_submission_mpnet_v1`, used candidate attention and
-the full representation-distillation target, and processed 19,062,280 selected
-pairs. The submission used recency `alpha=0.02` and exact-rank guarding for
-79,898 impressions.
+The maximum-data teacher completed four fixed epochs with 768-dimensional text features and a 384-dimensional teacher space. The ranker completed two fixed epochs, loaded `mind_large_submission_mpnet_v1`, used candidate attention and the full representation-distillation target, and processed 19,062,280 selected pairs. The submission used recency `alpha=0.02` and exact-rank guarding for 79,898 impressions.
 
-The competition platform reported Large Test AUC **`0.6948`** on 2026-08-30.
-This is `+0.0079` over the selected MiniLM candidate-attention champion
-(`0.6869`), `+0.0100` over text-adapt v1 (`0.6848`), and `+0.0224` over frozen
-MiniLM (`0.6724`). The matched temporal MPNet gain was `+0.017287`; approximately
-46% of that AUC advantage transferred to the hidden test set. Hidden-test MRR
-and nDCG values were not reported, so no claims are made for those metrics.
+The competition platform reported Large Test AUC **`0.6948`** on 2026-08-30. This is `+0.0079` over the selected MiniLM candidate-attention champion (`0.6869`), `+0.0100` over text-adapt v1 (`0.6848`), and `+0.0224` over frozen MiniLM (`0.6724`). The matched temporal MPNet gain was `+0.017287`; approximately 46% of that AUC advantage transferred to the hidden test set. Hidden-test MRR and nDCG values were not reported, so no claims are made for those metrics.
 
-Local structural validation confirmed one `prediction.txt` entry in the ZIP,
-2,370,727 sequential impression IDs from 1 through 2,370,727, valid sampled
-rank permutations, a clean ZIP CRC, and an exact hash match between zipped and
-external prediction text. The prediction SHA-256 is
-`1705ef49e0ecec2492cd5d25890bc566b1ce9f0c98d07630c533f966013cc68c`.
+Local structural validation confirmed one `prediction.txt` entry in the ZIP, 2,370,727 sequential impression IDs from 1 through 2,370,727, valid sampled rank permutations, a clean ZIP CRC, and an exact hash match between zipped and external prediction text. The prediction SHA-256 is `1705ef49e0ecec2492cd5d25890bc566b1ce9f0c98d07630c533f966013cc68c`.
 
 ## MPNet Reranking
 
-The current reranker selects the highest-nDCG eligible setting from an 18-point
-grid evaluated on all 431,517 November 14 impressions. Sixteen settings qualify.
-Selected weights are `0.95 / 0.025 / 0.025`, penalty `0.05`, and soft floor `0.40`.
-On 376,471 November 15 impressions it loses 0.291% relative nDCG, gains 0.2269
-percentage points of new-item exposure and 0.254344 categories/list, and reduces
-pool KL by 0.034026. All four configured requirements pass. November 15 was
-reused while refining requirements, so this is a follow-up result.
-See [reranking](reranking.md) for the method, results, and reproduction commands.
+The reranker selects the highest full-tuning nDCG@10 subject to aggregate requirements: at most 2% relative nDCG loss, non-decreasing new-item exposure, at least +0.25 mean category coverage, and at least 0.03 pool-KL reduction. The score combines relevance, category/entity coverage, and pool KL. There is no L1 or new-item shortfall penalty and no ILD guardrail.
+
+The final 15-setting search evaluated all combinations on 431,517 tuning impressions; 11 qualified. The frozen winner uses coverage 0.035 and KL penalty 0 (derived relevance 0.965), with nDCG@10 0.423648 and 0.122% relative loss. Category coverage gains 0.299184, new-item exposure gains 0.217670 percentage points, and pool KL decreases by 0.030268. All four tuning guardrails pass; the KL margin is narrow. Teacher-cosine ILD remains diagnostic only.
+
+Reporting is complete on 376,471 November 15 impressions. nDCG@10 decreased from 0.439457 to 0.438302 (0.262693% relative loss); category coverage gained 0.280850 and new-item exposure gained 0.071620 percentage points. These three guardrails pass. Pool KL decreased from 0.442187 to 0.413450, an improvement of 0.028736 that **fails the required 0.03** by 0.001264. Teacher-cosine ILD increased by 0.001823 as a diagnostic result.
+
+The frozen config and measured artifacts remain unchanged for reproduction; the result is not approved under all reporting requirements. November 15 was reused while refining requirements and remains follow-up reporting. See [reranking](reranking.md) for the formula, grid process, and commands.
 
 ## MPNet Ranker Experiments
 
 ### Rejected controlled student-width 56 -> 96 experiment
 
-This ranker-only experiment reused the selected temporal MPNet encoder and
-384-dimensional teacher and changed the learned student width from 56 to 96.
-The corresponding full student representation grew from 168 to 288 dimensions,
-while the full teacher target remained 768-dimensional. Data, hard/random
-negative selection, batch size, learning rate, weight decay, ID width,
-bottom/top MLPs, semantic feed-forward settings, candidate attention, full
-distillation weights, epoch cap, and early-stopping rule were unchanged.
+This ranker-only experiment reused the selected temporal MPNet encoder and 384-dimensional teacher and changed the learned student width from 56 to 96. The corresponding full student representation grew from 168 to 288 dimensions, while the full teacher target remained 768-dimensional. Data, hard/random negative selection, batch size, learning rate, weight decay, ID width, bottom/top MLPs, semantic feed-forward settings, candidate attention, full distillation weights, epoch cap, and early-stopping rule were unchanged.
 
-The resolved training data was identical to width 56: 12,990,042 selected rows
-per epoch, including 10,277,430 negatives (219,513 hard and 10,057,917 random),
-at batch size 1,024. This retained 12,686 batches per epoch and the configured
-eight-epoch maximum of 101,488 batches. The unchanged early-stopping rule chose
-epoch 5 and stopped after epoch 7 for width 96 (88,802 completed batches),
-versus epoch 4 and epoch 6 for width 56 (76,116 completed batches). Thus the
-configured schedule was unchanged, while the metric-driven completed count
-differed by one epoch.
+The resolved training data was identical to width 56: 12,990,042 selected rows per epoch, including 10,277,430 negatives (219,513 hard and 10,057,917 random), at batch size 1,024. This retained 12,686 batches per epoch and the configured eight-epoch maximum of 101,488 batches. The unchanged early-stopping rule chose epoch 5 and stopped after epoch 7 for width 96 (88,802 completed batches), versus epoch 4 and epoch 6 for width 56 (76,116 completed batches). Thus the configured schedule was unchanged, while the metric-driven completed count differed by one epoch.
 
 Full 807,988-impression Large Temporal Val results were:
 
@@ -177,29 +105,15 @@ Full 807,988-impression Large Temporal Val results were:
 | MPNet student width 96 | 0.688316 | 0.329523 | 0.362792 | 0.424056 |
 | Width-96 delta | -0.000564 | -0.006873 | -0.008423 | -0.007235 |
 
-Width 96 marginally improved the sampled-pair early-stopping AUC
-(`0.687490` versus `0.686866`) but regressed every full-impression headline
-metric. This indicates that the extra capacity fitted the sampled pairwise
-objective better without improving listwise ranking.
+Width 96 marginally improved the sampled-pair early-stopping AUC (`0.687490` versus `0.686866`) but regressed every full-impression headline metric. This indicates that the extra capacity fitted the sampled pairwise objective better without improving listwise ranking.
 
-The time-period AUC deltas were `+0.007366`, `-0.001730`, `+0.001355`, and
-`-0.009245` from the earliest to latest quarter. The severe latest-period
-regression was especially unfavorable for hidden-test transfer. Width 96 also
-improved the 22,663 zero-history impressions, but MRR and nDCG regressed for
-the much larger history-bearing population.
+The time-period AUC deltas were `+0.007366`, `-0.001730`, `+0.001355`, and `-0.009245` from the earliest to latest quarter. The severe latest-period regression was especially unfavorable for hidden-test transfer. Width 96 also improved the 22,663 zero-history impressions, but MRR and nDCG regressed for the much larger history-bearing population.
 
-The promotion rule required at least `+0.001` over width 56, or AUC
-`0.689879567`. Width 96 instead trailed width 56 and missed that threshold by
-`0.001563523`. Phase 3 was therefore not run, the width-56 MPNet submission
-remained the `0.6948` champion, and the experimental config/script/code were
-removed. The local rejected-run metrics remain under
-`runs/mind_large_temporal_mpnet_candidate_attention_student_width_96_v1`.
+The promotion rule required at least `+0.001` over width 56, or AUC `0.689879567`. Width 96 instead trailed width 56 and missed that threshold by `0.001563523`. Phase 3 was therefore not run, the width-56 MPNet submission remained the `0.6948` champion, and the experimental config/script/code were removed. The local rejected-run metrics remain under `runs/mind_large_temporal_mpnet_candidate_attention_student_width_96_v1`.
 
 ### Rejected Phase 3 replay experiment
 
-A follow-up Phase 3 experiment tested whether replaying older temporal-training
-examples would reduce forgetting during the 2,000-update continuation. It used
-the same Phase 1 update-6,000 checkpoint and an exact 20-sample mixture cycle:
+A follow-up Phase 3 experiment tested whether replaying older temporal-training examples would reduce forgetting during the 2,000-update continuation. It used the same Phase 1 update-6,000 checkpoint and an exact 20-sample mixture cycle:
 
 | Continuation source | Fraction | Samples |
 | --- | ---: | ---: |
@@ -208,27 +122,13 @@ the same Phase 1 update-6,000 checkpoint and an exact 20-sample mixture cycle:
 | Large Temporal Train, Nov 12 | 5% | 6,400 |
 | **Total** | **100%** | **128,000** |
 
-The maximum-data teacher/ranker and post-hoc recency setting remained fixed at
-four teacher epochs, one ranker epoch, and `alpha=0.02`. Large Test AUC fell to
-`0.6800`, which is `-0.0048` versus the pure-Temporal-Val Phase 3 result of
-`0.6848` (but still `+0.0076` versus the frozen-MiniLM baseline).
+The maximum-data teacher/ranker and post-hoc recency setting remained fixed at four teacher epochs, one ranker epoch, and `alpha=0.02`. Large Test AUC fell to `0.6800`, which is `-0.0048` versus the pure-Temporal-Val Phase 3 result of `0.6848` (but still `+0.0076` versus the frozen-MiniLM baseline).
 
-The replay data had already been seen during Phase 1, while it displaced 15% of
-the newer Nov 14-15 continuation samples. The result therefore provides no
-evidence that this run needed protection from catastrophic forgetting and is
-consistent with older replay weakening adaptation to the later target period.
-The replay implementation and configuration were discarded; it is a rejected
-result, not a supported current pipeline. Historical local artifacts, if kept,
-are under `runs/mind_large_submission_text_adapt_replay_85_10_5_v1` and the
-submitted ZIP is under
-`runs/mind_large_submission_text_adapt_replay_85_10_5_recency_alpha_002_v1/submission/prediction.zip`.
+The replay data had already been seen during Phase 1, while it displaced 15% of the newer Nov 14-15 continuation samples. The result therefore provides no evidence that this run needed protection from catastrophic forgetting and is consistent with older replay weakening adaptation to the later target period. The replay implementation and configuration were discarded; it is a rejected result, not a supported current pipeline. Historical local artifacts, if kept, are under `runs/mind_large_submission_text_adapt_replay_85_10_5_v1` and the submitted ZIP is under `runs/mind_large_submission_text_adapt_replay_85_10_5_recency_alpha_002_v1/submission/prediction.zip`.
 
 ### Rejected Phase 3 Nov 15 overweight experiment
 
-A second follow-up kept the Phase 1 update-6,000 checkpoint, 2,000 continuation
-updates, learning rate, hard-negative policy, and downstream pipeline fixed. It
-used only Large Temporal Val but changed its clicked-positive sample mix with
-an exact 20-sample cycle:
+A second follow-up kept the Phase 1 update-6,000 checkpoint, 2,000 continuation updates, learning rate, hard-negative policy, and downstream pipeline fixed. It used only Large Temporal Val but changed its clicked-positive sample mix with an exact 20-sample cycle:
 
 | Continuation date | Fraction | Samples |
 | --- | ---: | ---: |
@@ -236,127 +136,43 @@ an exact 20-sample cycle:
 | Nov 15 | 55% | 70,400 |
 | **Total** | **100%** | **128,000** |
 
-The maximum-data teacher/ranker again used four teacher epochs and one ranker
-epoch, followed by post-hoc recency `alpha=0.02`. Large Test AUC was `0.6796`,
-which is `-0.0052` versus the natural Large Temporal Val mixture at `0.6848`
-(but still `+0.0072` versus the frozen-MiniLM baseline).
+The maximum-data teacher/ranker again used four teacher epochs and one ranker epoch, followed by post-hoc recency `alpha=0.02`. Large Test AUC was `0.6796`, which is `-0.0052` versus the natural Large Temporal Val mixture at `0.6848` (but still `+0.0072` versus the frozen-MiniLM baseline).
 
-The earlier observation that adaptation improved Nov 15 evaluation more than
-Nov 14 did not imply that Nov 15 examples deserved greater training weight.
-Overweighting Nov 15 displaced Nov 14 topical/source diversity and did not
-generalize to the later hidden test period. Together with the older-data replay
-result, this provides evidence against further manual date-mixture sweeps; keep
-the natural shuffled Large Temporal Val distribution. The implementation and
-configuration were discarded. Historical local artifacts, if kept, are under
-`runs/mind_large_submission_text_adapt_nov15_weighted_v1`, and the submitted
-ZIP is under
-`runs/mind_large_submission_text_adapt_nov15_weighted_recency_alpha_002_v1/submission/prediction.zip`.
+The earlier observation that adaptation improved Nov 15 evaluation more than Nov 14 did not imply that Nov 15 examples deserved greater training weight. Overweighting Nov 15 displaced Nov 14 topical/source diversity and did not generalize to the later hidden test period. Together with the older-data replay result, this provides evidence against further manual date-mixture sweeps; keep the natural shuffled Large Temporal Val distribution. The implementation and configuration were discarded. Historical local artifacts, if kept, are under `runs/mind_large_submission_text_adapt_nov15_weighted_v1`, and the submitted ZIP is under `runs/mind_large_submission_text_adapt_nov15_weighted_recency_alpha_002_v1/submission/prediction.zip`.
 
 ### Rejected Phase 3 2,500-update experiment
 
-A third follow-up changed only the natural Large Temporal Val continuation
-length. It started again from the Phase 1 update-6,000 checkpoint, retained the
-globally shuffled unweighted validation distribution and `lr=2e-5`, and trained
-for 2,500 updates (160,000 samples) instead of 2,000. The resulting encoder
-recorded 8,500 cumulative staged updates. The maximum-data teacher/ranker and
-post-hoc recency settings remained fixed at four teacher epochs, one ranker
-epoch, and `alpha=0.02`.
+A third follow-up changed only the natural Large Temporal Val continuation length. It started again from the Phase 1 update-6,000 checkpoint, retained the globally shuffled unweighted validation distribution and `lr=2e-5`, and trained for 2,500 updates (160,000 samples) instead of 2,000. The resulting encoder recorded 8,500 cumulative staged updates. The maximum-data teacher/ranker and post-hoc recency settings remained fixed at four teacher epochs, one ranker epoch, and `alpha=0.02`.
 
-Large Test AUC was `0.6842`, which is `-0.0006` versus the then-current
-2,000-update text-adapt v1 result at `0.6848` (and `+0.0118` versus the
-frozen-MiniLM baseline). Downstream
-training losses improved slightly despite the hidden-test regression: teacher
-loss moved from `6.139574` to `6.138398`, and ranker loss from `0.834028` to
-`0.833814`. This is consistent with mild overfitting or overshooting during the
-additional 500 constant-learning-rate updates. Keep 2,000 Phase 3 updates; do
-not extend the continuation to 2,500 at `lr=2e-5`.
+Large Test AUC was `0.6842`, which is `-0.0006` versus the then-current 2,000-update text-adapt v1 result at `0.6848` (and `+0.0118` versus the frozen-MiniLM baseline). Downstream training losses improved slightly despite the hidden-test regression: teacher loss moved from `6.139574` to `6.138398`, and ranker loss from `0.834028` to `0.833814`. This is consistent with mild overfitting or overshooting during the additional 500 constant-learning-rate updates. Keep 2,000 Phase 3 updates; do not extend the continuation to 2,500 at `lr=2e-5`.
 
-The implementation and configuration were discarded. Historical local
-artifacts, if kept, are under
-`runs/mind_large_submission_text_adapt_updates_2500_v1`, and the submitted ZIP
-is under
-`runs/mind_large_submission_text_adapt_updates_2500_recency_alpha_002_v1/submission/prediction.zip`.
+The implementation and configuration were discarded. Historical local artifacts, if kept, are under `runs/mind_large_submission_text_adapt_updates_2500_v1`, and the submitted ZIP is under `runs/mind_large_submission_text_adapt_updates_2500_recency_alpha_002_v1/submission/prediction.zip`.
 
 ### Rejected Phase 3 teacher-guided hard-negative experiment
 
-A fourth follow-up changed only Phase 3 adaptation hard-negative scoring. It
-loaded the selected Phase 2 teacher at epoch 4 and used its frozen projected
-item vectors plus transformer/attention history representation to score each
-sampled negative pool. The Phase 1 update-6,000 source, natural shuffled Large
-Temporal Val, 2,000 updates, `lr=2e-5`, cold-user-only policy, hard fraction
-`0.25`, pool size `20`, consistency guard, and downstream pipeline remained
-fixed. MiniLM still optimized the original history-mean/clicked-article
-contrastive objective.
+A fourth follow-up changed only Phase 3 adaptation hard-negative scoring. It loaded the selected Phase 2 teacher at epoch 4 and used its frozen projected item vectors plus transformer/attention history representation to score each sampled negative pool. The Phase 1 update-6,000 source, natural shuffled Large Temporal Val, 2,000 updates, `lr=2e-5`, cold-user-only policy, hard fraction `0.25`, pool size `20`, consistency guard, and downstream pipeline remained fixed. MiniLM still optimized the original history-mean/clicked-article contrastive objective.
 
-Large Test AUC was `0.6835`, which is `-0.0013` versus the then-current
-snapshot-mined text-adapt v1 result at `0.6848` (and `+0.0111` versus the
-frozen-MiniLM baseline). The
-teacher changed hard-negative identity rather than quantity: both runs mined
-11,809 groups, while the teacher-guided run selected 10,632 hard negatives
-versus 10,635 for the reference run. Its consistency guard rejected 63,876 of
-177,471 scored pool negatives because the teacher placed them above the
-clicked positive.
+Large Test AUC was `0.6835`, which is `-0.0013` versus the then-current snapshot-mined text-adapt v1 result at `0.6848` (and `+0.0111` versus the frozen-MiniLM baseline). The teacher changed hard-negative identity rather than quantity: both runs mined 11,809 groups, while the teacher-guided run selected 10,632 hard negatives versus 10,635 for the reference run. Its consistency guard rejected 63,876 of 177,471 scored pool negatives because the teacher placed them above the clicked positive.
 
-The likely problem was objective/representation mismatch. The teacher judged
-difficulty with learned attention and projected item vectors, but the MiniLM
-adaptation loss represented history with a mean of raw MiniLM vectors. A
-teacher-hard negative was therefore not necessarily a useful contrastive
-target for the representation MiniLM was actually trained to produce.
-Downstream losses were essentially unchanged (teacher `6.139544` versus
-`6.139574`; ranker `0.834134` versus `0.834028`), providing no evidence of an
-operational failure. Keep the original update-6,000 MiniLM snapshot scorer.
+The likely problem was objective/representation mismatch. The teacher judged difficulty with learned attention and projected item vectors, but the MiniLM adaptation loss represented history with a mean of raw MiniLM vectors. A teacher-hard negative was therefore not necessarily a useful contrastive target for the representation MiniLM was actually trained to produce. Downstream losses were essentially unchanged (teacher `6.139544` versus `6.139574`; ranker `0.834134` versus `0.834028`), providing no evidence of an operational failure. Keep the original update-6,000 MiniLM snapshot scorer.
 
-The implementation and configuration were discarded. Historical local
-artifacts, if kept, are under
-`runs/mind_large_submission_text_adapt_teacher_guided_v1`, and the submitted
-ZIP is under
-`runs/mind_large_submission_text_adapt_teacher_guided_recency_alpha_002_v1/submission/prediction.zip`.
+The implementation and configuration were discarded. Historical local artifacts, if kept, are under `runs/mind_large_submission_text_adapt_teacher_guided_v1`, and the submitted ZIP is under `runs/mind_large_submission_text_adapt_teacher_guided_recency_alpha_002_v1/submission/prediction.zip`.
 
 ### Rejected Phase 3 learning-rate 1.5e-5 experiment
 
-A fifth follow-up changed only the Phase 3 MiniLM learning rate from `2e-5`
-to `1.5e-5`. It retained the Phase 1 update-6,000 checkpoint, natural shuffled
-Large Temporal Val data, 2,000 continuation updates (128,000 samples), original
-snapshot-mined hard negatives, maximum-data teacher/ranker fit, and post-hoc
-recency `alpha=0.02`.
+A fifth follow-up changed only the Phase 3 MiniLM learning rate from `2e-5` to `1.5e-5`. It retained the Phase 1 update-6,000 checkpoint, natural shuffled Large Temporal Val data, 2,000 continuation updates (128,000 samples), original snapshot-mined hard negatives, maximum-data teacher/ranker fit, and post-hoc recency `alpha=0.02`.
 
-Large Test AUC was `0.6797`, which is `-0.0051` versus the then-current
-`lr=2e-5` text-adapt v1 result at `0.6848` (but still `+0.0073` versus the
-frozen-MiniLM baseline). The run
-used the intended data and artifact routing, and its sample and negative-policy
-counts matched the reference run. Its teacher loss was marginally lower (`6.139317`
-versus `6.139574`), while ranker loss was slightly worse (`0.834304` versus
-`0.834028`); neither suggests an operational failure. Compared with the
-reference submission, only 283,858 of 2,370,727 impressions (11.97%) retained
-an identical full ranking, and 1,646,229 (69.44%) retained the same top-ranked
-candidate, confirming that the learning-rate change materially propagated
-through the downstream pipeline.
+Large Test AUC was `0.6797`, which is `-0.0051` versus the then-current `lr=2e-5` text-adapt v1 result at `0.6848` (but still `+0.0073` versus the frozen-MiniLM baseline). The run used the intended data and artifact routing, and its sample and negative-policy counts matched the reference run. Its teacher loss was marginally lower (`6.139317` versus `6.139574`), while ranker loss was slightly worse (`0.834304` versus `0.834028`); neither suggests an operational failure. Compared with the reference submission, only 283,858 of 2,370,727 impressions (11.97%) retained an identical full ranking, and 1,646,229 (69.44%) retained the same top-ranked candidate, confirming that the learning-rate change materially propagated through the downstream pipeline.
 
-With a fixed 2,000-update continuation, `1.5e-5` reduces the nominal Phase 3
-update scale by 25%. The hidden-test regression is therefore more consistent
-with insufficient adaptation to the recent Nov 14-15 distribution than with
-successful overfitting control. Together with the rejected 2,500-update run,
-the evidence supports keeping `lr=2e-5` and 2,000 Phase 3 updates rather than
-continuing a constant-learning-rate or update-count sweep.
+With a fixed 2,000-update continuation, `1.5e-5` reduces the nominal Phase 3 update scale by 25%. The hidden-test regression is therefore more consistent with insufficient adaptation to the recent Nov 14-15 distribution than with successful overfitting control. Together with the rejected 2,500-update run, the evidence supports keeping `lr=2e-5` and 2,000 Phase 3 updates rather than continuing a constant-learning-rate or update-count sweep.
 
-The implementation and configuration were discarded. Historical local
-artifacts, if kept, are under
-`runs/mind_large_submission_text_adapt_lr_1p5em05_v1`, and the submitted ZIP
-is under
-`runs/mind_large_submission_text_adapt_lr_1p5em05_recency_alpha_002_v1/submission/prediction.zip`.
+The implementation and configuration were discarded. Historical local artifacts, if kept, are under `runs/mind_large_submission_text_adapt_lr_1p5em05_v1`, and the submitted ZIP is under `runs/mind_large_submission_text_adapt_lr_1p5em05_recency_alpha_002_v1/submission/prediction.zip`.
 
 ## Rejected Candidate-Attention Follow-ups
 
-All temporal results below use the same 807,988-impression validation protocol
-and retain the 4-head, zero-dropout direct candidate-attention run at
-`0.671593` AUC as the reference. Most earlier experimental implementations and
-configs were discarded; the item-only distillation config is retained so its
-negative result remains reproducible.
+All temporal results below use the same 807,988-impression validation protocol and retain the 4-head, zero-dropout direct candidate-attention run at `0.671593` AUC as the reference. Most earlier experimental implementations and configs were discarded; the item-only distillation config is retained so its negative result remains reproducible.
 
-This statement describes upstream architecture experiments. Reranking uses
-Nov 14 (`431,517` impressions) for tuning and Nov 15 (`376,471` impressions)
-for reporting. Both days were used in upstream model development, and Nov 15
-was reused while refining reranking requirements; it is not an independent test.
+This statement describes upstream architecture experiments. Reranking uses Nov 14 (`431,517` impressions) for tuning and Nov 15 (`376,471` impressions) for reporting. Both days were used in upstream model development, and Nov 15 was reused while refining reranking requirements; it is not an independent test.
 
 | Experiment | Temporal AUC | Delta vs direct | Decision |
 | --- | ---: | ---: | --- |
@@ -371,15 +187,7 @@ was reused while refining reranking requirements; it is not an independent test.
 | Learned reverse-position embeddings (`0` = newest click) | 0.672423 | +0.000830 | Mixed/rejected: AUC improved by less than 0.001, while MRR fell 0.002318, nDCG@5 fell 0.002771, and nDCG@10 fell 0.002278 |
 | Item-only representation distillation | 0.666388 | -0.005205 | Rejected; MRR fell 0.004828, nDCG@5 fell 0.006241, and nDCG@10 fell 0.005455 |
 
-The item-only representation-distillation run completed on 2026-08-27. It
-kept candidate-aware scoring, teacher-logit distillation, the teacher and data
-artifacts, optimizer schedule, and all configured loss weights unchanged. It
-replaced the joint projection from `[user_sem, item_sem, sem_fused]` to
-`[teacher_user, teacher_item]` with `item_sem -> teacher_item`; item
-representation loss also remained active for zero-history rows. The selected
-sampled-pair checkpoint moved from epoch 3 and `0.674491` AUC to epoch 2 and
-`0.671052` AUC, and the full-impression result regressed across every primary
-ranking metric:
+The item-only representation-distillation run completed on 2026-08-27. It kept candidate-aware scoring, teacher-logit distillation, the teacher and data artifacts, optimizer schedule, and all configured loss weights unchanged. It replaced the joint projection from `[user_sem, item_sem, sem_fused]` to `[teacher_user, teacher_item]` with `item_sem -> teacher_item`; item representation loss also remained active for zero-history rows. The selected sampled-pair checkpoint moved from epoch 3 and `0.674491` AUC to epoch 2 and `0.671052` AUC, and the full-impression result regressed across every primary ranking metric:
 
 | Metric | Direct candidate attention | Item-only distillation | Delta |
 | --- | ---: | ---: | ---: |
@@ -390,43 +198,15 @@ ranking metric:
 | Recall@5 | 0.489773 | 0.482717 | -0.007056 |
 | Recall@10 | 0.664185 | 0.659521 | -0.004665 |
 
-The intended cold slices did not recover: AUC changed by `-0.003285` for empty
-history, `-0.003851` for cold users, and `-0.002040` for impressions whose
-clicked item was new. Larger losses on clicked warm items (`-0.016775` AUC),
-popularity 20+ (`-0.016911`), and history length 21+ (`-0.006257`) indicate
-that removing user/fused representation supervision discarded useful signal.
-Item-only distillation still exceeded the older mean-pooling text-adapt model
-by `+0.002060` AUC, so candidate-aware pooling remains beneficial; the failed
-component is the item-only objective. This variant is not promoted to
-maximum-data training or submission, and the verified full-distillation
-candidate-attention workflow remained the selected architecture at that stage.
+The intended cold slices did not recover: AUC changed by `-0.003285` for empty history, `-0.003851` for cold users, and `-0.002040` for impressions whose clicked item was new. Larger losses on clicked warm items (`-0.016775` AUC), popularity 20+ (`-0.016911`), and history length 21+ (`-0.006257`) indicate that removing user/fused representation supervision discarded useful signal. Item-only distillation still exceeded the older mean-pooling text-adapt model by `+0.002060` AUC, so candidate-aware pooling remains beneficial; the failed component is the item-only objective. This variant is not promoted to maximum-data training or submission, and the verified full-distillation candidate-attention workflow remained the selected architecture at that stage.
 
-The reverse-position run selected epoch 3 and learned a substantial newest-click
-signal, but its gains were not stable across history lengths. Relative to direct
-attention, AUC changed by `-0.004674` for empty history, `-0.003251` for history
-length 1--4, `+0.002937` for length 5--20, and only `+0.000384` for length 21+.
-Its sampled-pair validation AUC also fell from `0.674491` to `0.672318`.
-Because the small overall impression-AUC gain came with broad top-ranking and
-short/cold-history regressions, neither the model nor a further recency-logit
-bias was promoted. The implementation and config were discarded; historical
-artifacts, if kept, are under
-`runs/mind_large_temporal_text_adapt_candidate_attention_reverse_position_v1`.
+The reverse-position run selected epoch 3 and learned a substantial newest-click signal, but its gains were not stable across history lengths. Relative to direct attention, AUC changed by `-0.004674` for empty history, `-0.003251` for history length 1--4, `+0.002937` for length 5--20, and only `+0.000384` for length 21+. Its sampled-pair validation AUC also fell from `0.674491` to `0.672318`. Because the small overall impression-AUC gain came with broad top-ranking and short/cold-history regressions, neither the model nor a further recency-logit bias was promoted. The implementation and config were discarded; historical artifacts, if kept, are under `runs/mind_large_temporal_text_adapt_candidate_attention_reverse_position_v1`.
 
-The head/dropout comparison is preserved in
-`runs/mind_large_temporal_text_adapt_candidate_attention_impression_auc_v1/tuning/candidate_attention_sweep/sweep.json`.
-The gated and four-interest evaluations remain under
-`runs/mind_large_temporal_text_adapt_gated_candidate_attention_v1` and
-`runs/mind_large_temporal_text_adapt_multi_interest_candidate_attention_v1`.
-No variant was promoted to maximum-data training. Separately, the original
-one-epoch candidate-attention maximum-data schedule tied text-adapt v1 at
-`0.6848` Large Test AUC; the selected two-epoch lower-learning-rate schedule
-superseded it at `0.6869`.
+The head/dropout comparison is preserved in `runs/mind_large_temporal_text_adapt_candidate_attention_impression_auc_v1/tuning/candidate_attention_sweep/sweep.json`. The gated and four-interest evaluations remain under `runs/mind_large_temporal_text_adapt_gated_candidate_attention_v1` and `runs/mind_large_temporal_text_adapt_multi_interest_candidate_attention_v1`. No variant was promoted to maximum-data training. Separately, the original one-epoch candidate-attention maximum-data schedule tied text-adapt v1 at `0.6848` Large Test AUC; the selected two-epoch lower-learning-rate schedule superseded it at `0.6869`.
 
 ## Rejected Historical Retrieval Experiments
 
-These experiments predate the Large temporal architecture-search protocol and
-do not have directly comparable Large temporal metrics. They are retained as
-historical evidence for the current text-only retrieval design.
+These experiments predate the Large temporal architecture-search protocol and do not have directly comparable Large temporal metrics. They are retained as historical evidence for the current text-only retrieval design.
 
 | Experiment | Change | Outcome and decision |
 | --- | --- | --- |
@@ -436,13 +216,11 @@ historical evidence for the current text-only retrieval design.
 | KG-aware retrieval score bonus | Kept candidate generation unchanged and added a small bonus when candidate entities matched or neighbored entities in the clicked history. | Did not generalize reliably; rejected. |
 | Category/subcategory prefixes in teacher text | Added category and subcategory prefixes to the teacher's article text input. | Improved teacher retrieval validation `Recall@200` in the historical Small demo but hurt downstream student-ranker quality; rejected. Keep `teacher.text.include_category_prefix = false`. |
 
-The selected architecture keeps retrieval text-only and uses KG features only
-in the downstream ranker.
+The selected architecture keeps retrieval text-only and uses KG features only in the downstream ranker.
 
 ## Additional Current Metrics
 
-Values below were read from the listed local evaluation artifacts on 2026-07-03.
-They describe completed runs, not untrained working-tree configuration changes.
+Values below were read from the listed local evaluation artifacts on 2026-07-03. They describe completed runs, not untrained working-tree configuration changes.
 
 | Label | Eval split | Impressions | Teacher best epoch | Ranker best epoch | AUC | MRR | nDCG@5 | nDCG@10 |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -451,8 +229,7 @@ They describe completed runs, not untrained working-tree configuration changes.
 | Large temporal hard-negative v3 | val | 807,988 | 4 (reused) | 1 | 0.6498 | 0.3082 | 0.3344 | 0.3969 |
 | Small temporal | val | 103,422 | 1 | 3 | 0.6297 | 0.2995 | 0.3263 | 0.3867 |
 
-The hard-negative v3 run applied 1 teacher-hard plus 3 random negatives to all cold
-users, including zero-history groups.
+The hard-negative v3 run applied 1 teacher-hard plus 3 random negatives to all cold users, including zero-history groups.
 
 ## Failed Trend Experiments
 
@@ -484,86 +261,30 @@ users, including zero-history groups.
 | Rejected teacher-guided negatives | Phase 1 update 6,000 + 2,000 teacher-mined Phase 3 updates | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6835 | 2,370,727 | `runs/mind_large_submission_text_adapt_teacher_guided_recency_alpha_002_v1/submission/prediction.zip` |
 | Rejected Phase 3 `lr=1.5e-5` | Phase 1 update 6,000 + 2,000 lower-learning-rate Phase 3 updates | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6797 | 2,370,727 | `runs/mind_large_submission_text_adapt_lr_1p5em05_recency_alpha_002_v1/submission/prediction.zip` |
 
-The adapted-text submission first improved Large Test AUC from `0.6724` to
-`0.6848` (`+0.0124`). Candidate-aware pooling then improved matched temporal
-validation AUC from `0.664328` to `0.671593`. Its original one-epoch
-maximum-data schedule remained at `0.6848`, while transferring the selected
-`lr=1e-4`, `weight_decay=3e-5` schedule for two maximum-data epochs reached
-**`0.6869`**. Original MPNet then raised Large Test AUC to **`0.6948`**. That
-historical model gained `+0.0079` over selected candidate-attention MiniLM, `+0.0100`
-over text-adapt v1, and `+0.0224` over the frozen-MiniLM baseline.
+The adapted-text submission first improved Large Test AUC from `0.6724` to `0.6848` (`+0.0124`). Candidate-aware pooling then improved matched temporal validation AUC from `0.664328` to `0.671593`. Its original one-epoch maximum-data schedule remained at `0.6848`, while transferring the selected `lr=1e-4`, `weight_decay=3e-5` schedule for two maximum-data epochs reached **`0.6869`**. Original MPNet then raised Large Test AUC to **`0.6948`**. That historical model gained `+0.0079` over selected candidate-attention MiniLM, `+0.0100` over text-adapt v1, and `+0.0224` over the frozen-MiniLM baseline.
 
-The current best single model is the `lr=1e-5` MPNet from `31ab682`, at
-`0.6960`; the original MPNet+MiniLM ensemble independently achieved `0.6960`.
-The improved-MPNet+MiniLM ensemble is now the best reported submission at
-**`0.6972`**, gaining `+0.0012` over both of those results.
+The current best single model is the `lr=1e-5` MPNet from `31ab682`, at `0.6960`; the original MPNet+MiniLM ensemble independently achieved `0.6960`. The improved-MPNet+MiniLM ensemble is now the best reported submission at **`0.6972`**, gaining `+0.0012` over both of those results.
 
-The original rank-only ensemble selected 75% MPNet and 25% MiniLM on the
-Nov 14 `rerank_tune` view. Mean impression AUC increased from MPNet's
-`0.693301` to `0.694412` (`+0.001111`). With that weight frozen, Nov 15 AUC
-increased from `0.683811` to `0.684632` (`+0.000820`). Nov 15 MRR and nDCG were
-essentially flat but slightly lower, so this is specifically an AUC-targeted
-leaderboard candidate. The two hidden rank archives agree on the top candidate
-for only `49.30%` of impressions, providing useful model diversity. The output
-ZIP and hashes are recorded under `runs/mind_large_ensemble_mpnet_minilm_rank_v1`;
-its user-reported hidden Large Test AUC is `0.6960`.
+The original rank-only ensemble selected 75% MPNet and 25% MiniLM on the Nov 14 `rerank_tune` view. Mean impression AUC increased from MPNet's `0.693301` to `0.694412` (`+0.001111`). With that weight frozen, Nov 15 AUC increased from `0.683811` to `0.684632` (`+0.000820`). Nov 15 MRR and nDCG were essentially flat but slightly lower, so this is specifically an AUC-targeted leaderboard candidate. The two hidden rank archives agree on the top candidate for only `49.30%` of impressions, providing useful model diversity. The output ZIP and hashes are recorded under `runs/mind_large_ensemble_mpnet_minilm_rank_v1`; its user-reported hidden Large Test AUC is `0.6960`.
 
-The follow-up config `configs/mind_large_ensemble_mpnet_p1_minilm.yaml` uses
-the improved MPNet from commit `31ab682` (`feature/lr_sweep_2`) and the same
-MiniLM member. The temporal checkpoint is `mind_large_temporal_mpnet_p1_promoted`;
-the hidden-test member is `mind_large_submission_mpnet_p1_output`. Search and
-submission generation are complete. The independent Nov 14 search selected
-75% improved MPNet and 25% MiniLM from the 0.00--1.00 grid (step 0.05), then
-froze that choice before the Nov 15 report:
+The follow-up config `configs/mind_large_ensemble_mpnet_p1_minilm.yaml` uses the improved MPNet from commit `31ab682` (`feature/lr_sweep_2`) and the same MiniLM member. The temporal checkpoint is `mind_large_temporal_mpnet_p1_promoted`; the hidden-test member is `mind_large_submission_mpnet_p1_output`. Search and submission generation are complete. The independent Nov 14 search selected 75% improved MPNet and 25% MiniLM from the 0.00--1.00 grid (step 0.05), then froze that choice before the Nov 15 report:
 
 | Split | Impressions | MiniLM AUC | Improved MPNet AUC | 75/25 ensemble AUC | Ensemble delta vs MPNet |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Nov 14 weight selection | 431,517 | 0.675268 | 0.697527 | **0.698596** | +0.001069 |
 | Nov 15 frozen-weight report | 376,471 | 0.667200 | 0.684624 | **0.686049** | +0.001425 |
 
-On Nov 15, ensemble MRR was `0.339251` (`-0.000665` vs improved MPNet),
-nDCG@5 was `0.377157` (`-0.000137`), and nDCG@10 was `0.438932` (`+0.000131`).
-Existing November splits remain reused diagnostics, not an independent holdout.
-These are local temporal metrics, not the hidden Large Test score.
+On Nov 15, ensemble MRR was `0.339251` (`-0.000665` vs improved MPNet), nDCG@5 was `0.377157` (`-0.000137`), and nDCG@10 was `0.438932` (`+0.000131`). Existing November splits remain reused diagnostics, not an independent holdout. These are local temporal metrics, not the hidden Large Test score.
 
-The user reported **Large Test AUC `0.6972`** for the completed submission.
-The generated metadata records 2,370,727 impressions and 75/25 weights; the
-actual ZIP checksum matches that metadata. The score and artifact identity are
-preserved in
-[leaderboard_result.json](../runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/ensemble/leaderboard_result.json).
-The submission command reads the frozen search result automatically and
-verifies its source fingerprint; the YAML's null weight and `frozen: false`
-are intentional in `search_artifact` mode. No search rerun or MiniLM ZIP
-regeneration is needed for unchanged inputs. See the
-[ensembling guide](ensembling.md) for the method, artifacts, and CLI commands.
+The user reported **Large Test AUC `0.6972`** for the completed submission. The generated metadata records 2,370,727 impressions and 75/25 weights; the actual ZIP checksum matches that metadata. The score and artifact identity are preserved in [leaderboard_result.json](../runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/ensemble/leaderboard_result.json). The submission command reads the frozen search result automatically and verifies its source fingerprint; the YAML's null weight and `frozen: false` are intentional in `search_artifact` mode. No search rerun or MiniLM ZIP regeneration is needed for unchanged inputs. See the [ensembling guide](ensembling.md) for the method, artifacts, and CLI commands.
 
-The new search applies recency `alpha=0.02` before ranking each temporal
-member and shares exact integer Borda sorting with submission. Historical
-ensemble validation numbers above did not include recency and should not be
-compared as matched-protocol results. The current source fingerprints cover
-actual checkpoints, embeddings, validation data, age artifacts and prediction
-contents; old search artifacts must be regenerated. The original-model phase
-runner is retained for historical reproduction, not training the new champion.
+The new search applies recency `alpha=0.02` before ranking each temporal member and shares exact integer Borda sorting with submission. Historical ensemble validation numbers above did not include recency and should not be compared as matched-protocol results. The current source fingerprints cover actual checkpoints, embeddings, validation data, age artifacts and prediction contents; old search artifacts must be regenerated. The original-model phase runner is retained for historical reproduction, not training the new champion.
 
-The attentive multi-view promotion is rejected. Its encouraging temporal AUC
-of `0.675783` did not transfer: Large Test AUC was `0.6746`, which is `-0.0123`
-versus the candidate-attention champion and only `+0.0022` over frozen MiniLM.
-The submission was structurally valid. Post-result analysis found that its
-one-epoch maximum-data teacher remained less mature than the champion's
-four-epoch teacher, while the hidden ranking over-promoted sports and weather,
-two categories that had already regressed in temporal slices. The retained
-artifacts are historical negative evidence and must not be treated as the
-active submission workflow.
+The attentive multi-view promotion is rejected. Its encouraging temporal AUC of `0.675783` did not transfer: Large Test AUC was `0.6746`, which is `-0.0123` versus the candidate-attention champion and only `+0.0022` over frozen MiniLM. The submission was structurally valid. Post-result analysis found that its one-epoch maximum-data teacher remained less mature than the champion's four-epoch teacher, while the hidden ranking over-promoted sports and weather, two categories that had already regressed in temporal slices. The retained artifacts are historical negative evidence and must not be treated as the active submission workflow.
 
-The follow-up temporal-only diagnostic used a now-removed experimental config.
-It trained the title/abstract gate during epoch 1, froze it, then continued the
-teacher through fixed epoch 4 before validation-selected ranker training.
+The follow-up temporal-only diagnostic used a now-removed experimental config. It trained the title/abstract gate during epoch 1, froze it, then continued the teacher through fixed epoch 4 before validation-selected ranker training.
 
-That redesigned temporal schedule is also rejected. The implementation behaved
-as configured: its saved gate and attention arrays are tensor-identical to the
-original epoch-1 gate, the gate was frozen for epochs 2--4, and the fixed
-teacher checkpoint records epoch 4. Against the matched candidate-attention
-reference, results were:
+That redesigned temporal schedule is also rejected. The implementation behaved as configured: its saved gate and attention arrays are tensor-identical to the original epoch-1 gate, the gate was frozen for epochs 2--4, and the fixed teacher checkpoint records epoch 4. Against the matched candidate-attention reference, results were:
 
 | Metric | Candidate-attention reference | Gate-1/teacher-4 v2 | Delta |
 | --- | ---: | ---: | ---: |
@@ -573,37 +294,19 @@ reference, results were:
 | nDCG@5 | 0.352780 | 0.351188 | -0.001592 |
 | nDCG@10 | 0.414064 | 0.412651 | -0.001413 |
 
-The AUC gain remained below the required `+0.001`, teacher Recall@200 fell by
-`15.7%`, and all three top-ranking metrics regressed. Although zero-popularity,
-period-4, and sports slices recovered, the errors shifted to new items
-(`-0.000868` AUC), popularity 1--4 (`-0.009515`), period 1 (`-0.008519`), and
-weather (`-0.047077`). This is distribution instability rather than a robust
-improvement. The pure attentive multi-view branch is closed: do not promote
-this schedule to maximum-data training and do not proceed to cross-field
-contrastive adaptation.
+The AUC gain remained below the required `+0.001`, teacher Recall@200 fell by `15.7%`, and all three top-ranking metrics regressed. Although zero-popularity, period-4, and sports slices recovered, the errors shifted to new items (`-0.000868` AUC), popularity 1--4 (`-0.009515`), period 1 (`-0.008519`), and weather (`-0.047077`). This is distribution instability rather than a robust improvement. The pure attentive multi-view branch is closed: do not promote this schedule to maximum-data training and do not proceed to cross-field contrastive adaptation.
 
-Large Test scores were returned by the competition platform; hidden test
-labels remain unavailable locally. The MiniLM candidate-attention result was
-reported on 2026-08-16 and the MPNet result on 2026-08-30. Local MPNet artifact
-validation confirmed 2,370,727 impressions and a valid submission ZIP. The
-replay, Nov 15 overweight,
-2,500-update, teacher-guided, and learning-rate `1.5e-5` rows are retained only
-as negative experimental evidence.
+Large Test scores were returned by the competition platform; hidden test labels remain unavailable locally. The MiniLM candidate-attention result was reported on 2026-08-16 and the MPNet result on 2026-08-30. Local MPNet artifact validation confirmed 2,370,727 impressions and a valid submission ZIP. The replay, Nov 15 overweight, 2,500-update, teacher-guided, and learning-rate `1.5e-5` rows are retained only as negative experimental evidence.
 
 ## Sanity Rules
 
 - For temporal configs, `preprocess_meta.json:n_validation_eval_impressions` must equal `ranker_eval_val.json:n_impressions`.
 - The older Small dev split is a historical demo result, not the current architecture-search baseline.
 - Use Small temporal for fast architecture experiments.
-- Use `configs/mind_large_temporal_baseline.yaml` to reproduce the random-negative
-  baseline and `configs/mind_large_temporal_tune.yaml` to reproduce hard-negative v4.
+- Use `configs/mind_large_temporal_baseline.yaml` to reproduce the random-negative baseline and `configs/mind_large_temporal_tune.yaml` to reproduce hard-negative v4.
 - Use `configs/mind_large_submission.yaml` only after choosing fixed settings; it trains on `MINDlarge_train + MINDlarge_dev` and writes hidden-test submission ranks.
-- Use `configs/mind_large_submission_mpnet_candidate_attention.yaml` and its
-  recency companion to reproduce the original `0.6948` MPNet. The MiniLM
-  candidate-attention configs reproduce the previous `0.6869` fallback.
-- Use `configs/mind_large_ensemble_mpnet_p1_minilm.yaml` with its completed
-  search artifact for the best reported `0.6972` ensemble. Preserve the saved
-  selection and result record when starting a new experiment.
+- Use `configs/mind_large_submission_mpnet_candidate_attention.yaml` and its recency companion to reproduce the original `0.6948` MPNet. The MiniLM candidate-attention configs reproduce the previous `0.6869` fallback.
+- Use `configs/mind_large_ensemble_mpnet_p1_minilm.yaml` with its completed search artifact for the best reported `0.6972` ensemble. Preserve the saved selection and result record when starting a new experiment.
 
 ## Known Metadata Note
 

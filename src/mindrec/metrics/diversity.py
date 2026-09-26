@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Iterable
 
 import numpy as np
 
@@ -28,11 +27,3 @@ def ild_from_similarity(sim_mat: np.ndarray) -> float:
         for j in range(i + 1, k):
             vals.append(float(sim_mat[i, j]))
     return float(1.0 - (np.mean(vals) if vals else 0.0))
-
-
-def jaccard(a: set[int], b: set[int]) -> float:
-    if not a and not b:
-        return 1.0
-    inter = len(a & b)
-    union = len(a | b)
-    return float(inter / union) if union > 0 else 0.0

@@ -18,7 +18,7 @@
 
 ## Exposure fairness (list-level, top-K)
 Position-weighted exposure uses a bias curve v(pos) (log or linear).
-- **KL / L1 disparity**: compare exposure distribution vs target distribution (catalog or uniform).
+- **KL disparity**: compare exposure distribution vs target distribution (catalog or uniform).
 - **Gini**: inequality of exposure allocation across the union of exposed categories and categories present in the pool target, including target categories that received zero exposure.
 - **New-item exposure fraction**: how much position-weighted exposure is allocated to items tagged as new/rare.
 - **fairness_kl_pool**: KL divergence between top-K exposure and the reranker's top-`pool_size` candidate mix.
@@ -28,6 +28,7 @@ Target definition note:
 - `catalog` target means the empirical category mix of the impression candidate pool.
 - `uniform` target means equal mass across the categories present in that impression candidate pool.
 - The target is not derived from the selected top-K list, and `catalog` here is not a global full-corpus category prior.
+- Unknown category `0` is excluded from the target but included in observed exposure. Both greedy selection and evaluation use `1e-12` smoothing in KL, so unknown-category exposure is penalized consistently. It earns no coverage bonus.
 - When both `fairness_kl_pool` and `fairness_kl_full` are reported, the first uses the reranker's accessible pool as reference and the second uses the broader full candidate set as reference.
 
 ## Notes
@@ -38,7 +39,7 @@ Target definition note:
     - `fairness_kl_full` compares `p` to the full impression candidate mix.
     - Lower KL means the observed exposure pattern is closer to the target pattern.
 
-- Novelty is an anti-redundancy score used by the reranker. With `teacher_cosine`, it is `- max similarity(candidate, already_selected_items)`, so lower similarity means higher novelty.
-- Recommended reranker configs min-max normalize ranker logits within the accessible candidate pool before combining relevance with novelty and coverage. This changes score scale, not the baseline relevance order.
+- Semantic diversity is reported as teacher-cosine ILD on completed lists. It has no term in the greedy score, no guardrail, and no influence on selection or tie-breaking.
+- Recommended reranker configs min-max normalize ranker logits within the accessible candidate pool before combining relevance with coverage and KL. This changes score scale, not the baseline relevance order.
 - Coverage rewards adding new information to the list. In the current code this means bonus for a previously unseen category and bonus for previously unseen entities.
-- New-item exposure fraction is the fraction of total position-weighted exposure assigned to items flagged as new/rare (by train-click-count thresholds). `fairness.new_item_floor` is a soft reranking penalty target; search guardrails are the place to require a measured gain.
+- New-item exposure fraction is the fraction of total position-weighted exposure assigned to items flagged as new/rare (by train-click-count thresholds). It has no dedicated term in the greedy score; the aggregate search guardrail requires its mean not to decrease. ILD remains diagnostic and has no acceptance guardrail.

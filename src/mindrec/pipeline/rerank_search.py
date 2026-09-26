@@ -58,31 +58,25 @@ def _candidate_key(item: dict[str, Any]) -> tuple[Any, ...]:
         return round(float(x), 8)
 
     return (
-        item["novelty_sim"],
         _norm(item["weights"]["relevance"]),
-        _norm(item["weights"]["novelty"]),
         _norm(item["weights"]["coverage"]),
         _norm(item["fairness"]["penalty_weight"]),
-        _norm(item["fairness"]["new_item_floor"]),
     )
 
 
 def _current_config_candidate(
-    rr_cfg: dict[str, Any], fairness_base: dict[str, Any], novelty_sim: str
+    rr_cfg: dict[str, Any], fairness_base: dict[str, Any]
 ) -> dict[str, Any]:
     rr_cfg = resolve_policy(rr_cfg)
     return {
         "weights": {
             "relevance": rr_cfg["relevance_weight"],
-            "novelty": rr_cfg["novelty_weight"],
             "coverage": rr_cfg["coverage_weight"],
         },
         "fairness": {
             "penalty_weight": float(fairness_base.get("penalty_weight", 0.0)),
-            "new_item_floor": float(fairness_base.get("new_item_floor", 0.0)),
             "category_target": fairness_base.get("category_target", "catalog"),
         },
-        "novelty_sim": novelty_sim,
     }
 
 
@@ -165,9 +159,8 @@ def _format_frontier_row(idx: int, item: dict[str, Any]) -> str:
         f"| {idx} | {feasible} | {item['ndcg@k']:.6f} | "
         f"{item['new_item_exposure_frac']:.6f} | {item['category_coverage']:.6f} | "
         f"{item['fairness_kl_pool']:.6f} | {item['ild']:.6f} | "
-        f"{weights['relevance']:.3f} | {weights['novelty']:.3f} | "
-        f"{weights['coverage']:.3f} | {fairness['penalty_weight']:.3f} | "
-        f"{fairness['new_item_floor']:.3f} |"
+        f"{weights['relevance']:.3f} | "
+        f"{weights['coverage']:.3f} | {fairness['penalty_weight']:.3f} |"
     )
 
 
@@ -184,6 +177,7 @@ def _write_pareto_frontier_md(out_root: Path, out: dict[str, Any]) -> None:
         "",
         "Selection: highest nDCG among full-tuning candidates passing every guardrail.",
         "Exact nDCG ties use deterministic parameter order. Pareto points are diagnostic only.",
+        "ILD measures teacher-cosine diversity of completed lists; it does not affect scoring or selection.",
         "",
         (
             "Baseline: "
@@ -212,19 +206,18 @@ def _write_pareto_frontier_md(out_root: Path, out: dict[str, Any]) -> None:
                     f"new_item_exposure_frac={best_feasible['new_item_exposure_frac']:.6f}, "
                     f"category_coverage={best_feasible['category_coverage']:.6f}, "
                     f"fairness_kl_pool={best_feasible['fairness_kl_pool']:.6f}, "
-                    f"fairness_penalty={best_feasible['fairness']['penalty_weight']:.2f}, "
-                    f"new_item_floor={best_feasible['fairness']['new_item_floor']:.2f}"
+                    f"fairness_penalty={best_feasible['fairness']['penalty_weight']:.3f}"
                 ),
                 "",
             ]
         )
     else:
-        lines.extend(["Best feasible: none. No policy selected; revise the grid or requirements on tuning data.", ""])
+        lines.extend(["Best feasible: none. No policy selected; inspect range diagnostics and candidate-pool opportunity before revising the grid. Keep guardrails fixed during range discovery.", ""])
 
     lines.extend(
         [
-            "| # | Feasible | nDCG@k | New Item Exposure | Category Coverage | Fairness KL | Intra-List Diversity | Relevance Weight | Novelty Weight | Coverage Weight | Fairness Penalty | New Item Floor |",
-            "|---:|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+            "| # | Feasible | nDCG@k | New Item Exposure | Category Coverage | Fairness KL | Intra-List Diversity | Relevance Weight | Coverage Weight | Fairness Penalty |",
+            "|---:|:---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
     lines.extend(
@@ -232,89 +225,56 @@ def _write_pareto_frontier_md(out_root: Path, out: dict[str, Any]) -> None:
     )
     lines.append("")
 
+    diagnostics = out.get("grid_diagnostics")
+    if diagnostics:
+        lines.extend(["## Search range diagnostics", "", diagnostics["scope"], "",
+                      f"Sample feasible: {diagnostics['n_sample_feasible']}; full-tuning feasible: {diagnostics['n_full_feasible']}.",
+                      f"Full grid evaluated: {diagnostics['full_grid_evaluated']}.",
+                      f"Sample/full winner match: {diagnostics['sample_and_full_winner_match']}.", "",
+                      "| Parameter | Value | Feasible / tested | Best feasible nDCG | Max category gain | Max KL improvement |",
+                      "| --- | ---: | ---: | ---: | ---: | ---: |"])
+        def number(x):
+            return "n/a" if x is None else f"{x:.6f}"
+        for axis, profile in diagnostics["parameter_profiles"].items():
+            for row in profile:
+                lines.append(f"| {axis} | {row['value']:g} | {row['n_feasible']} / {row['n_tested']} | {number(row['best_feasible_ndcg'])} | {number(row['max_category_gain'])} | {number(row['max_kl_improvement'])} |")
+        lines.extend(["", "Each maximum may come from a different setting; profile gains do not guarantee joint feasibility.", "",
+                      "Failed requirements in profile data: " + str(diagnostics["failed_guardrail_counts"]),
+                      "Maximum gains within relevance budget in profile data: " + str(diagnostics["max_gains_within_ndcg_budget"]), ""])
+        for flag in diagnostics["range_flags"]:
+            lines.append(f"- {flag['parameter']}: {flag['reason']}. {flag['message']} Candidate extension: {flag.get('candidate_extension', 'n/a')}.")
+        if not diagnostics["range_flags"]:
+            lines.append("No boundary or missing-control flags; this is not proof that the range is globally optimal.")
+        opportunity = diagnostics.get("pool_opportunity", {})
+        lines.extend(["", "Pool opportunity: " + str(opportunity), "",
+                      "Suggested local values: " + str(diagnostics["suggested_local_values"]), "",
+                      diagnostics["next_step"], ""])
     (out_root / "pareto_frontier.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 def _resolve_search_settings(search_cfg: dict[str, Any]) -> dict[str, Any]:
     resolve_guardrails(search_cfg)
-    raw_novelty_sims = search_cfg.get("novelty_sims", ["teacher_cosine"])
-    if isinstance(raw_novelty_sims, str):
-        raise ValueError("rerank.search.novelty_sims must be a YAML list.")
-    raw_weight_pairs = search_cfg.get(
-        "weight_pairs",
-        [
-            [0.0, 0.0], [0.025, 0.0], [0.0, 0.025], [0.025, 0.025],
-            [0.05, 0.0], [0.0, 0.05], [0.05, 0.025], [0.025, 0.05],
-            [0.05, 0.05], [0.025, 0.075], [0.05, 0.075], [0.05, 0.10],
-        ],
-    )
-    weight_pairs = []
-    for index, pair in enumerate(raw_weight_pairs):
-        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
-            raise ValueError(
-                f"rerank.search.weight_pairs[{index}] must be "
-                "[novelty_weight, coverage_weight]."
-            )
-        weight_pairs.append([float(pair[0]), float(pair[1])])
-
     settings = {
         "seed": int(search_cfg.get("seed", 13)),
         "sample_size": int(search_cfg.get("sample_size", 5000)),
-        "shortlist_size": int(search_cfg.get("shortlist_size", 15)),
-        "novelty_sims": [str(value) for value in raw_novelty_sims],
-        "weight_pairs": weight_pairs,
-        "fairness_penalties": [
-            float(value)
-            for value in search_cfg.get(
-                "fairness_penalties", [0.0, 0.05, 0.10, 0.20, 0.30]
-            )
-        ],
-        "new_item_floors": [
-            float(value)
-            for value in search_cfg.get(
-                "new_item_floors", [0.0, 0.20, 0.30]
-            )
-        ],
+        "shortlist_size": int(search_cfg.get("shortlist_size", 20)),
     }
-    if settings["sample_size"] < 1:
-        raise ValueError("rerank.search.sample_size must be at least 1.")
-    if settings["shortlist_size"] < 1:
-        raise ValueError("rerank.search.shortlist_size must be at least 1.")
-    if not settings["novelty_sims"]:
-        raise ValueError("rerank.search.novelty_sims cannot be empty.")
-    allowed_novelty = {"teacher_cosine", "category", "entity_jaccard"}
-    if any(value not in allowed_novelty for value in settings["novelty_sims"]):
-        raise ValueError(
-            "rerank.search.novelty_sims contains an unsupported similarity."
-        )
-    if not settings["weight_pairs"]:
-        raise ValueError("rerank.search.weight_pairs cannot be empty.")
-    for novelty_weight, coverage_weight in settings["weight_pairs"]:
-        if (
-            not np.isfinite(novelty_weight)
-            or not np.isfinite(coverage_weight)
-            or novelty_weight < 0.0
-            or coverage_weight < 0.0
-            or novelty_weight + coverage_weight >= 1.0
-        ):
-            raise ValueError(
-                "Each rerank.search.weight_pairs entry must contain non-negative "
-                "novelty and coverage weights whose sum is less than 1."
-            )
-    if not settings["fairness_penalties"] or any(
-        not np.isfinite(value) or value < 0.0
-        for value in settings["fairness_penalties"]
+    for name, default in (
+        ("coverage_weights", [0.0, 0.025, 0.05, 0.10]),
+        ("fairness_penalties", [0.0, 0.025, 0.05, 0.10, 0.20]),
     ):
-        raise ValueError(
-            "rerank.search.fairness_penalties must contain finite non-negative values."
-        )
-    if not settings["new_item_floors"] or any(
-        not np.isfinite(value) or not 0.0 <= value <= 1.0
-        for value in settings["new_item_floors"]
-    ):
-        raise ValueError(
-            "rerank.search.new_item_floors must contain values between 0 and 1."
-        )
+        values = search_cfg.get(name, default)
+        if not isinstance(values, list) or not values:
+            raise ValueError(f"rerank.search.{name} must be a non-empty YAML list.")
+        values = [float(value) for value in values]
+        if any(not np.isfinite(value) or value < 0.0 for value in values):
+            raise ValueError(f"rerank.search.{name} must contain finite non-negative values.")
+        if name == "coverage_weights" and any(value >= 1.0 for value in values):
+            raise ValueError("rerank.search.coverage_weights must be less than 1; relevance is 1 - coverage.")
+        settings[name] = sorted(set(values))
+    for name in ("sample_size", "shortlist_size"):
+        if settings[name] < 1:
+            raise ValueError(f"rerank.search.{name} must be at least 1.")
     return settings
 
 
@@ -349,37 +309,134 @@ def _build_shortlist(
 
 
 def _build_search_space(
-    novelty_sims: list[str],
-    weight_pairs: list[list[float]],
+    coverage_weights: list[float],
     fairness_penalties: list[float],
-    new_item_floors: list[float],
     fairness_enabled: bool = True,
-) -> list[tuple[str, float, float, float, float, float]]:
-    """Build effective policies, omitting settings that rank identically."""
+) -> list[tuple[float, float, float]]:
+    """Build effective (relevance, coverage, KL penalty) combinations."""
+    return list(dict.fromkeys(
+        (1.0 - coverage, coverage, penalty)
+        for coverage in coverage_weights
+        for penalty in (fairness_penalties if fairness_enabled else [0.0])
+    ))
 
-    search_space: list[tuple[str, float, float, float, float, float]] = []
-    seen = set()
-    for novelty_sim in novelty_sims:
-        for novelty_weight, coverage_weight in weight_pairs:
-            relevance_weight = 1.0 - novelty_weight - coverage_weight
-            if relevance_weight <= 0.0:
-                continue
-            for penalty_weight in (fairness_penalties if fairness_enabled else [0.0]):
-                # With no fairness penalty the new-item floor cannot affect a
-                # score, so evaluate one canonical floor instead of duplicates.
-                effective_floors = (
-                    [0.0] if penalty_weight == 0.0 else new_item_floors
-                )
-                for new_item_floor in effective_floors:
-                    candidate = (
-                        novelty_sim if novelty_weight > 0 else novelty_sims[0],
-                        relevance_weight, novelty_weight, coverage_weight,
-                        penalty_weight, new_item_floor,
-                    )
-                    if candidate not in seen:
-                        search_space.append(candidate)
-                        seen.add(candidate)
-    return search_space
+
+def _grid_diagnostics(sample_results, full_results, settings):
+    """Describe explored ranges; suggestions never change eligibility or the grid."""
+    axes = {
+        "coverage_weight": sorted(set(settings["coverage_weights"])),
+        "penalty_weight": sorted(set(settings["fairness_penalties"])),
+    }
+    def value(row, axis):
+        return row["fairness"][axis] if axis == "penalty_weight" else row["weights"][axis.removesuffix("_weight")]
+    sample_feasible = [r for r in _sort_by_ndcg(sample_results) if r["constraint"]["feasible"]]
+    full_feasible = [r for r in _sort_by_ndcg(full_results) if r["constraint"]["feasible"]]
+    sample_best = sample_feasible[0] if sample_feasible else None
+    full_best = full_feasible[0] if full_feasible else None
+    full_grid_evaluated = bool(sample_results) and {
+        _candidate_key(r) for r in sample_results
+    }.issubset({_candidate_key(r) for r in full_results})
+    # Never mix sample trends with full-tuning evidence. A partial full run
+    # describes only its evaluated candidates, including empty profile cells.
+    profile_results = full_results if full_results else sample_results
+    profile_source = "full_tuning" if full_results else "screening_sample"
+    profile_best = full_best if full_results else sample_best
+    if full_results:
+        scope = (
+            "Profiles and boundary flags use full-tuning results for the entire grid."
+            if full_grid_evaluated else
+            "Profiles and boundary flags use only fully evaluated candidates; untested grid points are not evidence of failure."
+        )
+    else:
+        scope = "No full-tuning results: profiles and boundary flags use the screening sample only."
+    scope += " Profiles optimize other parameters and are not isolated causal effects. Pool-opportunity statistics remain sample-based."
+    profiles, flags, refinement = {}, [], {}
+    for axis, values in axes.items():
+        profiles[axis] = []
+        for x in values:
+            rows = [r for r in profile_results if value(r, axis) == x]
+            eligible = [r for r in rows if r["constraint"]["feasible"]]
+            profiles[axis].append({
+                "value": x, "n_tested": len(rows), "n_feasible": len(eligible),
+                "best_feasible_ndcg": max((r["ndcg@k"] for r in eligible), default=None),
+                "max_category_gain": max((r["constraint"]["category_coverage_gain"] for r in rows), default=None),
+                "max_kl_improvement": max((r["constraint"]["fairness_kl_pool_improvement"] for r in rows), default=None),
+                "min_ndcg_drop_pct": min((r["constraint"]["ndcg_drop_pct"] for r in rows), default=None),
+            })
+        if len(values) == 1:
+            flags.append({"parameter": axis, "reason": "fixed_range", "message": "Only one value tested; this run cannot assess its range."})
+        else:
+            if profile_best is not None and value(profile_best, axis) == values[-1]:
+                next_value = 2.0 * values[-1]
+                if axis != "penalty_weight":
+                    next_value = min(next_value, 1.0 - 1e-6)
+                flags.append({
+                    "parameter": axis, "reason": "winner_at_upper_boundary",
+                    "candidate_extension": next_value if next_value > values[-1] else None,
+                    "message": "Inspect the profile trend before extending; a boundary winner alone is not evidence that larger values improve results.",
+                })
+            if values[0] > 0:
+                flags.append({"parameter": axis, "reason": "missing_zero_control", "candidate_extension": 0.0,
+                              "message": "Include zero to measure whether this component is needed."})
+        if full_best is not None:
+            center = value(full_best, axis)
+            candidates = {center}
+            lower = [x for x in values if x < center]
+            upper = [x for x in values if x > center]
+            if lower: candidates.add(round((max(lower) + center) / 2, 8))
+            if upper: candidates.add(round((min(upper) + center) / 2, 8))
+            refinement[axis] = sorted(candidates)
+    failures = {}
+    for row in profile_results:
+        for name in row["constraint"]["failed_guardrails"]:
+            failures[name] = failures.get(name, 0) + 1
+    within_budget = [r for r in profile_results if not {"max_ndcg_drop_ratio", "non_finite_metrics"}.intersection(r["constraint"]["failed_guardrails"])]
+    return {
+        "scope": scope,
+        "profile_source": profile_source,
+        "n_sample_feasible": len(sample_feasible), "n_full_feasible": len(full_feasible),
+        "sample_and_full_winner_match": (_candidate_key(sample_best) == _candidate_key(full_best)) if sample_best is not None and full_best is not None else None,
+        "full_grid_evaluated": full_grid_evaluated,
+        "failed_guardrail_counts": failures,
+        "max_gains_within_ndcg_budget": {
+            metric: max((r["constraint"][metric] for r in within_budget), default=None)
+            for metric in ("category_coverage_gain", "fairness_kl_pool_improvement", "new_item_exposure_gain")
+        },
+        "parameter_profiles": profiles, "range_flags": flags,
+        "suggested_local_values": refinement,
+        "next_step": (
+            "No full-tuning feasible setting. Inspect failed requirements, profiles, and pool opportunity; expand only supported ranges. Keep guardrails fixed."
+            if full_best is None else
+            "Review boundary flags and sample/full disagreement, then consider one local grid around suggested values. Include the current full-tuning winner and fully evaluate that local grid."
+        ),
+    }
+
+
+def _pool_opportunities(rows, news_meta, k_out, pool_size, position_bias, baseline):
+    from mindrec.utils import position_bias_weights
+    category_limits, new_limits, gaps, kl_spans = [], [], [], []
+    for row in rows:
+        pool = np.argsort(-row.scores, kind="stable")[:pool_size]
+        length = min(k_out, len(pool))
+        cats = {news_meta[row.cand_news_id[i]].cat_idx for i in pool if row.cand_news_id[i] in news_meta}
+        cats.discard(0)
+        counts = [sum(news_meta.get(row.cand_news_id[i]) is not None and news_meta[row.cand_news_id[i]].cat_idx == cat for i in pool) for cat in cats]
+        kl_spans.append(float(np.log(max(counts) / min(counts))) if counts else 0.0)
+        scores = row.scores[pool]
+        if len(scores) > 1:
+            normalized = (scores - scores[-1]) / max(float(scores[0] - scores[-1]), 1e-12)
+            gaps.extend((-np.diff(normalized)).tolist())
+        category_limits.append(min(length, len(cats)))
+        n_new = min(length, sum(int(row.cand_is_new[i]) == 1 for i in pool))
+        weights = position_bias_weights(length, mode=position_bias)
+        new_limits.append(float(weights[:n_new].sum() / (weights.sum() + 1e-12)))
+    return {
+        "scope": "Optimistic per-list bounds in the screening sample; ignore relevance and other simultaneous constraints.",
+        "adjacent_normalized_relevance_gaps": {str(q): float(np.quantile(gaps, q)) if gaps else 0.0 for q in (0.5, 0.9, 0.99)},
+        "first_position_kl_span": {str(q): float(np.quantile(kl_spans, q)) if kl_spans else 0.0 for q in (0.5, 0.9, 0.99)},
+        "category_coverage_gain_upper_bound": float(np.mean(category_limits) - baseline["category_coverage"]),
+        "new_item_exposure_gain_upper_bound": float(np.mean(new_limits) - baseline["new_item_exposure_frac"]),
+    }
 
 
 def run_rerank_search(cfg: dict[str, Any]) -> None:
@@ -435,10 +492,8 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
     else:
         scored_search = scored_impressions
 
-    novelty_sims = search_settings["novelty_sims"]
-    weight_pairs = search_settings["weight_pairs"]
+    coverage_weights = search_settings["coverage_weights"]
     fairness_penalties = search_settings["fairness_penalties"]
-    new_item_floors = search_settings["new_item_floors"]
 
     sample_baseline = baseline if scored_search is scored_impressions else evaluate_baseline(
         scored_impressions=scored_search,
@@ -452,24 +507,18 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
 
     sample_results = []
     search_space = _build_search_space(
-        novelty_sims=novelty_sims,
-        weight_pairs=weight_pairs,
+        coverage_weights=coverage_weights,
         fairness_penalties=fairness_penalties,
-        new_item_floors=new_item_floors,
         fairness_enabled=bool(fairness_base["enabled"]),
     )
 
     for (
-        novelty_sim,
         relevance_weight,
-        novelty_weight,
         coverage_weight,
         penalty_weight,
-        new_item_floor,
     ) in tqdm(search_space, desc="Search rerank grid"):
         fairness_cfg = dict(fairness_base)
         fairness_cfg["penalty_weight"] = penalty_weight
-        fairness_cfg["new_item_floor"] = new_item_floor
 
         metrics = evaluate_candidate(
             scored_impressions=scored_search,
@@ -481,9 +530,7 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
             coverage_cfg=coverage_cfg,
             fairness_cfg=fairness_cfg,
             relevance_weight=relevance_weight,
-            novelty_weight=novelty_weight,
             coverage_weight=coverage_weight,
-            novelty_sim=novelty_sim,
             relevance_normalization=relevance_normalization,
         )
         sample_results.append(
@@ -499,7 +546,6 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
     current_candidate = _current_config_candidate(
         rr_cfg=rr_cfg,
         fairness_base=fairness_base,
-        novelty_sim=policy["novelty_sim"],
     )
     current_key = _candidate_key(current_candidate)
     if current_key not in seen:
@@ -518,7 +564,6 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
             continue
         fairness_cfg = dict(fairness_base)
         fairness_cfg["penalty_weight"] = item["fairness"]["penalty_weight"]
-        fairness_cfg["new_item_floor"] = item["fairness"]["new_item_floor"]
         metrics = evaluate_candidate(
             scored_impressions=scored_impressions,
             teacher_item=teacher_item,
@@ -529,9 +574,7 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
             coverage_cfg=coverage_cfg,
             fairness_cfg=fairness_cfg,
             relevance_weight=item["weights"]["relevance"],
-            novelty_weight=item["weights"]["novelty"],
             coverage_weight=item["weights"]["coverage"],
-            novelty_sim=item["novelty_sim"],
             relevance_normalization=relevance_normalization,
         )
         results.append(_attach_objective_views(baseline, metrics, constraint))
@@ -541,8 +584,13 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
     results = _sort_feasible_first(results)
     pareto_frontier = _pareto_frontier(results)
 
+    diagnostics = _grid_diagnostics(sample_results, results, search_settings)
+    diagnostics["pool_opportunity"] = _pool_opportunities(
+        scored_search, news_meta, k_out, pool_size, position_bias, sample_baseline
+    )
     out = {
-        "schema_version": 2,
+        "schema_version": 5,
+        "grid_diagnostics": diagnostics,
         "selection_method": SELECTION_METHOD,
         "selection_context": selection_context(cfg),
         "selection_status": "selected" if feasible else "no_feasible_policy",
@@ -553,8 +601,6 @@ def run_rerank_search(cfg: dict[str, Any]) -> None:
         "position_bias": position_bias,
         "relevance_normalization": relevance_normalization,
         "search_split": search_split,
-        # Retained for backward compatibility with historical search JSON.
-        "eval_split": search_split,
         "reporting_split": protocol.reporting_split,
         "selection": protocol.selection,
         "scoring": assets["scoring"],

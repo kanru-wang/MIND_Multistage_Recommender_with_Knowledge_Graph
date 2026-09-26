@@ -1,232 +1,122 @@
 # Reranking
 
-The reranker chooses the highest-scoring remaining article from the frozen
-ranker's top-50 pool until it has ten articles, or exhausts the pool. Offline
-search chooses its fixed parameters by **highest mean nDCG@10 subject to
-aggregate guardrails**. It uses one ranker checkpoint, without ensembling, and
-is separate from `write_submission`.
-
-The [README reranking section](../README.md#36-reranking-search-offline-use-fixed-weights-in-production)
-explains the score, search variables, and serving procedure.
+Offline search selects the **highest mean nDCG@10 among settings meeting all aggregate guardrails**. Each setting builds actual top-10 lists from one frozen ranker's top-50 pools, without ensembling. The winning parameters and the same greedy algorithm are used at serving time. This is separate from competition submission generation.
 
 ## Score and metric definitions
 
 For article `i` and selected prefix `S`:
 
 ```text
-score(i | S) = wR * R(i) + wN * N(i, S) + wC * C(i, S) - lambda * P(i, S; f)
-wR = 1 - wN - wC
+score(i | S) = wR * R(i) + wC * C(i, S) - lambda * KL(p || q)
+wR = 1 - wC
 ```
 
-`R` is min-max-normalized ranker relevance in the pool. `N` is negative maximum
-teacher cosine similarity to already selected articles (zero for an empty
-prefix). `C` is `1.0 * new_category + 0.3 * min(new_entity_count, 3)`; unknown
-categories do not earn a category bonus. The entity set is updated after each
-selection.
+- `R`: min-max-normalized ranker relevance in the accessible pool.
+- `C`: `1.0 * new_category + 0.3 * min(new_entity_count, 3)`. Unknown categories earn no category bonus. Covered categories and entities update after selection.
+- `p`: position-weighted category exposure of the prospective prefix including `i`; `q`: the accessible pool's category-frequency distribution.
 
-`P` evaluates the prospective prefix including `i`:
+With `position_bias: log`, position `r` has weight `1 / log2(r + 1)`. `category_target: catalog` means the accessible pool, not the entire catalog. The KL coefficient inside the penalty is one. There is no L1 term, new-item shortfall term, or soft new-item floor. New-item exposure remains an aggregate acceptance requirement; it does not directly enter this greedy score.
 
-```text
-P = 0.5 * KL(p || q) + 0.5 * sum_c |p[c] - q[c]| + 2 * max(0, f - e)
-```
+Unknown category `0` earns no coverage bonus and is excluded from the target distribution. Its exposure is included in both selection and evaluation KL, using the same `1e-12` smoothing for zero target probability. This penalizes unknown-category exposure consistently rather than treating it as free exposure.
 
-With `position_bias: log`, rank `r` has weight `1 / log2(r + 1)`.
-`p` is category exposure normalized by total prefix exposure, `q` is the
-pool's category-frequency distribution, and `e` is the fraction of exposure
-assigned to new items. The setting `category_target: catalog` refers to the
-accessible candidate pool, rather than the complete catalog. `f` is a soft
-penalty target; it is not a quota or the aggregate exposure-gain guardrail.
+Semantic novelty is removed from the score and search. Teacher-cosine ILD (`1 - mean pairwise similarity` on the completed list) remains diagnostic only, with no guardrail or selection tie-breaker. Teacher embeddings are still used for this metric and the upstream model, but the greedy builder needs no embeddings or similarity matrix.
 
-The new-item term `2 * max(0, f - e)` is twice the prospective prefix's
-shortfall below its soft new-item exposure target. For `f=0.40` and `e=0.25`,
-it contributes `0.30` to the penalty, reducing the total score by `0.015` when
-`lambda=0.05`. At or above the floor it contributes zero. The constant `2`
-sets its strength relative to category mismatch; it is a technical coefficient,
-not an extra business threshold. Setting `f=0` disables only this term and
-leaves the category penalty active.
-
-The reported metrics are computed on completed lists, then averaged equally
-over labeled impressions with positive clicks. `fairness_kl_pool` uses the
-accessible pool as its reference; `fairness_kl_full` uses the original impression's
-candidate set. Guardrails use the pool metric. Category coverage counts distinct
-known categories, and new-item exposure is a position-weighted fraction.
-These topic-exposure metrics do not measure demographic fairness.
+Completed-list metrics are averaged equally over labeled impressions with positive clicks. Category coverage counts distinct known categories; new-item exposure is a position-weighted fraction. `fairness_kl_pool` uses the accessible pool as reference; `fairness_kl_full` uses the original impression candidate set. Guardrails use the pool metric. These are topic-exposure measures, not demographic fairness measures.
 
 ## Search and selection
 
-Use `configs/mind_large_temporal_mpnet.yaml`. It fixes the checkpoint, scoring
-definitions, pool size, list length, and requirements before each search:
+The checkpoint, teacher embeddings, pool size, list length, score definitions, and requirements are fixed before search. Business decisions concern outcomes; the technical search determines `wC` and `lambda`, deriving `wR = 1 - wC`. Configure only `coverage_weight` and the KL penalty weight. The resolved policy and result artifacts include derived relevance for transparency; YAML must not contain `relevance_weight`.
 
 | Requirement relative to the original ranker | Value |
 | --- | ---: |
-| Maximum relative nDCG loss | 0.02 |
+| Maximum relative nDCG@10 loss | 0.02 |
 | Minimum new-item exposure gain | 0.00 |
 | Minimum mean category-coverage gain | 0.25 |
 | Minimum mean pool-KL reduction | 0.03 |
 
-The 18-point grid combines novelty weights `[0, 0.025, 0.05]`, coverage weight
-`0.025`, penalties `[0.05, 0.075, 0.10]`, and soft floors `[0.30, 0.40]`.
-Relevance is derived from novelty and coverage. A deterministic 5,000-impression
-screen uses seed 13, and `shortlist_size: 18` ensures that every setting receives
-full-tuning evaluation. No sample rejection excludes a setting from this grid.
-Other configs can use the broader shared grid defaults.
+Zero exposure gain requires non-regression; it is not disabled. Coverage and KL gains are absolute differences, not percentages. No scalar utility scales or coefficients are needed.
 
-Compare each complete-list metric against the baseline on the same impressions.
-Reject a setting if any guardrail fails, then choose the highest-nDCG remaining
-setting. Exact nDCG ties use lexicographic parameter order: similarity,
-relevance, novelty, coverage, penalty, floor. Secondary gains do not compensate
-for lower nDCG once all requirements are satisfied. Only floating-point roundoff
-(`1e-12`) is tolerated at a constraint boundary.
+The existing `configs/mind_large_temporal_mpnet.yaml` now runs a 15-setting local refinement:
 
-`best_feasible` is the selection. If no setting qualifies, it is null and
-`selection_status` is `no_feasible_policy`; do not freeze an infeasible fallback.
-`results`, `sample_results`, and `failed_guardrails` explain the comparison.
-The Pareto frontier is diagnostic and does not select the winner.
+```yaml
+coverage_weights: [0.025, 0.03, 0.035, 0.04, 0.05]
+fairness_penalties: [0.00, 0.025, 0.05]
+shortlist_size: 15
+```
+
+1. Score November 14 (`rerank_tune`) with the frozen ranker. Its top ten form the baseline. Keep scored pools fixed across trials.
+2. Build complete lists for all 15 settings on a deterministic 5,000-impression sample, seed 13. Labels are used only afterward to evaluate the lists.
+3. With `shortlist_size: 15`, every grid combination proceeds to full tuning evaluation. Include the configured starting setting as well if it is outside the grid. The current MPNet starting setting is already in the grid.
+4. Evaluate all combinations on the same full tuning impressions. Reject any setting failing a guardrail, then select the highest-nDCG eligible setting.
+5. Inspect range diagnostics and refine as below. Freeze after the final full-tuning comparison, then report on November 15.
+
+`best_feasible` is the selection. With no eligible finalist it is null and `selection_status` is `no_feasible_policy`; never freeze an infeasible fallback. Exact nDCG ties use lexicographic parameter order: relevance, coverage, penalty. Only floating-point roundoff (`1e-12`) is tolerated at guardrail boundaries. The Pareto frontier is diagnostic, not the selector. The current grid is fully evaluated, so the result is its highest-nDCG eligible setting. If expanding the grid beyond `shortlist_size`, increase that budget to keep full evaluation. With a smaller budget the search reserves one third of shortlist slots for sample rejects, but may miss the full-grid optimum.
 
 ## Choosing score definitions and a search grid
 
-Guardrails describe desired outcomes in interpretable units. Coverage bonuses,
-entity caps, and local weights describe how the algorithm attempts to obtain
-those outcomes, so business stakeholders need not specify them directly.
+The category bonus of 1.0 sets a score unit. Entity bonus 0.3 and cap three are fixed modeling choices limiting annotation-heavy articles' reward. Search controls their combined influence through `wC`. Searching both these bonuses and their multiplier would introduce overlapping controls.
 
-- A category bonus of 1.0 establishes a convenient score unit.
-- An entity bonus of 0.3 makes one newly covered entity worth 30% of one newly
-  covered category within the coverage component; this ratio is a modeling
-  choice, not a measured product preference.
-- The cap of three limits the reward for articles with many entity annotations.
-- The coverage weight controls the overall influence of that component. It is
-  a search parameter even though the current compact grid holds it at 0.025.
+Use this process in the same config, keeping guardrails fixed:
 
-At the current weight, a new category adds 0.025 to the greedy score, each
-eligible new entity adds 0.0075, and the maximum combined coverage contribution
-is 0.0475. These figures are easier to calibrate against predicted-relevance
-score gaps than asking stakeholders to choose raw reranker coefficients.
-Keep score definitions fixed while searching weights. Changing the entity
-ratio or cap is a separate comparison requiring reevaluation; tuning every
-bonus and its overall multiplier simultaneously adds overlapping controls.
+1. **Start broad with zero controls.** For a new range discovery, the shared defaults test coverage `[0, 0.025, 0.05, 0.10]` and KL penalties `[0, 0.025, 0.05, 0.10, 0.20]`, including ranker-only ordering. These are starting hypotheses, not universal ranges. The current local grid narrows the promising region after that comparison; it retains zero KL but omits zero coverage, which failed the coverage requirement throughout the tested broad grid. Require nonnegative weights and `0 <= wC < 1`.
+2. **Check scales and available candidates.** Open `pareto_frontier.md` or `rerank_search.json`'s `grid_diagnostics`. Compare reported adjacent normalized relevance gaps times `wR` with coverage changes (at most `1.9 * wC`) and `lambda * KL_difference`. At `wC=0.025`, a new category contributes 0.025 and the maximum category-plus-entity bonus is 0.0475. Reported first-position KL spans are a scale clue, not a bound for every prefix. Relevance normalization does not normalize KL or coverage.
+3. **Diagnose failures before widening.** The report provides guardrail-failure counts, feasible counts by parameter value, and best feasible full-tuning nDCG. Profiles and boundary flags use full-tuning results whenever available. For a partially evaluated grid, untested points remain empty; the report explicitly labels this scope. Only a run with no full-tuning results falls back to sample profiles. Pool-opportunity statistics still use the sample. Optimistic pool-based coverage and exposure ceilings show whether candidates offer enough opportunity. Larger weights cannot create missing categories. These ceilings ignore relevance and joint constraints. Separate maximum gains may come from different settings and do not prove joint feasibility. Persistent new-item exposure failures may mean this score cannot meet that requirement; do not silently relax it or increase unrelated weights forever.
+4. **Expand supported ranges.** An upper-boundary winner is flagged with a candidate extension, normally twice the upper value. A penalty winner at 0.20 suggests testing 0.40 if the profile remains promising within the nDCG budget. Preserve earlier promising values and zero controls. A boundary winner alone does not prove larger values help. With no feasible winner, inspect failure/profile trends to choose a direction; the tool does not invent a winner or relax thresholds.
+5. **Refine around the full-tuning winner.** `suggested_local_values` includes the winner and midpoints toward adjacent tested values. A winner at 0.05 between 0.025 and 0.10 gives `[0.0375, 0.05, 0.075]`. Copy the suggested axes into the same config; set `shortlist_size` to at least their Cartesian-product size (at most nine for three values per axis). Retain the winning combination and evaluate every local combination on full tuning data. Retain useful zero-control comparisons and increase the shortlist accordingly.
+6. **Check stability and stop deliberately.** Sample/full winner disagreement means the sample alone is unreliable; use full-tuning results. If only a shortlist was fully evaluated, increase the sample or full-evaluation budget before trusting the region. `full_grid_evaluated` confirms whether all tested combinations received full evaluation. Stop when a full local comparison yields no material nDCG improvement and no supported boundary expansion remains. This is a practical stopping rule, not proof of a global optimum. Keep the final grid and selected parameters in the config for reproduction.
 
-To choose an initial grid:
+Profiles take the best results across other parameter choices; they are not isolated causal effects. Suggestions do not change selection or edit the config automatically. ILD does not influence eligibility, selection, or range flags.
 
-1. Inspect component values and relevance-score gaps on a deterministic tuning
-   sample. Choose weights capable of changing close article decisions without
-   immediately overwhelming relevance; normalized relevance alone does not
-   normalize the other terms.
-2. Include zero-weight controls and explore a coarse range. Possible starting
-   values are `[0, 0.025, 0.05, 0.10]` for novelty and coverage and
-   `[0, 0.05, 0.10, 0.20]` for the penalty. They are hypotheses, not universal
-   optimal ranges. Require `wN + wC < 1`. If retaining the new-item term, include
-   `f=0` as an ablation alongside plausible positive floors.
-3. Inspect which guardrails fail and how often lists change. If all settings
-   fail or rankings barely change, diagnose the component scale and candidate
-   pool before expanding weights. No weight can add an unavailable category.
-4. If the best eligible points lie on an explored boundary and the metric
-   trend supports it, extend that range. Refine promising regions with smaller
-   steps, then compare finalists on full tuning data. A boundary winner alone
-   does not prove that extending the range will improve the result.
-5. Freeze the selected score definitions and parameters before reporting.
-   Even a broad finite grid identifies only its best measured eligible setting,
-   not a proven global optimum.
+## Current status and reproduction
 
-For a simpler score, compare a version with `f=0` against the current version
-while retaining the aggregate new-item exposure guardrail. The current exposure
-requirement is non-regression, so a dedicated prefix target need not be retained
-unless it helps meet that requirement. Removing it changes the algorithm and
-requires a new search/evaluation; the current published results still use
-`f=0.40` and the term above.
+The final search evaluated all 15 combinations on 431,517 November 14 tuning impressions; 11 passed every guardrail. The frozen selection is coverage weight **0.035**, KL penalty **0**, and derived relevance weight **0.965**. Both the screening sample and full-tuning evaluation selected this setting.
 
-**Offline and serving must use the same list builder.** For each trial setting,
-offline search constructs complete top-10 lists using only information available
-to the reranker at serving time. It then uses click labels to measure nDCG@10.
-The highest-nDCG eligible setting is copied to production unchanged, including
-its fixed bonuses, normalization, pool size, and list length. Offline selection
-does not produce a second set of production weights.
+| Metric | Tuning baseline | Frozen selection | Change |
+| --- | ---: | ---: | --- |
+| nDCG@10 | 0.424166344 | 0.423647826 | 0.122244% relative loss |
+| New-item exposure | 0.714744781 | 0.716921479 | +0.217670 percentage points |
+| Categories/list | 5.286097651 | 5.585281692 | +0.299184 |
+| Pool KL | 0.417462133 | 0.387194205 | Reduction 0.030268 |
+| Teacher-cosine ILD | 0.573309446 | 0.576908985 | +0.003600; diagnostic only |
 
-## Selected setting and results
+**Selection decision:** choose the highest full-tuning nDCG among settings meeting the predetermined guardrails on tuning data. This setting met all four tuning requirements, so the selected KL penalty is zero. Its tuning KL reduction exceeded the threshold by only 0.000268. This section records the original selection decision; the reporting outcome below does not change that decision retroactively.
 
-The selected weights are relevance **0.95**, novelty **0.025**, coverage
-**0.025**, fairness penalty **0.05**, and soft floor **0.40**. Sixteen of the
-18 settings qualify on all 431,517 November 14 tuning impressions.
+**Reporting outcome: three of four guardrails pass.** The frozen setting was applied to all 376,471 November 15 reporting impressions. The artifact matches the frozen parameters and score definitions; its deltas and constraint checks are consistent. Pool-KL reduction misses the required 0.03 by 0.001264.
 
-| Metric | Tuning baseline | Tuning reranked | Reporting baseline | Reporting reranked |
-| --- | ---: | ---: | ---: | ---: |
-| nDCG@10 | 0.424166344 | 0.423388827 | 0.439456710 | 0.438176210 |
-| New-item exposure | 0.714744781 | 0.721941456 | 0.891706784 | 0.893975385 |
-| Mean categories/list | 5.286097651 | 5.558770570 | 4.955560986 | 5.209904614 |
-| Pool KL | 0.417462133 | 0.380625059 | 0.442186680 | 0.408160281 |
+| Metric | Reporting baseline | Reranked | Change | Requirement | Result |
+| --- | ---: | ---: | --- | --- | --- |
+| nDCG@10 | 0.439456710 | 0.438302290 | 0.262693% relative loss | At most 2% loss | Pass |
+| New-item exposure | 0.891706784 | 0.892422982 | +0.071620 percentage points | No decline | Pass |
+| Categories/list | 4.955560986 | 5.236411304 | +0.280850 | At least +0.25 | Pass |
+| Pool KL | 0.442186680 | 0.413450382 | Reduction 0.028736 | At least 0.03 reduction | **Fail** |
+| Teacher-cosine ILD | 0.590849660 | 0.592672516 | +0.001823 | Diagnostic only | No guardrail |
 
-The tuning nDCG loss is 0.183305%; the reporting loss is 0.291383%. All four
-requirements pass on both splits. Reporting covers 376,471 November 15
-impressions. November 15 was reused while refining requirements; these are
-follow-up results, not an independent test. Passing these aggregate checks
-does not guarantee every list or a future traffic window will pass.
+Recall@10 also decreased from 0.697696 to 0.696025. Category entropy increased and Gini decreased; the generated report records all diagnostic metrics. Full-candidate KL reduction is 0.030125, but the acceptance requirement uses **pool KL**, so it cannot substitute for the failed pool metric.
 
-This section is the config's selection decision note: choose the highest
-full-tuning nDCG satisfying the stated requirements, copy that setting, then
-freeze it before running its reporting evaluation.
+The run is technically valid, but the selected setting has not met every reporting requirement. Do not describe it as passing all guardrails or approved for production under these requirements. `frozen: true` preserves the evaluated selection for reproduction; it is not a production-approval flag. The narrow tuning KL margin did not carry over to reporting, illustrating why tuning feasibility alone is insufficient.
 
-## Reproduce the process
+The measured results, thresholds, and frozen parameters remain unchanged. Do not lower the threshold or choose another weight using this reporting result and present it as the original successful evaluation. Any further development should define its selection rule on tuning data and identify a new reporting period for an independent assessment. November 15 was already reused and is a follow-up report, as stated in the config.
 
-Prepare the temporal data, MPNet teacher embeddings, and ranker checkpoint
-using the main modeling workflow first. The search neither trains the ranker
-nor depends on another reranking experiment's output. Keep these artifacts
-fixed when comparing reranker settings. If the day-specific views are missing:
-
-```powershell
-python -m mindrec.cli prepare_rerank_holdout --config configs/mind_large_temporal_mpnet.yaml
-```
-
-Run the complete reranking workflow:
+Prepare temporal data, MPNet teacher embeddings, and the ranker checkpoint using the main modeling workflow. Search does not train or ensemble models. If the day-specific views are missing, run `prepare_rerank_holdout` first.
 
 ```powershell
 python -m mindrec.cli rerank_search --config configs/mind_large_temporal_mpnet.yaml
+```
+
+The current config contains the selected coverage and KL weights, the search artifact path, this decision note, and `frozen: true`. To reproduce the completed reporting evaluation, run:
+
+```powershell
 python -m mindrec.cli rerank_eval --config configs/mind_large_temporal_mpnet.yaml
 ```
 
-The current config contains the selected weights, `frozen: true`, and the
-provenance path. Search rebuilds `rerank_search.json` from the ranker scores;
-it does not read or require the previous search artifact. Because all 18 grid
-points receive full evaluation, the screen cannot change the selected full-grid
-winner. With unchanged prepared data, checkpoint, scoring definitions, and
-compatible numerical environment, the selected setting and metrics should
-reproduce within numerical tolerance. Retraining the upstream models is a
-separate experiment and need not produce identical checkpoints.
+Evaluation rejects mismatched selections and obsolete scoring versions. Provenance records model/data paths and score definitions, not content hashes; do not replace these files between search and reporting. Unchanged inputs and a compatible numerical environment should reproduce results within numerical tolerance. Retraining upstream models need not produce identical checkpoints. November 15 was reused while refining requirements; its report is a follow-up evaluation, not an independent test. Do not tune weights against it.
 
-If search selects another setting after changing any input, copy its three
-weights, fairness penalty, floor, category target, and novelty similarity into
-the config. Record the search artifact and decision note, then freeze before
-evaluation. Evaluation refuses a frozen config that does not match its artifact.
-The provenance validator compares model/data paths and score definitions; it
-does not hash checkpoint or data contents. Do not replace files at those paths
-between search and reporting.
+Outputs share `runs/mind_large_temporal_mpnet_candidate_attention_v1/rerank/`:
 
-All current outputs are in
-`runs/mind_large_temporal_mpnet_candidate_attention_v1/rerank/`:
+- `rerank_search.json`: screened/full metrics, selection, and range diagnostics.
+- `pareto_frontier.md`: readable candidate comparison and grid diagnostics.
+- `rerank_eval.json` and `rerank_eval.md`: frozen reporting results.
 
-- `rerank_search.json`: full and sampled metrics, requirements, and selected setting.
-- `pareto_frontier.md`: a readable diagnostic comparison.
-- `rerank_eval.json` and `rerank_eval.md`: frozen reporting metrics and guardrail checks.
-- `list_review.json`: a descriptive tuning sample and selected before/after lists.
+Commands overwrite their respective files. When changing the formula or selection, invalidate previous reporting results before publishing new ones. Search artifacts identify the data with `search_split` and `reporting_split`; the evaluation artifact's `eval_split` refers only to the reporting split.
 
-Search and evaluation overwrite their respective outputs when rerun. The
-existing full-tuning measurements were retained when consolidating the results;
-selection was recalculated against the current guardrails. No previous run is
-needed to regenerate these outputs. `list_review.json` is an optional inspection
-artifact; the search and evaluation commands do not generate it or require it.
-
-## Example list and serving behavior
-
-In tuning impression `1703589`, the selected setting reduced lifestyle articles
-from six to four, increased category coverage from four to six, and moved a
-clicked news article from rank six to four. Sports and TV articles entered from
-baseline ranks twelve and eleven. nDCG increased by 0.045661 for that list.
-In another inspected impression (`155352`), adding a category displaced a
-clicked article at rank ten. Aggregate success does not imply improvement for
-every user.
-
-The serving algorithm uses the selected fixed weights, chooses the highest
-score at each step, updates the list state, and repeats. It cannot calculate
-actual nDCG before observing relevance labels. Prefix diversity and exposure
-are score features; aggregate guardrails apply to completed lists across
-impressions, not to each added article. Enforcing a hard per-list requirement
-would require a separate mechanism. Production monitoring and rollback services
-are not implemented in this repository.
+See [Serving behavior in the README](../README.md#serving-behavior) for list construction, aggregate monitoring, and fallback behavior.
