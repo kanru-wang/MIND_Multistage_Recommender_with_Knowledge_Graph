@@ -231,6 +231,19 @@ Suppose the selected prefix is `[A, B]`: `A` is Sports, `B` is Politics, and the
   - Here, new/rare is defined by training click counts; it does not necessarily mean recently published.
 
 
+#### Proposed alternative: relevance-first reranking with swaps
+
+This is a design idea, **not implemented**. Instead of searching offline for coverage and KL weights, define per-list requirements such as a minimum category count, a minimum new-item exposure, and a maximum category KL. The intuition is: keep the most relevant news, then change only what is needed to meet those requirements.
+
+1. Start with the ranker's top 10 articles from its top-50 pool. If all requirements pass, return them unchanged.
+2. Try replacing one selected article with one of the 40 unselected articles. Sort each proposed list by relevance and recheck its coverage and position-weighted exposure metrics.
+3. Prefer repairs according to explicit constraint priorities; among equally effective repairs, keep the most predicted relevance. Cap total relevance loss against the original top 10.
+4. Repeat until the requirements pass, no improving swap is found, or an iteration limit is reached. Record unresolved violations and use a predefined fallback.
+
+There are only **400 possible swaps per iteration**. Cached metadata and an early return can keep this lightweight; checking fewer candidates is a faster approximation that may miss useful repairs.
+
+Per-list requirements differ from the current aggregate guardrails. Some pools cannot satisfy them, and greedy swaps can get stuck. Offline evaluation is still needed: preserving predicted relevance does not guarantee preserving actual nDCG.
+
 ## Evaluation
 - **Ranking quality**: AUC, MRR, nDCG@K, MAP@K, Recall@K
 - **Calibration**: ECE (expected calibration error), Brier score
@@ -479,7 +492,7 @@ The retrieval reports include chronological, history-length, popularity, categor
 
 ### 3.6 Reranking: search offline, use fixed weights in production
 
-**Offline search finds the parameter combination with the highest mean nDCG@10 among those meeting every aggregate guardrail.** It uses one frozen ranker, without ensembling. Each combination builds actual top-10 lists; labels are used afterward to evaluate those lists. **The winning combination is also the combination used in production**, with the same score definitions and greedy list builder.
+**Offline search finds the weight combination with the highest mean nDCG@10 among the evaluated combinations meeting every aggregate guardrail.** Each combination builds actual top-10 lists on tuning impressions; labels are used afterward to evaluate those lists. **The weights are found offline and reused during production reranking.** At each step, the greedy list builder selects the highest-scoring remaining article, updates the list state, and repeats. This same list-building procedure is used during search and serving; production does not search for weights again.
 
 For candidate article `i` and already-selected list `S`:
 
@@ -494,13 +507,15 @@ wR = 1 - wC
 
 Semantic novelty is absent from the score and search. Teacher-cosine ILD is reported on completed lists for diagnosis only. There is no L1 or new-item shortfall penalty; new-item exposure remains an aggregate guardrail.
 
-| Fixed before search | Chosen by search |
+| Reranking choice | How it is determined |
 | --- | --- |
-| Ranker, pool size 50, output length 10, tuning/reporting splits | Coverage weight `wC` |
-| Score/metric definitions, category/entity bonuses and entity cap | Pool-KL penalty weight `lambda` |
-| Aggregate guardrails below and teacher embeddings for diagnostic ILD | Relevance weight is derived: `1 - wC` |
+| Coverage weight `wC` and pool-KL penalty weight `lambda` | Search the parameter grid and select the highest-nDCG eligible combination. |
+| Relevance weight `wR` | Derive as `1 - wC` for each combination. |
+| Coverage bonuses (category 1.0, entity 0.3) and cap (3 new entities) | Set the score definition before comparing weights. |
+| Relevance normalization, position weights, and metric definitions | Use the same definitions for every combination and during serving where applicable. |
+| Aggregate guardrail thresholds | Agree on acceptable outcomes before comparing weights. |
 
-Relevance weight is derived automatically as `1 - coverage_weight`; do not configure it separately. Bonuses and caps are technical modeling choices; business stakeholders specify acceptable outcomes. There are no scalar-utility scales or coefficients. Logarithmic position weights and min-max relevance normalization stay fixed during search.
+Relevance weight is derived automatically as `1 - coverage_weight`; do not configure it separately. Bonuses and caps are technical modeling choices; business stakeholders specify acceptable outcomes. The implementation uses logarithmic position weights and min-max relevance normalization. Trials reuse the same ranker predictions and tuning impressions so that their differences reflect the reranking weights.
 
 | Aggregate requirement relative to the original ranker | Threshold |
 | --- | ---: |
@@ -509,7 +524,16 @@ Relevance weight is derived automatically as `1 - coverage_weight`; do not confi
 | Minimum mean category-coverage gain | +0.25 categories/list |
 | Minimum mean pool-KL reduction | 0.03 |
 
-**Offline procedure and practical range discovery:**
+#### Choosing the initial parameter grid
+
+There is no universally correct weight range: it depends on the sizes of the score components and the relevance differences between candidates. Business stakeholders set acceptable outcomes; inspecting scores and running tuning comparisons determines useful weight ranges.
+
+1. **Look at articles with similar relevance scores.** Choose trial weights large enough for better coverage or category balance to change some close decisions. For example, a coverage bonus of 0.025 can outweigh a weighted relevance gap of 0.02 when the other score terms are equal.
+2. **Try a few weights, including zero.** Start with coverage weights `[0, 0.025, 0.05, 0.10]` and KL penalties `[0, 0.025, 0.05, 0.10, 0.20]`, testing every combination. Zero turns a component off, helping show whether it is useful.
+3. **Inspect feasibility and relevance together.** If lists barely change, inspect whether weights are too small or components favor the same candidates. If nDCG degrades sharply, test smaller weights. If coverage remains insufficient, check whether the candidate pools contain enough additional categories. Larger weights cannot create missing candidates, and coverage or KL weights cannot reliably solve a new-item exposure shortfall.
+4. **Expand promising boundaries, then refine locally.** If the best eligible setting lies at the largest tested weight and nearby results remain promising, test a larger value; a boundary winner alone does not prove expansion will help. Add intermediate values around the best region, retain the previous winner, and compare all finalists on full tuning data with unchanged guardrails. For example, a coverage winner at 0.05 between 0.025 and 0.10 suggests testing 0.0375 and 0.075. Keep useful zero controls when expanding the comparison.
+
+#### Offline search procedure
 
 1. Score the labeled November 14 tuning impressions with the frozen ranker. Its original top-ten lists form the comparison baseline.
 2. Build lists for the current 15-setting local grid on a deterministic 5,000-impression sample: `wC` in `[0.025, 0.03, 0.035, 0.04, 0.05]`, and `lambda` in `[0, 0.025, 0.05]`. It retains the best feasible tuning setting (`wC=0.035`, `lambda=0`) and includes nearby coverage adjustments.
