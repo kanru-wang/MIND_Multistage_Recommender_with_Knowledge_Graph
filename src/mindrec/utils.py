@@ -2,12 +2,30 @@ from __future__ import annotations
 
 import json
 import random
+from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import torch
+
+
+@contextmanager
+def preserve_random_state():
+    """Keep validation (including DataLoader iteration) out of training RNGs."""
+    python_state = random.getstate()
+    numpy_state = np.random.get_state()
+    torch_state = torch.get_rng_state()
+    cuda_states = torch.cuda.get_rng_state_all() if torch.cuda.is_initialized() else None
+    try:
+        yield
+    finally:
+        random.setstate(python_state)
+        np.random.set_state(numpy_state)
+        torch.set_rng_state(torch_state)
+        if cuda_states is not None:
+            torch.cuda.set_rng_state_all(cuda_states)
 
 
 def resolve_device(requested: str | None = "cuda") -> torch.device:
@@ -113,6 +131,13 @@ def test_split_name(_cfg: dict[str, Any]) -> str:
 
 def teacher_artifact_run_name(cfg: dict[str, Any]) -> str:
     return str(cfg.get("artifacts", {}).get("teacher_run_name", cfg["run_name"]))
+
+
+def ranker_checkpoint_name(cfg: dict[str, Any]) -> str:
+    name = str(cfg.get("eval", {}).get("checkpoint_name", "best.pt"))
+    if name not in {"best.pt", "best_mean_impression_auc.pt", "best_sampled_pair_auc.pt"}:
+        raise ValueError("Unknown ranker evaluation checkpoint name.")
+    return name
 
 
 def teacher_artifact_root(cfg: dict[str, Any]) -> Path:

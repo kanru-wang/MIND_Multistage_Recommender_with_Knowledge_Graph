@@ -111,3 +111,11 @@ Output: `runs/mind_large_ensemble_mpnet_minilm_rank_v1/submission/prediction.zip
 - The writer validates impression IDs, candidate counts, rank permutations, ZIP CRC, and prediction-content hash before publishing staged output. Failed generation preserves previous outputs.
 
 This guide records completed rank-fusion experiments. Alternative fusion methods and future tuning proposals are not part of the reported `0.6972` result.
+
+The two-model mixed-loss comparison completed and selected 75% MPNet / 25%
+MiniLM. The current workflow refits both students on Train+Dev and generates
+the frozen two-model submission.
+See [the two-model workflow](two_model_mixed_loss_ensemble.md).
+The earlier [three-model comparison](pairwise_ensemble_comparison.md) remains
+a completed diagnostic; its maximum-data final fit is inactive. Both paths
+preserve the completed champion and its artifacts.

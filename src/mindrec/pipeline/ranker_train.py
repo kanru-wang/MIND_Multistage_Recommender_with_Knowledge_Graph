@@ -1,19 +1,21 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from pathlib import Path
+import shutil
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-from sklearn.metrics import roc_auc_score
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from mindrec.config import ensure_dir
 from mindrec.data.datasets import PairDataset, collate_batch
 from mindrec.data.featurize import IdMaps
+from mindrec.data.impression_batches import ImpressionBatchSampler
 from mindrec.models.calibration import fit_temperature_scaler
 from mindrec.models.dlrm import DLRMStudent
 from mindrec.models.distill import (
@@ -21,14 +23,21 @@ from mindrec.models.distill import (
     representation_distillation_dims,
     select_representation_distillation_inputs,
 )
+from mindrec.models.ranking_loss import impression_pairwise_loss
 from mindrec.models.teacher import TeacherTwoTower
 from mindrec.pipeline.hard_negative_sampling import build_teacher_hard_negative_pairs
+from mindrec.pipeline.ranker_validation import (
+    evaluate_mean_impression_auc,
+    evaluate_sampled_pair_auc,
+)
 from mindrec.utils import (
     behavior_artifact_path,
     device_info,
+    impression_artifact_path,
     load_json,
     log_device,
     pair_artifact_path,
+    preserve_random_state,
     resolve_device,
     save_json,
     set_seed,
@@ -49,6 +58,29 @@ class StudentProjHead(nn.Module):
 
 
 def run_train_ranker(cfg: dict[str, Any]) -> None:
+    selection_cfg = dict(cfg.get("ranker", {}).get("checkpoint_selection", {}))
+    track_both = bool(selection_cfg.get("track_both", False))
+    preserve_training_rng = bool(selection_cfg.get("preserve_training_rng", True))
+    grouped_batches = bool(cfg.get("ranker", {}).get("grouped_batches", False))
+    pairwise_weight = float(cfg.get("ranker", {}).get("pairwise_weight", 0.0))
+    if not np.isfinite(pairwise_weight) or pairwise_weight < 0:
+        raise ValueError("ranker.pairwise_weight must be finite and nonnegative.")
+    if pairwise_weight > 0 and not grouped_batches:
+        raise ValueError("Pairwise loss requires ranker.grouped_batches: true.")
+    if track_both and bool(cfg.get("ranker", {}).get("early_stopping", {}).get("enabled", True)):
+        raise ValueError("Dual-selector comparisons require early_stopping.enabled: false and a fixed epoch budget.")
+    selection_metric = str(selection_cfg.get("metric", "sampled_pair_auc"))
+    if selection_metric not in {"sampled_pair_auc", "mean_impression_auc"}:
+        raise ValueError(
+            "ranker.checkpoint_selection.metric must be sampled_pair_auc or mean_impression_auc."
+        )
+    selection_batch_sizes = {
+        "score_batch_size": int(selection_cfg.get("score_batch_size", 2048)),
+        "item_encoding_batch_size": int(selection_cfg.get("item_encoding_batch_size", 8192)),
+        "impression_batch_size": int(selection_cfg.get("impression_batch_size", 128)),
+    }
+    if (selection_metric == "mean_impression_auc" or track_both) and min(selection_batch_sizes.values()) < 1:
+        raise ValueError("Validation batch sizes must be at least 1.")
     dist_cfg = dict(cfg.get("ranker", {}).get("distill", {}))
     representation_target = str(dist_cfg.get("representation_target", "full"))
     # Resolve this before data access so invalid experiment configs fail fast.
@@ -72,8 +104,32 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     val_pairs_path = pair_artifact_path(proc_root, val_split)
     data_mode = str(cfg["data"].get("mode", "standard"))
     validation_allowed = data_mode != "leaderboard_submission"
-    has_validation = validation_allowed and val_pairs_path.exists()
-    pairs_val = pd.read_parquet(val_pairs_path) if has_validation else None
+    val_impressions = None
+    if validation_allowed and (selection_metric == "mean_impression_auc" or track_both):
+        val_impressions_path = impression_artifact_path(proc_root, val_split)
+        if not val_impressions_path.exists():
+            raise FileNotFoundError(
+                f"Full-candidate checkpoint selection requires {val_impressions_path}. "
+                "Run preprocessing first."
+            )
+        val_impressions = pd.read_parquet(val_impressions_path)
+        if val_impressions.empty:
+            raise ValueError("Full-candidate validation impressions must not be empty.")
+    if track_both and validation_allowed and not val_pairs_path.exists():
+        raise FileNotFoundError(f"Dual-selector comparison requires {val_pairs_path}.")
+    has_validation = validation_allowed and (
+        val_impressions is not None or val_pairs_path.exists()
+    )
+    pairs_val = (
+        pd.read_parquet(val_pairs_path)
+        if validation_allowed and (selection_metric == "sampled_pair_auc" or track_both) and val_pairs_path.exists()
+        else None
+    )
+    selection_mode = (
+        ("mean_impression_auc" if selection_metric == "mean_impression_auc" else "validation_auc")
+        if has_validation else "fixed_epoch"
+    )
+    print(f"Ranker checkpoint selection: {selection_mode} (split={val_split})")
 
     dense_cols = ["history_len", "item_clicks_log1p"]
 
@@ -83,6 +139,7 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
 
     runs_root = ensure_dir(Path("runs") / cfg["run_name"])
     art_root = ensure_dir(runs_root / "ranker")
+    save_json(art_root / "training_config.json", cfg)
 
     ranker_base_name = (
         "item_ranker_base_emb.npy"
@@ -254,9 +311,18 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     )
 
     bsz = int(cfg["ranker"]["batch_size"])
-    train_loader = DataLoader(
-        train_ds, batch_size=bsz, shuffle=True, num_workers=0, collate_fn=collate_batch
-    )
+    group_sampler = None
+    if grouped_batches:
+        if "impression_idx" not in pairs_train:
+            raise ValueError("Grouped training requires impression_idx. Rebuild training pairs with current preprocessing.")
+        group_sampler = ImpressionBatchSampler(pairs_train["impression_idx"], bsz, seed)
+        train_loader = DataLoader(
+            train_ds, batch_sampler=group_sampler, num_workers=0, collate_fn=collate_batch,
+        )
+    else:
+        train_loader = DataLoader(
+            train_ds, batch_size=bsz, shuffle=True, num_workers=0, collate_fn=collate_batch
+        )
     val_loader = (
         DataLoader(
             val_ds,
@@ -283,16 +349,22 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
     es_min_delta = float(es_cfg.get("min_delta", 1.0e-4))
 
     epochs = int(cfg["ranker"]["epochs"])
+    if epochs < 1:
+        raise ValueError("ranker.epochs must be at least 1.")
 
     best_auc = -1.0
     best_epoch = 0
     epochs_without_improvement = 0
     stop_reason = "max_epochs"
-    epoch_metrics: list[dict[str, float | int]] = []
+    epoch_metrics: list[dict[str, Any]] = []
+    best_by_metric: dict[str, Any] = {}
     for ep in range(1, epochs + 1):
+        if group_sampler is not None:
+            group_sampler.set_epoch(ep - 1)
         model.train()
         proj.train()
         losses = []
+        pairwise_losses = []
         for batch in tqdm(train_loader, desc=f"Train ep {ep}"):
             batch = to_device(batch, device)
             item_base_batch = item_base_tensor[batch["news_idx"]]
@@ -325,6 +397,10 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             )
             y = batch["label"]
             loss_rank = nn.functional.binary_cross_entropy_with_logits(logits, y)
+            if pairwise_weight > 0:
+                loss_pairwise = impression_pairwise_loss(logits, y, batch["impression_idx"])
+                loss_rank = loss_rank + pairwise_weight * loss_pairwise
+                pairwise_losses.append(float(loss_pairwise.detach().item()))
 
             # teacher logit as cosine / inner product (embeddings are normalized)
             tlogit = (tu * ti).sum(dim=1)
@@ -381,40 +457,42 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             opt.step()
             losses.append(float(loss.item()))
 
-        # Validation AUC on the split returned by validation_split_name(cfg).
+        # Raw-logit validation, using the configured checkpoint selection metric.
         model.eval()
         proj.eval()
         auc: float | None = None
-        if val_loader is not None:
-            ys = []
-            ps = []
-            with torch.no_grad():
-                for batch in tqdm(val_loader, desc=f"Val ep {ep}"):
-                    batch = to_device(batch, device)
-                    logits, _ = model(
-                        user_idx=batch["user_idx"],
-                        news_idx=batch["news_idx"],
-                        cat_idx=batch["cat_idx"],
-                        subcat_idx=batch["subcat_idx"],
-                        dense=batch["dense"],
-                        item_base=item_base_tensor[batch["news_idx"]],
-                        history_item_base=item_base_tensor[batch["hist_news_idx"]],
-                        history_mask=batch["hist_mask"],
-                        is_new_item=batch["is_new_item"],
-                        return_repr=False,
-                    )
-                    ys.extend(batch["label"].detach().cpu().numpy().tolist())
-                    ps.extend(torch.sigmoid(logits).detach().cpu().numpy().tolist())
-            try:
-                auc = float(roc_auc_score(ys, ps))
-            except ValueError:
-                auc = 0.0
+        validation_stats: dict[str, Any] = {}
+        metrics: dict[str, float] = {}
+        with preserve_random_state() if preserve_training_rng else nullcontext():
+            if val_impressions is not None:
+                validation_stats = evaluate_mean_impression_auc(
+                    model, item_base, val_impressions, device,
+                    **selection_batch_sizes,
+                    description=f"Val ep {ep}: mean impression AUC",
+                )
+                metrics["mean_impression_auc"] = float(validation_stats["auc"])
+            if val_loader is not None:
+                sampled_stats = evaluate_sampled_pair_auc(
+                    model, item_base_tensor, val_loader, device,
+                    description=f"Val ep {ep}: sampled pair AUC",
+                )
+                metrics["sampled_pair_auc"] = float(sampled_stats["auc"])
+                validation_stats["sampled_pairs"] = sampled_stats
+        if has_validation:
+            auc = metrics[selection_metric]
+            if not all(np.isfinite(value) for value in metrics.values()):
+                raise ValueError("Checkpoint selection requires finite validation metrics.")
+            validation_stats["auc"] = auc
+        validation_stats["metrics"] = metrics
 
         epoch_metrics.append(
             {
                 "epoch": ep,
                 "train_loss_mean": float(np.mean(losses) if losses else 0.0),
                 "val_auc": auc,
+                "val_auc_metric": selection_metric if has_validation else None,
+                "validation": validation_stats,
+                "pairwise_loss_mean": float(np.mean(pairwise_losses)) if pairwise_losses else None,
             }
         )
         save_json(art_root / "epochs.json", epoch_metrics)
@@ -427,23 +505,42 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             if has_validation and auc is not None:
                 best_auc = auc
             best_epoch = ep
-            torch.save(
-                {
-                    "model": model.state_dict(),
-                    "proj": proj.state_dict(),
-                    "cfg": cfg,
-                    "epoch": ep,
-                    "val_auc": auc,
-                    "selection_mode": "validation_auc" if has_validation else "fixed_epoch",
-                },
-                art_root / "best.pt",
-            )
+        for metric in (list(metrics) if track_both else [selection_metric]):
+            score = metrics.get(metric)
+            previous = best_by_metric.get(metric)
+            if has_validation and previous is not None and score <= previous["score"]:
+                continue
+            name = f"best_{metric}.pt" if track_both and has_validation else "best.pt"
+            payload = {
+                "model": model.state_dict(),
+                "proj": proj.state_dict(),
+                "cfg": cfg,
+                "epoch": ep,
+                "val_auc": score,
+                "selection_mode": (
+                    ("validation_auc" if metric == "sampled_pair_auc" else metric)
+                    if has_validation else "fixed_epoch"
+                ),
+                "val_auc_metric": metric if has_validation else None,
+                "validation": {**validation_stats, "auc": score},
+            }
+            torch.save(payload, art_root / name)
+            best_by_metric[metric] = {"epoch": ep, "score": score, "metrics": dict(metrics), "checkpoint": name}
+            if track_both and metric == selection_metric:
+                shutil.copyfile(art_root / name, art_root / "best.pt")
         if not has_validation:
             epochs_without_improvement = 0
         elif significant_improvement:
             epochs_without_improvement = 0
         else:
             epochs_without_improvement += 1
+
+        if auc is not None:
+            print(
+                f"Epoch {ep}: " + ", ".join(f"{key}={value:.6f}" for key, value in metrics.items()) + "; "
+                f"best={best_auc:.6f} (epoch {best_epoch}); "
+                f"patience={epochs_without_improvement}/{es_patience}"
+            )
 
         if es_enabled and epochs_without_improvement >= es_patience:
             stop_reason = "early_stopping"
@@ -456,7 +553,12 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             "has_validation": has_validation,
             "best_val_auc": best_auc if has_validation else None,
             "best_epoch": best_epoch,
-            "selection_mode": "validation_auc" if has_validation else "fixed_epoch",
+            "selection_mode": selection_mode,
+            "val_auc_metric": selection_metric if has_validation else None,
+            "best_by_metric": best_by_metric,
+            "preserve_training_rng": preserve_training_rng,
+            "grouped_batches": grouped_batches,
+            "pairwise_weight": pairwise_weight,
             "early_stopping_enabled": es_enabled,
             "early_stopping_patience": es_patience,
             "early_stopping_min_delta": es_min_delta,
@@ -478,11 +580,9 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
 
     checkpoint_path = art_root / "best.pt"
     cal_cfg = dict(cfg["ranker"].get("calibration", {}))
-    ckpt = torch.load(checkpoint_path, map_location=device)
-    model.load_state_dict(ckpt["model"])
-    model.eval()
-
-    calibration_enabled = bool(cal_cfg.get("enabled", True)) and val_loader is not None
+    calibration_enabled = (
+        bool(cal_cfg.get("enabled", True)) and validation_allowed and val_pairs_path.exists()
+    )
     if not calibration_enabled:
         calib_path = art_root / "calibration.json"
         if calib_path.exists():
@@ -491,10 +591,24 @@ def run_train_ranker(cfg: dict[str, Any]) -> None:
             art_root / "calibration_stats.json",
             {
                 "enabled": False,
-                "reason": "disabled_final_fit_or_no_validation_split",
+                "reason": (
+                    "disabled_in_config" if not bool(cal_cfg.get("enabled", True))
+                    else "disabled_final_fit" if not validation_allowed
+                    else "no_sampled_validation_pairs"
+                ),
             },
         )
         return
+
+    # Full-impression selection needs sampled pairs only for this optional fit.
+    if val_loader is None:
+        val_loader = DataLoader(
+            PairDataset(pd.read_parquet(val_pairs_path), dense_cols=dense_cols),
+            batch_size=bsz, shuffle=False, num_workers=0, collate_fn=collate_batch,
+        )
+    ckpt = torch.load(checkpoint_path, map_location=device)
+    model.load_state_dict(ckpt["model"])
+    model.eval()
 
     logits_all = []
     labels_all = []

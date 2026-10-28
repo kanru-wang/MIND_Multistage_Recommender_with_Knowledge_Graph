@@ -40,7 +40,7 @@ class PairDataset(Dataset):
         r = self.pairs.iloc[idx]
         dense = np.array([float(r[c]) for c in self.dense_cols], dtype=np.float32)
         hist_news_idx = np.array(r["hist_news_idx"], dtype=np.int64)
-        return {
+        sample = {
             "user_idx": torch.tensor(int(r["user_idx"]), dtype=torch.long),
             "news_idx": torch.tensor(int(r["news_idx"]), dtype=torch.long),
             "cat_idx": torch.tensor(int(r["cat_idx"]), dtype=torch.long),
@@ -56,6 +56,9 @@ class PairDataset(Dataset):
             ),
             "news_id": r["news_id"],
         }
+        if "impression_idx" in self.pairs.columns:
+            sample["impression_idx"] = torch.tensor(int(r["impression_idx"]), dtype=torch.long)
+        return sample
 
 
 def collate_batch(batch: list[dict[str, Any]]) -> dict[str, Any]:
@@ -84,4 +87,6 @@ def collate_batch(batch: list[dict[str, Any]]) -> dict[str, Any]:
     out["hist_news_idx"] = hist
     out["hist_mask"] = hist_mask
     out["news_id"] = [b["news_id"] for b in batch]
+    if "impression_idx" in batch[0]:
+        out["impression_idx"] = torch.stack([b["impression_idx"] for b in batch])
     return out

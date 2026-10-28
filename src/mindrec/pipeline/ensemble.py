@@ -26,6 +26,7 @@ from mindrec.data.recency_tiebreaker import apply_recency_tiebreaker, recency_ti
 from mindrec.pipeline.evaluate import _load_model
 from mindrec.pipeline.ranker_scoring import (
     precompute_item_semantics,
+    prepare_impression_group,
     score_prepared_groups,
 )
 from mindrec.pipeline.submission import _has_near_tied_scores, _score_reference_group, _scores_to_ranks
@@ -398,24 +399,7 @@ def _write_ensemble_submission(
 
 
 def _prepare_group(row: Any) -> tuple[dict[str, Any], np.ndarray]:
-    labels = np.asarray(row.cand_label, dtype=np.int32)
-    clicks = np.asarray(row.cand_item_clicks_log1p, dtype=np.float32)
-    dense = np.stack(
-        [np.full_like(clicks, float(row.history_len)), clicks],
-        axis=1,
-    )
-    return (
-        {
-            "user_idx": int(row.user_idx),
-            "hist_news_idx": [int(x) for x in row.hist_news_idx],
-            "cand_news_idx": np.asarray(row.cand_news_idx, dtype=np.int64),
-            "cand_cat_idx": np.asarray(row.cand_cat_idx, dtype=np.int64),
-            "cand_subcat_idx": np.asarray(row.cand_subcat_idx, dtype=np.int64),
-            "cand_is_new": np.asarray(row.cand_is_new_item, dtype=np.int64),
-            "dense": dense,
-        },
-        labels,
-    )
+    return prepare_impression_group(row._asdict()), np.asarray(row.cand_label, dtype=np.int32)
 
 
 def _empty_metric_sums(n_weights: int) -> dict[str, np.ndarray]:
@@ -439,9 +423,14 @@ def _accumulate_rank_metrics(
     primary_ranks = _scores_to_ranks(primary_scores)
     secondary_ranks = _scores_to_ranks(secondary_scores)
     order = np.stack([_borda_order(primary_ranks, secondary_ranks, float(w)) for w in weights])
+    _accumulate_order_metrics(sums, order, labels)
+
+
+def _accumulate_order_metrics(sums, order, labels):
+    """Shared MIND metrics for already ordered rank-fusion candidates."""
     fused_ranks = np.empty_like(order)
     fused_ranks[
-        np.arange(len(weights))[:, None],
+        np.arange(len(order))[:, None],
         order,
     ] = np.arange(1, len(labels) + 1, dtype=np.float64)[None, :]
     positives = labels == 1
@@ -465,98 +454,91 @@ def _accumulate_rank_metrics(
         sums[f"ndcg@{k}"] += dcg / ideal if ideal > 0 else 0.0
 
 
-def _score_split(
-    proc_root: Path,
-    split_name: str,
-    runtimes: list[_MemberRuntime],
-    weights: np.ndarray,
-    batch_size: int,
-    candidate_buffer_size: int,
-    device: torch.device,
-    *,
-    recency: _RecencyRuntime | None = None,
-    exact_rank_guard_threshold: float = 1e-5,
-    reference_batch_size: int = 2048,
-) -> dict[str, Any]:
-    path = proc_root / f"{split_name}_impressions.parquet"
-    impressions = pd.read_parquet(path)
+def _iter_scored_batches(
+    impressions, runtimes, batch_size, candidate_buffer_size, device, *,
+    recency=None, exact_rank_guard_threshold=1e-5, reference_batch_size=2048,
+    description="Rank-ensemble scoring",
+):
+    """Common inference, reference guard and recency path for rank ensembles."""
     if recency is not None and not {"time", "cand_news_id"}.issubset(impressions.columns):
         raise ValueError("Recency evaluation requires time and cand_news_id columns.")
-    sums = _empty_metric_sums(len(weights))
-    n_scored = 0
-    n_skipped = 0
-    pending_groups: list[dict[str, Any]] = []
-    pending_labels: list[np.ndarray] = []
+    pending_groups, pending_labels = [], []
     pending_candidates = 0
 
-    progress = tqdm(total=len(impressions), desc=f"Rank-ensemble evaluation ({split_name})")
-
-    def flush() -> None:
-        nonlocal n_scored, n_skipped, pending_candidates
-        if not pending_groups:
-            return
+    def score_pending():
         member_scores = []
         for runtime in runtimes:
             scores_by_group = score_prepared_groups(
-                model=runtime.model,
-                groups=pending_groups,
-                encoded_items=runtime.encoded_items,
-                item_semantics=runtime.item_semantics,
-                batch_size=batch_size,
-                device=device,
+                model=runtime.model, groups=pending_groups,
+                encoded_items=runtime.encoded_items, item_semantics=runtime.item_semantics,
+                batch_size=batch_size, device=device,
             )
+            if len(scores_by_group) != len(pending_groups):
+                raise ValueError("Missing ensemble scores for an impression.")
             adjusted_scores = []
             for group, scores in zip(pending_groups, scores_by_group):
+                if len(scores) != len(group["cand_news_idx"]) or not np.isfinite(scores).all():
+                    raise ValueError("Ensemble scoring requires a finite score for every candidate.")
                 if _has_near_tied_scores(scores, exact_rank_guard_threshold):
                     scores = _score_reference_group(
                         runtime.model, group, runtime.item_base, reference_batch_size, device,
                     )
                 if recency is not None:
                     scores = apply_recency_tiebreaker(scores, group["recency_ages"], recency.alpha)
+                if not np.isfinite(scores).all():
+                    raise ValueError("Reference/recency scoring produced non-finite scores.")
                 adjusted_scores.append(scores)
             member_scores.append(adjusted_scores)
-        for primary, secondary, labels in zip(
-            member_scores[0], member_scores[1], pending_labels
-        ):
+        return member_scores
+
+    with tqdm(total=len(impressions), desc=description, unit="impr") as progress:
+        for row in impressions.itertuples(index=False):
+            group, labels = _prepare_group(row)
+            if recency is not None:
+                group["recency_ages"] = recency.ages(row)
+            pending_groups.append(group)
+            pending_labels.append(labels)
+            pending_candidates += len(labels)
+            if pending_candidates >= candidate_buffer_size:
+                yield score_pending(), pending_labels
+                progress.update(len(pending_groups))
+                pending_groups, pending_labels = [], []
+                pending_candidates = 0
+        if pending_groups:
+            yield score_pending(), pending_labels
+            progress.update(len(pending_groups))
+
+
+def _score_split(
+    proc_root: Path, split_name: str, runtimes: list[_MemberRuntime],
+    weights: np.ndarray, batch_size: int, candidate_buffer_size: int,
+    device: torch.device, *, recency: _RecencyRuntime | None = None,
+    exact_rank_guard_threshold: float = 1e-5, reference_batch_size: int = 2048,
+) -> dict[str, Any]:
+    impressions = pd.read_parquet(proc_root / f"{split_name}_impressions.parquet")
+    sums = _empty_metric_sums(len(weights))
+    n_scored = n_skipped = 0
+    for scores, labels_by_group in _iter_scored_batches(
+        impressions, runtimes, batch_size, candidate_buffer_size, device,
+        recency=recency, exact_rank_guard_threshold=exact_rank_guard_threshold,
+        reference_batch_size=reference_batch_size,
+        description=f"Rank-ensemble evaluation ({split_name})",
+    ):
+        for primary, secondary, labels in zip(scores[0], scores[1], labels_by_group):
             if labels.sum() <= 0:
                 n_skipped += 1
                 continue
             _accumulate_rank_metrics(sums, weights, primary, secondary, labels)
             n_scored += 1
-        progress.update(len(pending_groups))
-        pending_groups.clear()
-        pending_labels.clear()
-        pending_candidates = 0
-
-    for row in impressions.itertuples(index=False):
-        group, labels = _prepare_group(row)
-        if recency is not None:
-            group["recency_ages"] = recency.ages(row)
-        pending_groups.append(group)
-        pending_labels.append(labels)
-        pending_candidates += len(labels)
-        if pending_candidates >= candidate_buffer_size:
-            flush()
-    flush()
-    progress.close()
-
-    metrics = []
-    for index, weight in enumerate(weights):
-        metrics.append(
-            {
-                "primary_weight": float(weight),
-                "secondary_weight": float(1.0 - weight),
-                **{
-                    name: float(values[index] / n_scored) if n_scored else 0.0
-                    for name, values in sums.items()
-                },
-            }
-        )
+    metrics = [
+        {"primary_weight": float(w), "secondary_weight": float(1.0 - w),
+         **{key: float(values[i] / n_scored) if n_scored else 0.0
+            for key, values in sums.items()}}
+        for i, w in enumerate(weights)
+    ]
     return {
-        "split": split_name,
-        "n_impressions": int(len(impressions)),
-        "n_scored_impressions": n_scored,
-        "n_skipped_impressions": n_skipped,
+        "split": split_name, "n_impressions": int(len(impressions)),
+        "n_scored_impressions": n_scored, "n_skipped_impressions": n_skipped,
         "recency_alpha": recency.alpha if recency is not None else 0.0,
         "metrics": metrics,
     }

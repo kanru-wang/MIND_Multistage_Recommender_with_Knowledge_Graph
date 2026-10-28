@@ -2,6 +2,38 @@
 
 This registry names the split protocol behind each major result set. Use it before comparing metrics: runs are only comparable when their validation protocol is the same.
 
+## Latest reported Large Test result (2026-10-29)
+
+**Best reported Large Test AUC: `0.6990`**, reported by the user from the
+competition platform on 2026-10-29 (Australia/Sydney). This is an absolute
+**`+0.0018`** over the preserved previous champion (`0.6972`). Hidden test
+labels remain unavailable locally; the score is user-reported, not a local
+AUC computation.
+
+The submission combines exactly **75% mixed-loss MPNet student / 25% mixed-loss
+MiniLM student**, using integer weighted-Borda rank fusion with MPNet rank
+breaking exact fusion ties. Each student uses **BCE + 0.25 * impression-normalized
+pairwise loss + teacher distillation**, fits Train+Dev for two fixed epochs,
+and reuses its retained four-epoch final teacher and embeddings. Recency
+`alpha=0.02` is applied once to each member before rank fusion.
+
+- Workflow config: `configs/mind_large_two_model_final_fit.yaml`.
+- Student configs: `configs/mind_large_submission_mpnet_p1_pairwise.yaml` and
+  `configs/mind_large_submission_minilm_pairwise.yaml`.
+- Submission ZIP: `runs/mind_large_ensemble_two_mixed_loss_final_75_25_v1/submission/prediction.zip`.
+- ZIP SHA256 recorded in the verified completion marker: `390116e085d61dfabf9fe9d22cbc6cb2107eb8eacab417d18e8731664b5e1bac`.
+- Metadata: `runs/mind_large_ensemble_two_mixed_loss_final_75_25_v1/submission/submission_meta.json`.
+- Temporal selection: `runs/mind_large_ensemble_two_mixed_loss_v1/ensemble/search.json`.
+
+The temporal search selected 75/25 on November 14, improving AUC from
+`0.698596` to `0.699384` (`+0.000788`). With weights frozen, November 15 AUC
+improved from `0.686049` to `0.687125` (`+0.001076`). Those dates remain reused
+development diagnostics; the platform score above is the separate Large Test
+result. This establishes improvement for the submitted end-to-end candidate,
+not a causal attribution of the entire Large Test gain to the loss alone.
+The previous `0.6972` ZIP and its result record remain preserved. Slides have
+not been updated for this result.
+
 ## Configuration background
 
 `configs/mind_large_temporal_baseline.yaml` defines the temporal split and shared defaults inherited by the current MPNet temporal config. It is a configuration dependency, not a separate prerequisite run. Running it directly reproduces the random-negative baseline listed below.
@@ -22,10 +54,166 @@ This registry names the split protocol behind each major result set. Use it befo
 | Large temporal MPNet reranker | Highest full-tuning nDCG subject to aggregate guardrails on Nov 14; frozen Nov-15 follow-up. | Evaluated; 3/4 reporting guardrails pass (pool KL fails) | `configs/mind_large_temporal_mpnet.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_mpnet_candidate_attention_v1/rerank` | `runs/mind_large_temporal_mpnet_candidate_attention_v1/rerank/rerank_eval.json` |
 | Original Large submission MPNet candidate attention + recency | Continue selected MPNet on Large Temporal Val, then fixed four-epoch teacher, fixed two-epoch candidate-attention ranker, and recency `alpha=0.02`. | Completed historical baseline, Large Test AUC `0.6948` | `configs/mind_large_submission_mpnet_candidate_attention_recency_alpha_002.yaml` | `data/processed/MINDlarge_submission` | `runs/mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1` | `runs/mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.zip` |
 | Large MPNet + MiniLM rank ensemble | Select a weighted-Borda MPNet weight on Nov 14, freeze it, report on Nov 15, then fuse the two recency-adjusted hidden-test rank ZIPs. | Completed; user-reported Large Test AUC `0.6960` | `configs/mind_large_ensemble_mpnet_minilm.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_ensemble_mpnet_minilm_rank_v1` | `runs/mind_large_ensemble_mpnet_minilm_rank_v1/ensemble/search.json` |
-| Improved MPNet (lr=1e-5) + MiniLM rank ensemble | Retune the Borda weight using the promoted temporal MPNet from `31ab682`, then fuse its maximum-data ZIP with the same selected MiniLM. | Completed; best reported Large Test AUC `0.6972`; selected 75/25 | `configs/mind_large_ensemble_mpnet_p1_minilm.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1` | `runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/ensemble/search.json` |
+| Improved MPNet (lr=1e-5) + MiniLM rank ensemble | Retune the Borda weight using the promoted temporal MPNet from `31ab682`, then fuse its maximum-data ZIP with the same selected MiniLM. | Completed; previous champion Large Test AUC `0.6972`; selected 75/25 | `configs/mind_large_ensemble_mpnet_p1_minilm.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1` | `runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/ensemble/search.json` |
+| Two mixed-loss students, frozen 75/25 (best reported) | Matched temporal loss comparisons; select weight on Nov 14 and freeze before Nov 15; refit both students on Train+Dev for two epochs. | Completed; user-reported Large Test AUC `0.6990` on 2026-10-29 | `configs/mind_large_two_model_final_fit.yaml` | `data/processed/MINDlarge_submission` | `runs/mind_large_ensemble_two_mixed_loss_final_75_25_v1` | `runs/mind_large_ensemble_two_mixed_loss_final_75_25_v1/submission/prediction.zip` |
 | Rejected Large temporal MPNet student width 96 | Reuse the selected MPNet encoder and 384-dimensional teacher; change only the learned student width from 56 to 96. | Completed/rejected on 2026-08-31; Phase 3 not run | Removed after rejection | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_mpnet_candidate_attention_student_width_96_v1` | `runs/mind_large_temporal_mpnet_candidate_attention_student_width_96_v1/eval/ranker_eval_val.json` |
 | Rejected large temporal candidate-attention item-only distillation v1 | Reuse candidate-attention v1 and change representation distillation from the full user/item target to `item_sem -> teacher_item`, including zero-history rows; teacher-logit distillation and all configured weights remain fixed. | Current repo; completed/rejected | `configs/mind_large_temporal_candidate_attention_item_only_distill.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_candidate_attention_item_only_distill_v1` | `runs/mind_large_temporal_text_adapt_candidate_attention_item_only_distill_v1/eval/ranker_eval_val.json` |
 | Small temporal | Train on `MINDsmall_train` before Nov 14; validate on Nov 14 tail from `MINDsmall_train` plus all `MINDsmall_dev`. | Current repo | `configs/mind_small_temporal_tune.yaml` | `data/processed/MINDsmall_temporal_tune` | `runs/mind_small_temporal_tune` | `runs/mind_small_temporal_tune/eval/ranker_eval_val.json` |
+
+## Closed experimental branches
+
+The following experiments were rejected or superseded. Their unused configs,
+duplicate setup documents and orphaned tests were removed during cleanup on
+2026-10-21. Their runners/model extensions had already been removed. Saved
+checkpoints, comparison files and metric artifacts under `runs/` are retained.
+These are historical results, not instructions to rerun the closed branches.
+
+### Removed configuration index
+
+Every YAML removed in the cleanup is accounted for below. The two prepared
+full-retraining configs were not run; they must not be interpreted as failed
+full-training experiments. Only the associated continuation pilots supplied
+the evidence for closing that branch.
+
+| Removed file under `configs/` | Status and retained evidence |
+| --- | --- |
+| `inbatch_multi_positive_pilot.yaml` | Completed pilot; not promoted. Results and limitations are recorded below under in-batch multi-positive/masking. |
+| `inbatch_positive_mask_pilot.yaml` | Completed pilot and expanded evaluation; not promoted because ranking regressed. Results are recorded below. |
+| `mind_large_temporal_mpnet_inbatch_positive_control.yaml` | Prepared full-retraining control, not run. Removed after the pilot branch was closed; no full-training result is claimed. |
+| `mind_large_temporal_mpnet_inbatch_positive_mask.yaml` | Prepared full-retraining treatment, not run. Removed after the pilot branch was closed; no full-training result is claimed. |
+| `mind_large_temporal_mpnet_relation_weight_0p3.yaml` | Completed and rejected: AUC 0.691009 versus retained 0.691440. See higher KG relation weights below. |
+| `mind_large_temporal_mpnet_relation_weight_1p0.yaml` | Completed and rejected: AUC 0.690835 versus retained 0.691440. See higher KG relation weights below. |
+| `mind_large_temporal_mpnet_no_dense_output.yaml` | Completed and rejected: AUC 0.685379 versus its matched control's 0.688880. See direct dense-output ablation below. |
+| `mind_large_temporal_mpnet_p1_impression_auc.yaml` | Completed standalone selector run, not promoted: AUC 0.689509 versus 0.691440. Superseded by the matched dual-selector experiment described in the next section. |
+
+### In-batch multi-positive and known-positive masking
+
+Both studies used matched short continuations from the selected improved
+MPNet encoder/teacher, not full student retraining. Encoder budgets were 64
+updates and teacher budgets 200 updates, on 20,000 sampled training impressions.
+The expanded comparison used 48,623 eligible impressions from a fixed 50,000
+validation sample (seed 14).
+
+| Variant | Teacher AUC change vs matched control | Teacher nDCG@10 change | Catalogue Recall@200 change |
+| --- | ---: | ---: | ---: |
+| Multi-positive teacher only | +0.000287 | +0.000037 | -0.000051 |
+| Multi-positive encoder only | -0.000404 | -0.000325 | -0.000106 |
+| Multi-positive encoder and teacher | +0.000114 | -0.000034 | -0.000030 |
+| Known-positive masking in both stages | -0.000485 | -0.000599 | -0.000144 |
+
+The multi-positive control teacher had AUC 0.703622, nDCG@10 0.434263 and
+Recall@200 0.040892. Teacher-only AUC's paired 95% interval was
+[+0.000025, +0.000563], but retrieval recall showed no clear benefit.
+Standalone encoder multi-positive loss reduced AUC by 0.000410.
+For masking in both stages, AUC's interval was [-0.000757, -0.000214]
+and nDCG@10's was [-0.000953, -0.000229]. These intervals describe impression
+variation for one training seed, not seed uncertainty, and do not adjust for
+user clustering or multiple comparisons. Validation has been reused.
+
+Decision: stop both branches; retain the original encoder/teacher and the
+selected production checkpoints. Neither experiment establishes improved
+student ranking or retrieval recall. The source/artifact integrity checks and
+full comparison details remain in:
+
+- `runs/mind_large_temporal_inbatch_multi_positive_pilot_v1/`
+- `runs/mind_large_temporal_inbatch_positive_mask_pilot_v2/`
+- `runs/mind_large_temporal_inbatch_positive_mask_pilot_v2/evaluation_50000_seed_14/`
+
+### Higher KG relation weights
+
+The student-only tests reused SHA-256-identical frozen teachers, text embeddings
+and teacher item embeddings. They changed `knowledge_graph.relation_weight`
+while retaining the entity/neighbor/global KG weights, graph, temporal split,
+sampling and student architecture. Every run evaluated 807,988 impressions and
+31,485,663 candidates; training sampling statistics and taxonomy masks matched.
+
+| Relation weight | Mean impression AUC | MRR | nDCG@5 | nDCG@10 |
+| --- | ---: | ---: | ---: | ---: |
+| 0.1, retained improved-MPNet baseline | 0.691440 | 0.337835 | 0.372175 | 0.432364 |
+| 0.3 | 0.691009 | 0.337409 | 0.371868 | 0.431915 |
+| 1.0 | 0.690835 | 0.337246 | 0.371487 | 0.431601 |
+
+All three selected epoch 4 and stopped after epoch 6. Neither stronger weight
+met the +0.001 promotion threshold; both shifted quality toward warm/popular
+items while cold-user and new/rare-item slices regressed. This is descriptive
+single-seed evidence, not proof of the mechanism.
+Decision: retain 0.1 and stop this scalar-weight sweep. Results and preparation
+manifests remain in `runs/mind_large_temporal_mpnet_p1_relation_weight_0p3_v1/`
+and `runs/mind_large_temporal_mpnet_p1_relation_weight_1p0_v1/`.
+
+### Direct dense-output ablation
+
+The removed variant omitted the bottom MLP's direct output from the scorer,
+reducing its first-layer input from 532 to 476 values. Dense embeddings,
+all eight feature vectors, 28 interactions, semantic fusion and distillation
+remained active. This was not a removal of popularity information.
+
+| Metric | Original MPNet control | Without direct dense output | Change |
+| --- | ---: | ---: | ---: |
+| Mean impression AUC | 0.688880 | 0.685379 | -0.003501 |
+| MRR | 0.336397 | 0.333980 | -0.002417 |
+| nDCG@5 | 0.371215 | 0.367857 | -0.003358 |
+| nDCG@10 | 0.431291 | 0.428079 | -0.003212 |
+
+Both evaluations used the same 807,988 impressions and 31,485,663 candidates.
+The original MPNet control differs from the later improved-MPNet baseline.
+All six headline ranking metrics regressed, including both recall metrics.
+The latest chronological quarter lost 0.010875 AUC. Sampled-pair selection AUC
+rose slightly (+0.000231), illustrating its mismatch with impression ranking.
+Decision: retain the original scorer. The saved evaluation remains at
+`runs/mind_large_temporal_mpnet_no_dense_output_v1/eval/ranker_eval_val.json`.
+
+## Current ranker loss and checkpoint-selection experiment
+
+The standalone full-impression checkpoint-selector run reached AUC 0.689509,
+below the promoted single model's 0.691440. Its training trajectory differed
+because validation changed random-state consumption. That run was not promoted;
+its setup config has been superseded, and its artifacts remain in
+`runs/mind_large_temporal_mpnet_p1_impression_auc_v1/`.
+
+The subsequent matched loss comparison completed eight epochs per arm. Both
+arms use the same grouped sampled-impression batches and preserve training RNG
+state across validation. Architecture, teacher, sampling and distillation are
+fixed. Each epoch is evaluated by both selectors on the same model weights.
+
+| Supervised objective | Best impression-AUC epoch | Mean impression AUC | Sampled-AUC selector's epoch |
+| --- | ---: | ---: | ---: |
+| BCE control | 4 | 0.687608 | 4 |
+| BCE + 0.25 * impression-normalized pairwise loss | 3 | 0.692355 | 2 |
+
+The mixture gains +0.004747 over its matched BCE control and +0.000915 over
+the historical promoted single model. In the mixture run, impression-AUC
+selection adds +0.001478 relative to the sampled selector's chosen epoch.
+Both evaluations cover 807,988 impressions and 31,485,663 candidates.
+These matched-loss results are temporal validation evidence. The subsequent
+two-model maximum-data submission achieved user-reported Large Test AUC 0.6990,
+replacing 0.6972 as the best reported submission. Pure supervised
+pairwise loss, higher mixture weights and sampled listwise loss remain untested.
+
+Active configs: `configs/mind_large_temporal_mpnet_p1_dual_bce.yaml` and
+`configs/mind_large_temporal_mpnet_p1_dual_pairwise.yaml`.
+See [the comparison workflow](ranker_loss_comparison.md). The completed report
+is `runs/mind_large_temporal_mpnet_p1_loss_comparison_v1/comparison.json`.
+
+The subsequent frozen ensemble experiment completed. A 50% pairwise-model
+share, keeping the previous ensemble's internal 75/25 ratio, selected effective
+weights 37.5/12.5/50. November 14 AUC improved from 0.698596 to 0.701471;
+November 15 AUC improved from 0.686049 to 0.687562. These reused validation
+diagnostics support a maximum-data candidate, not a new Large Test claim.
+The saved report is
+`runs/mind_large_ensemble_mpnet_p1_minilm_pairwise_share_v1/ensemble/search.json`.
+The unused three-model final-fit workflow was removed in favor of the
+frozen two-model candidate. Its completed temporal diagnostic is retained.
+
+The completed follow-up uses exactly two mixed-loss students. It adds a
+matched MiniLM BCE versus BCE + 0.25 pairwise comparison using the retained
+MiniLM teacher and the same eight-epoch dual-selector protocol. The runner
+accepts `--backbone minilm`; existing MPNet defaults remain unchanged. The
+standalone `configs/mind_large_ensemble_two_mixed_loss.yaml` then searches
+weights for the retained mixed-loss MPNet and new mixed-loss MiniLM on Nov 14,
+freezes selection, and reports Nov 15 against the saved champion temporal
+metrics. Temporal training, ensemble search and maximum-data execution completed;
+the user reported Large Test AUC `0.6990` on 2026-10-29. See [the current workflow](two_model_mixed_loss_ensemble.md).
 
 ## Latest Completed Large Temporal Baseline
 
@@ -255,7 +443,8 @@ The hard-negative v3 run applied 1 teacher-hard plus 3 random negatives to all c
 | Original MPNet candidate attention, selected schedule | Phase 1 update 9,000 + 2,000 Phase 3 updates; adapted `all-mpnet-base-v2` | `MINDlarge_train + MINDlarge_dev` | 4 | 2 | 0.02 | 0.6948 | 2,370,727 | `runs/mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.zip` |
 | MPNet + selected candidate-attention MiniLM weighted-Borda ensemble | 75% MPNet ranks + 25% MiniLM ranks; MPNet breaks exact fusion ties | Same two maximum-data members above | 4 | 2 | Included in both members | 0.6960 | 2,370,727 | `runs/mind_large_ensemble_mpnet_minilm_rank_v1/submission/prediction.zip` |
 | Improved MPNet single model (`31ab682`) | MPNet text-encoder lr=1e-5, selected update 9,000, then 2,000 continuation updates | `MINDlarge_train + MINDlarge_dev` | 4 | 2 | 0.02 | 0.6960 | 2,370,727 | `runs/mind_large_submission_mpnet_p1_output/submission/prediction.zip` |
-| **Improved MPNet + selected candidate-attention MiniLM weighted-Borda ensemble (best reported)** | 75% improved MPNet (`31ab682`) ranks + 25% MiniLM ranks; MPNet breaks exact fusion ties | Same improved MPNet and selected MiniLM maximum-data members | 4 | 2 | Included in both members (`0.02`) | **0.6972** | 2,370,727 | `runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/submission/prediction.zip` |
+| Improved MPNet + selected candidate-attention MiniLM weighted-Borda ensemble (previous champion) | 75% improved MPNet (`31ab682`) ranks + 25% MiniLM ranks; MPNet breaks exact fusion ties | Same improved MPNet and selected MiniLM maximum-data members | 4 | 2 | Included in both members (`0.02`) | **0.6972** | 2,370,727 | `runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/submission/prediction.zip` |
+| **Mixed-loss MPNet + MiniLM weighted-Borda ensemble (best reported)** | 75% MPNet / 25% MiniLM; both students use BCE + 0.25 * pairwise + distillation | `MINDlarge_train + MINDlarge_dev` | 4 (reused per member) | 2 per member | 0.02 per member | **0.6990** | 2,370,727 | `runs/mind_large_ensemble_two_mixed_loss_final_75_25_v1/submission/prediction.zip` |
 | Rejected attentive multi-view v1 | Separate title/abstract encoding with a jointly trained attentive gate | `MINDlarge_train + MINDlarge_dev` | 1 | 3 | 0.02 | 0.6746 | 2,370,727 | `runs/mind_large_submission_text_adapt_multiview_low_lr_3ep_recency_alpha_002_v1/submission/prediction.zip` |
 | Rejected replay 85/10/5 | Phase 1 update 6,000 + 2,000 replay-mixture updates | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6800 | 2,370,727 | `runs/mind_large_submission_text_adapt_replay_85_10_5_recency_alpha_002_v1/submission/prediction.zip` |
 | Rejected Nov 15 overweight 45/55 | Phase 1 update 6,000 + 2,000 date-weighted updates | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6796 | 2,370,727 | `runs/mind_large_submission_text_adapt_nov15_weighted_recency_alpha_002_v1/submission/prediction.zip` |
@@ -265,7 +454,7 @@ The hard-negative v3 run applied 1 teacher-hard plus 3 random negatives to all c
 
 The adapted-text submission first improved Large Test AUC from `0.6724` to `0.6848` (`+0.0124`). Candidate-aware pooling then improved matched temporal validation AUC from `0.664328` to `0.671593`. Its original one-epoch maximum-data schedule remained at `0.6848`, while transferring the selected `lr=1e-4`, `weight_decay=3e-5` schedule for two maximum-data epochs reached **`0.6869`**. Original MPNet then raised Large Test AUC to **`0.6948`**. That historical model gained `+0.0079` over selected candidate-attention MiniLM, `+0.0100` over text-adapt v1, and `+0.0224` over the frozen-MiniLM baseline.
 
-The current best single model is the `lr=1e-5` MPNet from `31ab682`, at `0.6960`; the original MPNet+MiniLM ensemble independently achieved `0.6960`. The improved-MPNet+MiniLM ensemble is now the best reported submission at **`0.6972`**, gaining `+0.0012` over both of those results.
+The current best single model is the `lr=1e-5` MPNet from `31ab682`, at `0.6960`; the original MPNet+MiniLM ensemble independently achieved `0.6960`. The previous improved-MPNet+MiniLM ensemble reached **`0.6972`**, gaining `+0.0012` over both of those results. The mixed-loss two-student ensemble is now the best reported submission at **`0.6990`**, a further `+0.0018` gain.
 
 The original rank-only ensemble selected 75% MPNet and 25% MiniLM on the Nov 14 `rerank_tune` view. Mean impression AUC increased from MPNet's `0.693301` to `0.694412` (`+0.001111`). With that weight frozen, Nov 15 AUC increased from `0.683811` to `0.684632` (`+0.000820`). Nov 15 MRR and nDCG were essentially flat but slightly lower, so this is specifically an AUC-targeted leaderboard candidate. The two hidden rank archives agree on the top candidate for only `49.30%` of impressions, providing useful model diversity. The output ZIP and hashes are recorded under `runs/mind_large_ensemble_mpnet_minilm_rank_v1`; its user-reported hidden Large Test AUC is `0.6960`.
 
@@ -308,8 +497,15 @@ Large Test scores were returned by the competition platform; hidden test labels 
 - Use `configs/mind_large_temporal_baseline.yaml` to reproduce the random-negative baseline and `configs/mind_large_temporal_tune.yaml` to reproduce hard-negative v4.
 - Use `configs/mind_large_submission.yaml` only after choosing fixed settings; it trains on `MINDlarge_train + MINDlarge_dev` and writes hidden-test submission ranks.
 - Use `configs/mind_large_submission_mpnet_candidate_attention.yaml` and its recency companion to reproduce the original `0.6948` MPNet. The MiniLM candidate-attention configs reproduce the previous `0.6869` fallback.
-- Use `configs/mind_large_ensemble_mpnet_p1_minilm.yaml` with its completed search artifact for the best reported `0.6972` ensemble. Preserve the saved selection and result record when starting a new experiment.
+- Use `configs/mind_large_two_model_final_fit.yaml` for the best reported `0.6990` two-student ensemble. Preserve its frozen 75/25 selection and submission identity, and retain `configs/mind_large_ensemble_mpnet_p1_minilm.yaml` and its `0.6972` submission as the previous champion.
 
 ## Known Metadata Note
 
 `data/processed/MINDlarge_temporal_tune/preprocess_meta.json` may show the older internal mode name `leaderboard_temporal_tune` if it was generated before the config was renamed to `temporal_tune`. The directory name, split counts, and eval file identify the intended Large temporal protocol. Rerunning preprocess with the current config refreshes the mode string.
+
+The two-model search completed at 75/25, gaining +0.000788 AUC on Nov 14
+and +0.001076 on Nov 15. The implemented `two_model_final_fit` command refits
+both students for two fixed epochs, reuses final teachers, generates hidden-test
+predictions and stages a verified 75/25 ZIP for manual upload. Maximum-data
+execution completed; the user reported platform Large Test AUC **0.6990** on
+2026-10-29, an absolute gain of **+0.0018** over the previous 0.6972 champion.

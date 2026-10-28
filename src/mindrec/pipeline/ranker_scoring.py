@@ -9,6 +9,22 @@ from tqdm import tqdm
 from mindrec.models.dlrm import DLRMStudent
 
 
+def prepare_impression_group(row: Any) -> dict[str, Any]:
+    """Use the same full-candidate features for validation and evaluation."""
+    clicks = np.asarray(row["cand_item_clicks_log1p"], dtype=np.float32)
+    return {
+        "user_idx": int(row["user_idx"]),
+        "hist_news_idx": [int(x) for x in row["hist_news_idx"]],
+        "cand_news_idx": np.asarray(row["cand_news_idx"], dtype=np.int64),
+        "cand_cat_idx": np.asarray(row["cand_cat_idx"], dtype=np.int64),
+        "cand_subcat_idx": np.asarray(row["cand_subcat_idx"], dtype=np.int64),
+        "cand_is_new": np.asarray(row["cand_is_new_item"], dtype=np.int64),
+        "dense": np.stack(
+            [np.full_like(clicks, float(row["history_len"])), clicks], axis=1
+        ),
+    }
+
+
 @torch.inference_mode()
 def precompute_item_semantics(
     model: DLRMStudent,

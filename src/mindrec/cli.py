@@ -7,6 +7,9 @@ from mindrec.config import load_config
 from mindrec.data.item_age import run_build_item_age
 from mindrec.pipeline.evaluate import run_evaluate
 from mindrec.pipeline.ensemble import run_ensemble_search, run_ensemble_submission
+from mindrec.pipeline.pairwise_ensemble import run_pairwise_ensemble_search
+from mindrec.pipeline.two_model_final_fit import run_two_model_final_fit
+from mindrec.pipeline.two_model_ensemble import run_two_model_ensemble_search
 from mindrec.pipeline.preprocess import (
     run_prepare_rerank_holdout,
     run_preprocess,
@@ -82,6 +85,7 @@ def main() -> None:
         help="Evaluate ranker on splits (val and test) from eval.report_splits (many metrics)",
     )
     _add_config_arg(p)
+    p.add_argument("--checkpoint", choices=["best.pt", "best_mean_impression_auc.pt", "best_sampled_pair_auc.pt"])
 
     p = sub.add_parser(
         "rerank_eval",
@@ -113,6 +117,18 @@ def main() -> None:
     )
     _add_config_arg(p)
 
+    p = sub.add_parser("pairwise_ensemble_search", help="Test a frozen pairwise student's share in the existing ensemble")
+    _add_config_arg(p)
+    p.add_argument("--check", action="store_true", help="Read-only source verification; no inference")
+
+    p = sub.add_parser("two_model_final_fit", help="Refit two mixed-loss students and generate the frozen 75/25 submission")
+    _add_config_arg(p)
+    p.add_argument("--check", action="store_true", help="Read-only verification; no training or scoring")
+
+    p = sub.add_parser("two_model_ensemble_search", help="Select a two-student mixed-loss ensemble weight on Nov 14 and report Nov 15")
+    _add_config_arg(p)
+    p.add_argument("--check", action="store_true", help="Verify completed student checkpoints and comparison inputs; no inference")
+
     p = sub.add_parser(
         "build_item_age",
         help="Build the first-seen article-age index used by alpha=0.02",
@@ -121,6 +137,10 @@ def main() -> None:
 
     args = parser.parse_args()
     cfg = load_config(args.config)
+    if args.cmd in ("ensemble_search", "ensemble_submission") and "two_model_ensemble" in cfg:
+        raise ValueError("Use two_model_ensemble_search for this temporal-only mixed-loss config.")
+    if args.cmd == "evaluate" and args.checkpoint:
+        cfg.setdefault("eval", {})["checkpoint_name"] = args.checkpoint
 
     if args.cmd == "preprocess":
         run_preprocess(cfg)
@@ -166,6 +186,15 @@ def main() -> None:
         return
     if args.cmd == "ensemble_submission":
         run_ensemble_submission(cfg)
+        return
+    if args.cmd == "pairwise_ensemble_search":
+        run_pairwise_ensemble_search(cfg, check_only=args.check)
+        return
+    if args.cmd == "two_model_final_fit":
+        run_two_model_final_fit(cfg, check_only=args.check)
+        return
+    if args.cmd == "two_model_ensemble_search":
+        run_two_model_ensemble_search(cfg, check_only=args.check)
         return
     if args.cmd == "build_item_age":
         run_build_item_age(cfg)

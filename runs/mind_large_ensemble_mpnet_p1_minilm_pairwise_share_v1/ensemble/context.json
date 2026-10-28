@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "baseline_selection": {
+    "path": "runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/ensemble/search.json",
+    "sha256": "bbedb4d63e402dc6c33183f00297d3774b528dffab7101113904cc8306670939"
+  },
+  "members": [
+    {
+      "name": "mpnet_p1_candidate_attention",
+      "checkpoint": {
+        "path": "runs/mind_large_temporal_mpnet_p1_promoted/ranker/best.pt",
+        "sha256": "d54181f8706246241941ec6eba52c64f78d07c298000c8b63327372784c4dd47"
+      },
+      "item_embeddings": {
+        "path": "runs/mind_large_temporal_mpnet_p1_promoted/teacher/item_ranker_base_emb.npy",
+        "sha256": "e75848d62afc0d1d48b0443d9482ff4e477d2d493940cb040506dcb548c566b6"
+      }
+    },
+    {
+      "name": "minilm_candidate_attention",
+      "checkpoint": {
+        "path": "runs/mind_large_temporal_text_adapt_candidate_attention_v1/ranker/best.pt",
+        "sha256": "991868ce78bf2145123bf0b8502689b1cd16171e4ee151446bd4b1ee301d8e2c"
+      },
+      "item_embeddings": {
+        "path": "runs/mind_large_temporal_text_adapt_v1/teacher/item_ranker_base_emb.npy",
+        "sha256": "6935c3350066810fd746c169bb607016bdd5561a05173f077904f5209a3e8cb3"
+      }
+    },
+    {
+      "name": "mpnet_p1_bce_pairwise_w025",
+      "checkpoint": {
+        "path": "runs/mind_large_temporal_mpnet_p1_dual_bce_pairwise_w025_v1/ranker/best.pt",
+        "sha256": "b39da18684a481ea780327baae239cc451b6c0ce1b4202c06a400ad0459caa5c"
+      },
+      "item_embeddings": {
+        "path": "runs/mind_large_temporal_mpnet_p1_promoted/teacher/item_ranker_base_emb.npy",
+        "sha256": "e75848d62afc0d1d48b0443d9482ff4e477d2d493940cb040506dcb548c566b6"
+      }
+    }
+  ],
+  "data_artifacts": {
+    "id_maps.json": {
+      "path": "data/processed/MINDlarge_temporal_tune/id_maps.json",
+      "sha256": "11761ea46c02eed056cdef522d3c5f3cc33fcb7b519c90a32dd6d118ed2c5913"
+    },
+    "news.parquet": {
+      "path": "data/processed/MINDlarge_temporal_tune/news.parquet",
+      "sha256": "f178b71e60e089bde60b42de98d5eccd7ba0e26d4360de031274ef6c48f764cb"
+    },
+    "rerank_tune_impressions.parquet": {
+      "path": "data/processed/MINDlarge_temporal_tune/rerank_tune_impressions.parquet",
+      "sha256": "daf29b3ed0cce5d882754e8f0e6f11e6a64fd96b2ce811de916c3dd6985e8b24"
+    },
+    "rerank_test_impressions.parquet": {
+      "path": "data/processed/MINDlarge_temporal_tune/rerank_test_impressions.parquet",
+      "sha256": "9f7e7ce81c713288d4a6a05a157ae2797fb05f4e673ec601385bca7a74acfbf1"
+    },
+    "age_index": {
+      "path": "data/processed/MINDlarge_submission/item_age_index.npz",
+      "sha256": "7003dec351536a22cd96d57e3357ff7bdb02b1a264d2934d58c9ac50e62672e0"
+    },
+    "age_id_maps": {
+      "path": "data/processed/MINDlarge_submission/id_maps.json",
+      "sha256": "025089465a0d693d4a62afe6bbbc31f3059526035024148d62ba88b6037fc0a8"
+    }
+  },
+  "primary_weight": 0.75,
+  "pairwise_share_grid": [
+    0.0,
+    0.1,
+    0.25,
+    0.5
+  ],
+  "tune_split": "rerank_tune",
+  "report_split": "rerank_test",
+  "tune_date": "2019-11-14",
+  "report_date": "2019-11-15",
+  "recency": {
+    "enabled": true,
+    "alpha": 0.02,
+    "age_dataset_name": "MINDlarge_submission",
+    "max_age_hours": 720.0
+  },
+  "scoring": {
+    "batch_size": 2048,
+    "candidate_buffer_size": 65536,
+    "item_encoding_batch_size": 8192,
+    "exact_rank_guard_threshold": 1e-05,
+    "reference_batch_size": 2048
+  },
+  "implementation": {
+    "pipeline/pairwise_ensemble.py": "3dcecfc5905a6a9109e3f2c8a585ad8879c1482101239e19c0d2c3121d292de2",
+    "pipeline/ensemble.py": "382d2c7f21a0dbe5dd3cff0bc207d5387814220cce74a6cc5ed977df499d9983",
+    "pipeline/evaluate.py": "ce0f74daa21989e47ef6528289f2e0f79712e4448a7860f69291390edd0189ee",
+    "pipeline/ranker_scoring.py": "ed9da9febc77581ce9d8ece3cdfb748a60e75b26d2193521e1b7922c06cd5297",
+    "pipeline/submission.py": "cfdf44a6ff6b83fbdc77ac029f83fd4a00a6da54b2d758dd5aa777bad19df826",
+    "models/dlrm.py": "2f6a9b68d34555d9b58dbb6d7d5274f57ef608bae9b5ab14abbbafa90cb4cdb2",
+    "data/item_age.py": "73fd68233cc9d602af39e126985e3fe77f8611084b571154575bf81ecadf56ee",
+    "data/recency_tiebreaker.py": "331cd936b15661df8299e7b6d0e60e6393e086be76cdf252dbce167bdabdba9d"
+  },
+  "fusion": "flat_integer_three_member_borda",
+  "rank_tiebreaker": "original_blend_rank",
+  "share_selection_tiebreaker": "smaller_pairwise_share"
+}

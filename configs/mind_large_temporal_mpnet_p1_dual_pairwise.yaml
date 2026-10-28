@@ -1,0 +1,7 @@
+extends: "mind_large_temporal_mpnet_p1_dual_bce.yaml"
+
+run_name: "mind_large_temporal_mpnet_p1_dual_bce_pairwise_w025_v1"
+
+ranker:
+  # One prespecified auxiliary-loss weight, rather than a validation sweep.
+  pairwise_weight: 0.25

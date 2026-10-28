@@ -42,7 +42,7 @@ def build_pairs(
     ].to_dict(orient="index")
 
     rows = []
-    for _, r in tqdm(beh.iterrows(), total=len(beh), desc="Build pairs"):
+    for impression_idx, (_, r) in enumerate(tqdm(beh.iterrows(), total=len(beh), desc="Build pairs")):
         user_id = str(r["user_id"])
         user_idx = maps.user2idx.get(user_id, 0)
         hist = r["history"]
@@ -79,6 +79,7 @@ def build_pairs(
                 rows.append(
                     {
                         "user_id": user_id,
+                        "impression_idx": impression_idx,
                         "news_id": nid,
                         "user_idx": user_idx,
                         "news_idx": int(meta["news_idx"]),

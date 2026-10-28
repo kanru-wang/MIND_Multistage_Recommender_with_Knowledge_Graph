@@ -97,6 +97,7 @@ def build_teacher_hard_negative_pairs(
         rows.append(
             {
                 "user_id": group["user_id"],
+                "impression_idx": group["impression_idx"],
                 "news_id": nid,
                 "user_idx": group["user_idx"],
                 "news_idx": int(meta["news_idx"]),
@@ -226,9 +227,9 @@ def build_teacher_hard_negative_pairs(
         pending.clear()
 
     teacher_model.eval()
-    for _, behavior in tqdm(
+    for impression_idx, (_, behavior) in enumerate(tqdm(
         beh.iterrows(), total=len(beh), desc="Build hard-negative pools"
-    ):
+    )):
         cand_ids = list(behavior["cand_news_id"])
         labels = list(behavior["cand_label"])
         positive_positions = [
@@ -250,6 +251,7 @@ def build_teacher_hard_negative_pairs(
         cold_u = 1 if is_cold_user(history, min_user_hist_for_warm) else 0
         for positive_position in positive_positions:
             group = {
+                "impression_idx": impression_idx,
                 "user_id": str(behavior["user_id"]),
                 "user_idx": maps.user2idx.get(str(behavior["user_id"]), 0),
                 "hist_news_idx": hist_news_idx,

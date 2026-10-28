@@ -1,0 +1,20 @@
+extends: "mind_large_temporal_candidate_attention.yaml"
+
+run_name: "mind_large_temporal_minilm_dual_bce_v1"
+
+ranker:
+  # Match the MPNet comparison protocol; reuse the retained MiniLM teacher.
+  grouped_batches: true
+  pairwise_weight: 0.0
+  epochs: 8
+  early_stopping:
+    enabled: false
+  checkpoint_selection:
+    metric: "mean_impression_auc"
+    score_batch_size: 2048
+    item_encoding_batch_size: 8192
+    impression_batch_size: 128
+    track_both: true
+    preserve_training_rng: true
+  calibration:
+    enabled: false

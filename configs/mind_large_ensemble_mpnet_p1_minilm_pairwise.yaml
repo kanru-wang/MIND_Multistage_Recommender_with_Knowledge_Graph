@@ -1,0 +1,32 @@
+run_name: "mind_large_ensemble_mpnet_p1_minilm_pairwise_share_v1"
+
+data:
+  processed_root: "data/processed"
+  dataset_name: "MINDlarge_temporal_tune"
+
+posthoc_recency:
+  enabled: true
+  age_dataset_name: "MINDlarge_submission"
+  alpha: 0.02
+  max_age_hours: 720.0
+
+# No inherited submission members or writable champion selection path.
+# The frozen baseline is read explicitly through baseline_config below.
+ensemble:
+  tune_split: "rerank_tune"
+  report_split: "rerank_test"
+  device: "cuda"
+  batch_size: 2048
+  candidate_buffer_size: 65536
+  item_encoding_batch_size: 8192
+  exact_rank_guard_threshold: 1.0e-5
+  reference_batch_size: 2048
+
+pairwise_ensemble:
+  baseline_config: "configs/mind_large_ensemble_mpnet_p1_minilm.yaml"
+  member:
+    name: "mpnet_p1_bce_pairwise_w025"
+    config: "configs/mind_large_temporal_mpnet_p1_dual_pairwise.yaml"
+  pairwise_share_grid: [0.0, 0.10, 0.25, 0.50]
+  tune_date: "2019-11-14"
+  report_date: "2019-11-15"

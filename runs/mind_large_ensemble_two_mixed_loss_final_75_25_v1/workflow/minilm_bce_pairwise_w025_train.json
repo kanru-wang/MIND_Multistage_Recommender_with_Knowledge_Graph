@@ -1,0 +1,9 @@
+{
+  "context_hash": "8b5dfed74e44805f48bdb7c4068a83fbf8e5ccb5cdb082ef6e649618832c2245",
+  "outputs": {
+    "runs/mind_large_submission_minilm_pairwise_w025_2ep_v1/ranker/best.pt": "b53ee62f40eb7373c3f359bc5718dc7415989ebd2a0db017527736616d73fbaa",
+    "runs/mind_large_submission_minilm_pairwise_w025_2ep_v1/ranker/train_summary.json": "8369e13e3e20621aa69500e170d34e808bafbf7ec9b0a846484b2700bb7259c4",
+    "runs/mind_large_submission_minilm_pairwise_w025_2ep_v1/ranker/training_config.json": "8b34b5b1e072236df04ab9a084e7f9fd6ca2ed15d92939b2c1e15dd81b446449",
+    "runs/mind_large_submission_minilm_pairwise_w025_2ep_v1/ranker/epochs.json": "ec671023ee342fb4ce8d74fb5bd86f2bfea81ba03ba5e25b02bb8e8f99af1423"
+  }
+}

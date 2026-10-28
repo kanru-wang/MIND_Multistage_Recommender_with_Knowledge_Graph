@@ -1,0 +1,23 @@
+extends: "promoted/mind_large_mpnet_p1/phase2_selected.yaml"
+
+run_name: "mind_large_temporal_mpnet_p1_dual_bce_v1"
+
+artifacts:
+  teacher_run_name: "mind_large_temporal_mpnet_p1_promoted"
+
+ranker:
+  # Both arms use identical complete-impression batches and eight epochs.
+  grouped_batches: true
+  pairwise_weight: 0.0
+  epochs: 8
+  early_stopping:
+    enabled: false
+  checkpoint_selection:
+    metric: "mean_impression_auc"
+    score_batch_size: 2048
+    item_encoding_batch_size: 8192
+    impression_batch_size: 128
+    track_both: true
+    preserve_training_rng: true
+  calibration:
+    enabled: false

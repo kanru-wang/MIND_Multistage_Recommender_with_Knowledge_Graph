@@ -1,0 +1,12 @@
+run_name: "mind_large_ensemble_two_mixed_loss_final_75_25_v1"
+
+final_fit:
+  temporal_config: "configs/mind_large_ensemble_two_mixed_loss.yaml"
+  expected_impressions: 2370727
+  students:
+    - name: "mpnet_bce_pairwise_w025"
+      config: "configs/mind_large_submission_mpnet_p1_pairwise.yaml"
+      reference_ranker_run: "mind_large_submission_mpnet_p1_ranker"
+    - name: "minilm_bce_pairwise_w025"
+      config: "configs/mind_large_submission_minilm_pairwise.yaml"
+      reference_ranker_run: "mind_large_submission_text_adapt_candidate_attention_low_lr_2ep_v1"

@@ -23,12 +23,14 @@ from mindrec.models.calibration import TemperatureScaler
 from mindrec.models.dlrm import DLRMStudent
 from mindrec.pipeline.ranker_scoring import (
     precompute_item_semantics,
+    prepare_impression_group,
     score_prepared_groups,
 )
 from mindrec.utils import (
     behavior_artifact_path,
     impression_artifact_path,
     log_device,
+    ranker_checkpoint_name,
     resolve_device,
     save_json,
     teacher_artifact_root,
@@ -56,7 +58,7 @@ def _load_model(
     ranker_run_name = str(
         cfg.get("artifacts", {}).get("ranker_run_name", cfg["run_name"])
     )
-    checkpoint_path = Path("runs") / ranker_run_name / "ranker" / "best.pt"
+    checkpoint_path = Path("runs") / ranker_run_name / "ranker" / ranker_checkpoint_name(cfg)
     ckpt = torch.load(checkpoint_path, map_location=device)
     # Post-hoc runs reuse the frozen ranker's architecture and persisted
     # taxonomy masks directly from its checkpoint.
@@ -298,32 +300,17 @@ def _evaluate_split(
             labels = np.array(r["cand_label"], dtype=np.int32)
             if labels.sum() <= 0:
                 continue
-            user_idx = int(r["user_idx"])
-            hist_news_idx = [int(x) for x in list(r["hist_news_idx"])]
-            cand_news_idx = np.array(r["cand_news_idx"], dtype=np.int64)
-            cand_cat_idx = np.array(r["cand_cat_idx"], dtype=np.int64)
-            cand_subcat_idx = np.array(r["cand_subcat_idx"], dtype=np.int64)
-            cand_is_new = np.array(r["cand_is_new_item"], dtype=np.int64)
+            group = prepare_impression_group(r)
+            cand_cat_idx = group["cand_cat_idx"]
+            cand_subcat_idx = group["cand_subcat_idx"]
+            cand_is_new = group["cand_is_new"]
             cand_clicks_log1p = np.array(r["cand_item_clicks_log1p"], dtype=np.float32)
 
             hlen = float(r["history_len"])
-            dense = np.stack(
-                [np.full_like(cand_clicks_log1p, hlen), cand_clicks_log1p], axis=1
-            )
 
             scores = score_prepared_groups(
                 model=model,
-                groups=[
-                    {
-                        "user_idx": user_idx,
-                        "hist_news_idx": hist_news_idx,
-                        "cand_news_idx": cand_news_idx,
-                        "cand_cat_idx": cand_cat_idx,
-                        "cand_subcat_idx": cand_subcat_idx,
-                        "cand_is_new": cand_is_new,
-                        "dense": dense,
-                    }
-                ],
+                groups=[group],
                 encoded_items=encoded_items,
                 item_semantics=item_semantics,
                 batch_size=score_batch_size,
@@ -424,6 +411,7 @@ def _evaluate_split(
         "device": device_str,
         "eval_split": split_name,
         "scoring_mode": "cached_item_and_history_semantics",
+        "checkpoint_name": ranker_checkpoint_name(cfg),
         "score_batch_size": score_batch_size,
     }
     save_json(out_root / f"ranker_eval_{split_name}.json", out)
@@ -434,7 +422,11 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
     ds = cfg["data"]["dataset_name"]
     proc_root = Path(cfg["data"]["processed_root"]) / ds
     runs_root = ensure_dir(Path("runs") / cfg["run_name"])
-    out_root = ensure_dir(runs_root / "eval")
+    checkpoint_name = ranker_checkpoint_name(cfg)
+    out_root = ensure_dir(
+        runs_root / "eval" if checkpoint_name == "best.pt"
+        else runs_root / "eval" / Path(checkpoint_name).stem
+    )
 
     device = resolve_device(cfg["ranker"].get("device", "cuda"))
     device_str = str(device)
@@ -447,7 +439,8 @@ def run_evaluate(cfg: dict[str, Any]) -> None:
         load_teacher_item=False,
     )
     calib_path = runs_root / "ranker" / "calibration.json"
-    scaler = TemperatureScaler.load(calib_path) if calib_path.exists() else None
+    # calibration.json belongs to best.pt, not an alternate selector's weights.
+    scaler = TemperatureScaler.load(calib_path) if checkpoint_name == "best.pt" and calib_path.exists() else None
     eval_splits = _resolve_eval_splits(cfg)
     if not eval_splits:
         return

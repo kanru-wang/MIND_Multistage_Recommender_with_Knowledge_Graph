@@ -1,0 +1,480 @@
+{
+  "config": {
+    "run_name": "mind_large_ensemble_two_mixed_loss_final_75_25_v1",
+    "final_fit": {
+      "temporal_config": "configs/mind_large_ensemble_two_mixed_loss.yaml",
+      "expected_impressions": 2370727,
+      "students": [
+        {
+          "name": "mpnet_bce_pairwise_w025",
+          "config": "configs/mind_large_submission_mpnet_p1_pairwise.yaml",
+          "reference_ranker_run": "mind_large_submission_mpnet_p1_ranker"
+        },
+        {
+          "name": "minilm_bce_pairwise_w025",
+          "config": "configs/mind_large_submission_minilm_pairwise.yaml",
+          "reference_ranker_run": "mind_large_submission_text_adapt_candidate_attention_low_lr_2ep_v1"
+        }
+      ]
+    }
+  },
+  "students": [
+    {
+      "run_name": "mind_large_submission_mpnet_p1_pairwise_w025_2ep_v1",
+      "data": {
+        "raw_root": "data/raw",
+        "dataset_name": "MINDlarge_submission",
+        "mode": "leaderboard_submission",
+        "train_dir": "MINDlarge_train",
+        "dev_dir": "MINDlarge_dev",
+        "test_dir": "MINDlarge_test",
+        "processed_root": "data/processed",
+        "max_history": 50,
+        "min_user_hist_for_warm": 5,
+        "min_item_train_clicks_for_warm": 10,
+        "ranker_negatives_per_positive": 4,
+        "sub_sample": {
+          "enabled": false,
+          "train_impressions": 200000,
+          "dev_impressions": 50000,
+          "seed": 13
+        }
+      },
+      "knowledge_graph": {
+        "enabled": true,
+        "entity_embedding_path": null,
+        "relation_embedding_path": null,
+        "triples_path": "data/processed/MINDlarge/kg_triples.tsv",
+        "max_entities_per_news": 12,
+        "max_neighbors_per_entity": 20,
+        "add_reverse_edges": true,
+        "entity_weight": 1.0,
+        "neighbor_weight": 0.1,
+        "relation_weight": 0.1,
+        "text_feature_weight": 1.0,
+        "kg_feature_weight": 0.25,
+        "normalize_item_base": true,
+        "normalize": true
+      },
+      "teacher": {
+        "model_name": "sentence-transformers/all-mpnet-base-v2",
+        "text_adaptation": {
+          "enabled": true
+        },
+        "text": {
+          "include_category_prefix": false
+        },
+        "batch_size": 128,
+        "user_attn_heads": 4,
+        "user_attn_dim": 384,
+        "lr": 0.0002,
+        "epochs": 4,
+        "early_stopping": {
+          "enabled": false,
+          "patience": 2,
+          "monitor": "retrieval_recall@k",
+          "min_delta": 0.0001
+        },
+        "temperature": 0.05,
+        "negatives_per_positive": 8,
+        "device": "cuda",
+        "encode_batch_size": 64,
+        "weight_decay": 1e-06
+      },
+      "retrieval": {
+        "index_type": "flat_ip",
+        "base_index_type": "flat_ip",
+        "hybrid_base_weight": 0.075,
+        "hybrid_oversample": 26,
+        "sweep": {
+          "hybrid_base_weights": [
+            0.05,
+            0.0625,
+            0.075
+          ],
+          "hybrid_oversamples": [
+            18,
+            22,
+            26
+          ]
+        },
+        "ivf_nlist": 2048,
+        "topk": 200
+      },
+      "ranker": {
+        "batch_size": 1024,
+        "lr": 0.0001,
+        "weight_decay": 3e-05,
+        "epochs": 2,
+        "early_stopping": {
+          "enabled": false,
+          "patience": 2,
+          "min_delta": 1e-05
+        },
+        "device": "cuda",
+        "hard_negative_sampling": {
+          "enabled": true,
+          "pool_size": 20,
+          "hard_fraction": 0.25,
+          "score_batch_size": 512,
+          "teacher_consistent_hard_only": true,
+          "max_score_above_positive": 0.0,
+          "hard_for_cold_users_only": true,
+          "hard_negative_distill_weight": 0.0
+        },
+        "dlrm": {
+          "emb_dim": 56,
+          "id_emb_dim": 8,
+          "news_id_warm_scale": 1.0,
+          "news_id_cold_scale": 0.0,
+          "semantic_ff_mult": 3,
+          "semantic_dropout": 0.2,
+          "bottom_mlp": [
+            64,
+            56
+          ],
+          "top_mlp": [
+            128,
+            64,
+            1
+          ],
+          "dropout": 0.15,
+          "history_pooling": "candidate_attention",
+          "candidate_attention_heads": 4,
+          "candidate_attention_dropout": 0.0
+        },
+        "distill": {
+          "temperature": 2.0,
+          "lambda_logit": 0.7,
+          "lambda_repr": 0.05,
+          "cold_weight": 2.0,
+          "warm_weight": 0.5,
+          "representation_target": "full"
+        },
+        "calibration": {
+          "enabled": false,
+          "lr": 0.05,
+          "max_iter": 100
+        },
+        "grouped_batches": true,
+        "pairwise_weight": 0.25
+      },
+      "rerank": {
+        "output_subdir": "rerank",
+        "k_out": 10,
+        "pool_size": 50,
+        "position_bias": "log",
+        "coverage_weight": 0.075,
+        "coverage": {
+          "max_new_entities_per_item": 3,
+          "category_bonus": 1.0,
+          "entity_bonus": 0.3
+        },
+        "fairness": {
+          "enabled": true,
+          "category_target": "catalog",
+          "penalty_weight": 0.25
+        },
+        "search": {
+          "relative_guardrails": {
+            "max_ndcg_drop_ratio": 0.02,
+            "min_new_item_exposure_gain": 0.0,
+            "min_category_coverage_gain": 0.25,
+            "min_fairness_kl_pool_improvement": 0.03
+          }
+        }
+      },
+      "eval": {
+        "report_splits": [],
+        "ks": [
+          5,
+          10
+        ],
+        "time_periods": 4
+      },
+      "submission": {
+        "split_name": "submission_test",
+        "batch_size": 2048,
+        "candidate_buffer_size": 65536,
+        "exact_rank_guard_threshold": 1e-05,
+        "reference_batch_size": 2048,
+        "item_encoding_batch_size": 8192,
+        "save_scores": false
+      },
+      "artifacts": {
+        "teacher_run_name": "mind_large_submission_mpnet_p1_teacher"
+      },
+      "posthoc_recency": {
+        "enabled": true,
+        "age_dataset_name": "MINDlarge_submission",
+        "alpha": 0.02,
+        "max_age_hours": 720.0
+      }
+    },
+    {
+      "run_name": "mind_large_submission_minilm_pairwise_w025_2ep_v1",
+      "data": {
+        "raw_root": "data/raw",
+        "dataset_name": "MINDlarge_submission",
+        "mode": "leaderboard_submission",
+        "train_dir": "MINDlarge_train",
+        "dev_dir": "MINDlarge_dev",
+        "test_dir": "MINDlarge_test",
+        "processed_root": "data/processed",
+        "max_history": 50,
+        "min_user_hist_for_warm": 5,
+        "min_item_train_clicks_for_warm": 10,
+        "ranker_negatives_per_positive": 4,
+        "sub_sample": {
+          "enabled": false,
+          "train_impressions": 200000,
+          "dev_impressions": 50000,
+          "seed": 13
+        }
+      },
+      "knowledge_graph": {
+        "enabled": true,
+        "entity_embedding_path": null,
+        "relation_embedding_path": null,
+        "triples_path": "data/processed/MINDlarge/kg_triples.tsv",
+        "max_entities_per_news": 12,
+        "max_neighbors_per_entity": 20,
+        "add_reverse_edges": true,
+        "entity_weight": 1.0,
+        "neighbor_weight": 0.1,
+        "relation_weight": 0.1,
+        "text_feature_weight": 1.0,
+        "kg_feature_weight": 0.25,
+        "normalize_item_base": true,
+        "normalize": true
+      },
+      "teacher": {
+        "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+        "text_adaptation": {
+          "enabled": true
+        },
+        "text": {
+          "include_category_prefix": false
+        },
+        "batch_size": 128,
+        "user_attn_heads": 4,
+        "user_attn_dim": 384,
+        "lr": 0.0002,
+        "epochs": 4,
+        "early_stopping": {
+          "enabled": false,
+          "patience": 2,
+          "monitor": "retrieval_recall@k",
+          "min_delta": 0.0001
+        },
+        "temperature": 0.05,
+        "negatives_per_positive": 8,
+        "device": "cuda"
+      },
+      "retrieval": {
+        "index_type": "flat_ip",
+        "base_index_type": "flat_ip",
+        "hybrid_base_weight": 0.075,
+        "hybrid_oversample": 26,
+        "sweep": {
+          "hybrid_base_weights": [
+            0.05,
+            0.0625,
+            0.075
+          ],
+          "hybrid_oversamples": [
+            18,
+            22,
+            26
+          ]
+        },
+        "ivf_nlist": 2048,
+        "topk": 200
+      },
+      "ranker": {
+        "batch_size": 1024,
+        "lr": 0.0001,
+        "weight_decay": 3e-05,
+        "epochs": 2,
+        "early_stopping": {
+          "enabled": false,
+          "patience": 2,
+          "min_delta": 1e-05
+        },
+        "device": "cuda",
+        "hard_negative_sampling": {
+          "enabled": true,
+          "pool_size": 20,
+          "hard_fraction": 0.25,
+          "score_batch_size": 512,
+          "teacher_consistent_hard_only": true,
+          "max_score_above_positive": 0.0,
+          "hard_for_cold_users_only": true,
+          "hard_negative_distill_weight": 0.0
+        },
+        "dlrm": {
+          "emb_dim": 56,
+          "id_emb_dim": 8,
+          "news_id_warm_scale": 1.0,
+          "news_id_cold_scale": 0.0,
+          "semantic_ff_mult": 3,
+          "semantic_dropout": 0.2,
+          "bottom_mlp": [
+            64,
+            56
+          ],
+          "top_mlp": [
+            128,
+            64,
+            1
+          ],
+          "dropout": 0.15,
+          "history_pooling": "candidate_attention",
+          "candidate_attention_heads": 4,
+          "candidate_attention_dropout": 0.0
+        },
+        "distill": {
+          "temperature": 2.0,
+          "lambda_logit": 0.7,
+          "lambda_repr": 0.05,
+          "cold_weight": 2.0,
+          "warm_weight": 0.5
+        },
+        "calibration": {
+          "enabled": false,
+          "lr": 0.05,
+          "max_iter": 100
+        },
+        "grouped_batches": true,
+        "pairwise_weight": 0.25
+      },
+      "rerank": {
+        "output_subdir": "rerank",
+        "k_out": 10,
+        "pool_size": 50,
+        "position_bias": "log",
+        "coverage_weight": 0.075,
+        "coverage": {
+          "max_new_entities_per_item": 3,
+          "category_bonus": 1.0,
+          "entity_bonus": 0.3
+        },
+        "fairness": {
+          "enabled": true,
+          "category_target": "catalog",
+          "penalty_weight": 0.25
+        },
+        "search": {
+          "relative_guardrails": {
+            "max_ndcg_drop_ratio": 0.02,
+            "min_new_item_exposure_gain": 0.0,
+            "min_category_coverage_gain": 0.25,
+            "min_fairness_kl_pool_improvement": 0.03
+          }
+        }
+      },
+      "eval": {
+        "report_splits": [],
+        "ks": [
+          5,
+          10
+        ],
+        "time_periods": 4
+      },
+      "submission": {
+        "split_name": "submission_test",
+        "batch_size": 2048,
+        "candidate_buffer_size": 65536,
+        "exact_rank_guard_threshold": 1e-05,
+        "reference_batch_size": 2048,
+        "item_encoding_batch_size": 8192,
+        "save_scores": false
+      },
+      "artifacts": {
+        "teacher_run_name": "mind_large_submission_text_adapt_v1"
+      },
+      "posthoc_recency": {
+        "enabled": true,
+        "age_dataset_name": "MINDlarge_submission",
+        "alpha": 0.02,
+        "max_age_hours": 720.0
+      }
+    }
+  ],
+  "weights": [
+    0.75,
+    0.25
+  ],
+  "selection_artifact": "runs/mind_large_ensemble_two_mixed_loss_v1/ensemble/search.json",
+  "selection_sha256": "0543c57e8d054128a43babfdaa9bb5dd03d02cc8bfff3cb63068d3385d930f59",
+  "inputs": {
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/__init__.py": "127a5f97f45a9e1402447fe8665792502c0c87f880e7737b1374e4a4796e17db",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/cli.py": "d325a722636b35c8069f650f8294ffd63299943b98047378ccaa39627ca0c6ff",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/config.py": "321d322bedc5bb75270656dc0efe587cc6e613b372c86f9a8f5cf7352012cf95",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/datasets.py": "0d17bac813c5e8c96cf887805b56ca40e62c6545549bdf6229188feec610f29b",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/featurize.py": "f9723f168f946c9833fca7b7a54f94a72d28ad612c82280c686ad95574a04ea8",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/impression_batches.py": "064cf70bf25d19759ca8f3d533089e5e63e425f3e16dae7cea7a52ee23f28237",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/item_age.py": "73fd68233cc9d602af39e126985e3fe77f8611084b571154575bf81ecadf56ee",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/kg.py": "f681b19c737ef1e677231d4cbea04e9ce799a44bd1c6bd6c5442b9d7206f714f",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/mind_io.py": "60070ce53662352974ceb729c078452fc4da30bed773d81718ecd0faee68ff03",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/recency_tiebreaker.py": "331cd936b15661df8299e7b6d0e60e6393e086be76cdf252dbce167bdabdba9d",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/metrics/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/metrics/benchmark.py": "57b7fe9e7ca5b8f4c9bc7a9f65fe758f63001ceb7239c5a69044421feca5bf07",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/metrics/calibration.py": "1a676bf7716ba402168c77162dade78dca7a8fe711988769ad1bad69cbe5715f",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/metrics/diversity.py": "d8a04d0c4c82ba3a42519ac56c2b321f0670abeca2302ede315baedbf82309cf",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/metrics/fairness.py": "5d27e74fa7ef22c38c487ec57188be79559124d4d03a49979591fc7c2cf3575c",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/metrics/ranking.py": "46c516f8812154cdd5f19a240d1ff1d60b87cbe11df90803d5fce57d08656f4c",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/models/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/models/calibration.py": "c03b10b2246555e3be502cf66c5dd653dd9424a114feb51f612eea228c2babe2",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/models/distill.py": "6d9e8925ed11b650456388c8a14c75d60ec7498edebf4784c5f9062e91aacbe8",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/models/dlrm.py": "2f6a9b68d34555d9b58dbb6d7d5274f57ef608bae9b5ab14abbbafa90cb4cdb2",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/models/ranking_loss.py": "6a73daedd921ce595585b4d10f5e6d01b73e64e1ca61920daca63328f3c1ad12",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/models/teacher.py": "d107e5f3005838a1f16f40d792a0e634eaf2b90366d1a10a675c85937ec21809",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/ensemble.py": "382d2c7f21a0dbe5dd3cff0bc207d5387814220cce74a6cc5ed977df499d9983",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/evaluate.py": "ce0f74daa21989e47ef6528289f2e0f79712e4448a7860f69291390edd0189ee",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/hard_negative_sampling.py": "b7bb50e855f3b7291bc141608722962a268035137d91c8c3dea83bef7d048819",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/pairwise_ensemble.py": "3dcecfc5905a6a9109e3f2c8a585ad8879c1482101239e19c0d2c3121d292de2",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/preprocess.py": "9e9673e3e5c594028c9552b0765e108dedec0034432d2b631204444fbc6b7c07",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/ranker_lr_sweep.py": "309115bc97a4858660b1698ba85d382e9962a214ca9db7a2eef26c5f8c9e9701",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/ranker_scoring.py": "ed9da9febc77581ce9d8ece3cdfb748a60e75b26d2193521e1b7922c06cd5297",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/ranker_train.py": "03fecbe53231b4bf2075d7b7f44c8f46ca4fa3e67ba3c3aedb0279695da5b413",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/ranker_validation.py": "3f690b9e32d0f59ad9fa02264c303bfb2724477517cbfc1b432813f82132b292",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/rerank_eval.py": "369d6ec7ec5b852cf11742bb7f3ba65633f51cdbe3ef69b43df5aaf2f75ede69",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/rerank_metrics.py": "38077c98df7feaa517c009bcc19d0dcc6fd7219ff820beefd656d0a94eb43fef",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/rerank_policy.py": "6730d7d8c719a52817c77fdaf5eff221ed8831d104c50d55be614fa68666ea53",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/rerank_scoring.py": "187790fa8a6e9b0ae5a50cc2eb08391d5e84bf8bad4108ab226b9734fa9f4444",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/rerank_search.py": "addec0b725526320941456a72a60098c8f2076bf6a10321ea1837456e27c14e2",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/retrieval.py": "7105ca935468b7d1d3d8bcfa05fa25669eac757091f59a8770dd4da9955ffec8",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/submission.py": "cfdf44a6ff6b83fbdc77ac029f83fd4a00a6da54b2d758dd5aa777bad19df826",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/teacher_train.py": "824f4af2802d30baebc5f8cd97149ce84e2953347b7b9c13408588da44472d7c",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/text_encoder_adapt.py": "f649f9dd148edb831ae157056d6e09fd3881f898afce6a88a62d459fb781576e",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/two_model_ensemble.py": "a498b13b71444a60711ec860514ea668c4353c202a20b453eeb431d49a7e6678",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/two_model_final_fit.py": "edf726c160cff8d98969fca471acc8209e4bfafc850cbcd957bc6a3ceb373937",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/rerank/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/rerank/greedy.py": "ad333f5875aae59afa0f627f09051e2749624c415b18fde70a27fe8e2838d1c7",
+    "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/utils.py": "8c06195150bbce3d0da7bd1b8e395291b99fd53813acddbc7f51baa29300ecf9",
+    "configs/mind_large_submission_minilm_pairwise.yaml": "4782b914d7632ab03777fda2feebdf776d2f3cac4211eba75e3228cdef3292c5",
+    "configs/mind_large_submission_mpnet_p1_pairwise.yaml": "3570c0cf4b312645e48061f78748227ced7d3de24f735bde5e4c1737b11cca59",
+    "data/processed/MINDlarge_submission/id_maps.json": "025089465a0d693d4a62afe6bbbc31f3059526035024148d62ba88b6037fc0a8",
+    "data/processed/MINDlarge_submission/item_age_index.npz": "7003dec351536a22cd96d57e3357ff7bdb02b1a264d2934d58c9ac50e62672e0",
+    "data/processed/MINDlarge_submission/item_click_counts.json": "08f723401982aa29983bca6e88c9ffbb172e11851290dc1d5a66901abd0d5f01",
+    "data/processed/MINDlarge_submission/news.parquet": "0a4c40354a6e8e63b71292d8a2c4da59e9afa8a2a207b862012e7738d95ed9c2",
+    "data/processed/MINDlarge_submission/preprocess_meta.json": "5ad3136a6d769bf4445ef59e8c9576246352a72fe2713267c0c5170669114aaa",
+    "data/processed/MINDlarge_submission/train_behaviors.parquet": "999a7d979601768556c4e779a234004a3cca95a92c3d29ac8f24619f6ade470e",
+    "data/raw/MINDlarge_test/behaviors.tsv": "709201b4ecc24e5073d694ab65e9552a9eb5e7d3b08067b90633b5d8b68534df",
+    "runs/mind_large_ensemble_two_mixed_loss_v1/ensemble/search.json": "0543c57e8d054128a43babfdaa9bb5dd03d02cc8bfff3cb63068d3385d930f59",
+    "runs/mind_large_ensemble_two_mixed_loss_v1/ensemble/selection.json": "79a6a83518a7e433c8fbdc54b202f8f170be9381c9a705582e2e1a0bc8cf1bd8",
+    "runs/mind_large_submission_mpnet_p1_ranker/ranker/best.pt": "5ad0c3848da6b804936848477f445b8be15654eaae492af524ec28796b5dc3b5",
+    "runs/mind_large_submission_mpnet_p1_teacher/teacher/item_ranker_base_emb.npy": "28a9e980d6e6920bb05228297b74e5bd4ed9588eb403b32ba8aefcc0622de897",
+    "runs/mind_large_submission_mpnet_p1_teacher/teacher/item_teacher_emb.npy": "5c33466ea3a03e48ecd26d20bc79806a5b5df46c9127abe148de3da580313608",
+    "runs/mind_large_submission_mpnet_p1_teacher/teacher/meta.json": "fee9cc563b63cb08f42343f4bf9f512a8900b6b1960dae3596ebdbf20a352d3b",
+    "runs/mind_large_submission_mpnet_p1_teacher/teacher/model.pt": "8e8f4d473faba9ef1880ef102494f099a848df430f8ed7555a3a30c96b73c016",
+    "runs/mind_large_submission_text_adapt_candidate_attention_low_lr_2ep_v1/ranker/best.pt": "ee912115c39b6c3c35d28dd4d1f8f75654f6c6b543b6d733866890c967cceb48",
+    "runs/mind_large_submission_text_adapt_v1/teacher/item_ranker_base_emb.npy": "2be62a097ee0baf1489268eb8cc0df3af3017f7d1c488f8eb40e8941d0f35c07",
+    "runs/mind_large_submission_text_adapt_v1/teacher/item_teacher_emb.npy": "c1da8be000db2f0e8b837fc5118a36609bf3fbe658beda78e5ac33c788fc5ca4",
+    "runs/mind_large_submission_text_adapt_v1/teacher/meta.json": "c57eecb76a28c2364df35abb4667a5e1ac27bc79de198be9f830114f4b0a00a2",
+    "runs/mind_large_submission_text_adapt_v1/teacher/model.pt": "8d319a7b8f4ee5e366ce6789c611876c7d6dea0e1356acabcc038bd88d77290f"
+  }
+}

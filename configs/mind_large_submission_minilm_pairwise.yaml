@@ -1,0 +1,20 @@
+extends: "mind_large_submission_candidate_attention.yaml"
+
+run_name: "mind_large_submission_minilm_pairwise_w025_2ep_v1"
+
+ranker:
+  grouped_batches: true
+  pairwise_weight: 0.25
+  epochs: 2
+  calibration:
+    enabled: false
+
+posthoc_recency:
+  enabled: true
+  age_dataset_name: "MINDlarge_submission"
+  alpha: 0.02
+  max_age_hours: 720.0
+
+submission:
+  item_encoding_batch_size: 8192
+  save_scores: false
