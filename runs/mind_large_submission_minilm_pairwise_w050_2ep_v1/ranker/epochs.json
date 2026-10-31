@@ -1,0 +1,22 @@
+[
+  {
+    "epoch": 1,
+    "train_loss_mean": 1.1162763184901932,
+    "val_auc": null,
+    "val_auc_metric": null,
+    "validation": {
+      "metrics": {}
+    },
+    "pairwise_loss_mean": 0.548534253851982
+  },
+  {
+    "epoch": 2,
+    "train_loss_mean": 1.0940324762162013,
+    "val_auc": null,
+    "val_auc_metric": null,
+    "validation": {
+      "metrics": {}
+    },
+    "pairwise_loss_mean": 0.5205813868536324
+  }
+]

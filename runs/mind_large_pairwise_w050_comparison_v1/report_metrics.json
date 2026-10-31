@@ -1,0 +1,21 @@
+{
+  "context_hash": "0f2b6b2df7cdd8d59c43b23722b246ae4473f1eadf460a4f969ade4012b596c5",
+  "result_hash": "01fbc999c8b1053e34cac6684e322c9d19ffa54ea64d439087cb3c64ca29ecee",
+  "result": {
+    "split": "rerank_test",
+    "n_impressions": 376471,
+    "n_scored_impressions": 376471,
+    "n_skipped_impressions": 0,
+    "recency_alpha": 0.02,
+    "metrics": [
+      {
+        "primary_weight": 0.75,
+        "secondary_weight": 0.25,
+        "auc": 0.6901399875149911,
+        "mrr": 0.3396611355948477,
+        "ndcg@5": 0.37517334146578524,
+        "ndcg@10": 0.43723931380960773
+      }
+    ]
+  }
+}

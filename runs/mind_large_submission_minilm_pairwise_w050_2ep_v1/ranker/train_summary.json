@@ -1,0 +1,68 @@
+{
+  "validation_split_name": "val",
+  "has_validation": false,
+  "best_val_auc": null,
+  "best_epoch": 2,
+  "selection_mode": "fixed_epoch",
+  "val_auc_metric": null,
+  "best_by_metric": {
+    "sampled_pair_auc": {
+      "epoch": 2,
+      "score": null,
+      "metrics": {},
+      "checkpoint": "best.pt"
+    }
+  },
+  "preserve_training_rng": true,
+  "grouped_batches": true,
+  "pairwise_weight": 0.5,
+  "early_stopping_enabled": false,
+  "early_stopping_patience": 2,
+  "early_stopping_min_delta": 1e-05,
+  "stop_reason": "max_epochs",
+  "stopped_epoch": 2,
+  "device": "cuda",
+  "device_info": {
+    "requested_device": "cuda",
+    "device_type": "cuda",
+    "torch_version": "2.11.0+cu128",
+    "cuda_available": true,
+    "cuda_version": "12.8",
+    "cudnn_version": 91900,
+    "cuda_device_index": 0,
+    "cuda_device_name": "NVIDIA GeForce RTX 3060 Laptop GPU",
+    "cuda_total_memory_gb": 6.0
+  },
+  "teacher_artifact_run_name": "mind_large_submission_text_adapt_v1",
+  "history_pooling": "candidate_attention",
+  "representation_distillation_target": "full",
+  "hard_negative_sampling": {
+    "enabled": true,
+    "pool_size": 20,
+    "negatives_per_positive": 4,
+    "score_batch_size": 512,
+    "scorer": "teacher_history_item_dot_product",
+    "teacher_consistent_hard_only": true,
+    "max_score_above_positive": 0.0,
+    "hard_for_cold_users_only": true,
+    "n_groups": 3958501,
+    "n_teacher_scored_pool_negatives": 5242477,
+    "n_random_only_selected_negatives": 13768542,
+    "n_hard_eligible_pool_negatives": 3726536,
+    "n_hard_ineligible_pool_negatives": 1515941,
+    "n_hard_mining_groups": 363889,
+    "n_random_only_groups": 3594612,
+    "n_zero_history_random_only_groups": 87861,
+    "n_selected_rows": 19062280,
+    "n_selected_negatives": 15103779,
+    "n_hard_negatives": 320623,
+    "n_random_negatives": 14783156,
+    "hard_fraction_requested": 0.25,
+    "hard_fraction_actual": 0.021227998635308422
+  },
+  "taxonomy_masks": {
+    "n_supported_categories": 16,
+    "n_supported_subcategories": 225,
+    "n_train_pairs": 19062280
+  }
+}
