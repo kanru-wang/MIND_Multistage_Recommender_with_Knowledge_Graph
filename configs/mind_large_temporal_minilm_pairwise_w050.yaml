@@ -1,0 +1,6 @@
+extends: "mind_large_temporal_minilm_dual_pairwise.yaml"
+
+run_name: "mind_large_temporal_minilm_pairwise_w050_v1"
+
+ranker:
+  pairwise_weight: 0.5

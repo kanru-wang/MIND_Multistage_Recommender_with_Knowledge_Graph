@@ -1,0 +1,6 @@
+extends: "mind_large_submission_minilm_pairwise.yaml"
+
+run_name: "mind_large_submission_minilm_pairwise_w050_2ep_v1"
+
+ranker:
+  pairwise_weight: 0.5
