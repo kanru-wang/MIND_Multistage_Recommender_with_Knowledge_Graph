@@ -1,0 +1,15 @@
+run_name: "mind_large_ensemble_two_mixed_loss_w075_final_75_25_v1"
+
+final_fit:
+  pairwise_weight: 0.75
+  weight_comparison_root: "runs/mind_large_pairwise_w075_comparison_v1"
+  preserved_champion_auc: 0.7011
+  preserved_champion_run: "mind_large_ensemble_two_mixed_loss_w050_final_75_25_v1"
+  expected_impressions: 2370727
+  students:
+    - name: "mpnet_bce_pairwise_w075"
+      config: "configs/mind_large_submission_mpnet_p1_pairwise_w075.yaml"
+      reference_ranker_run: "mind_large_submission_mpnet_p1_pairwise_w050_2ep_v1"
+    - name: "minilm_bce_pairwise_w075"
+      config: "configs/mind_large_submission_minilm_pairwise_w075.yaml"
+      reference_ranker_run: "mind_large_submission_minilm_pairwise_w050_2ep_v1"
