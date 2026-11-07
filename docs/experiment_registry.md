@@ -2,9 +2,50 @@
 
 This registry names the split protocol behind each major result set. Use it before comparing metrics: runs are only comparable when their validation protocol is the same.
 
-## Latest reported Large Test result (2026-11-01)
+## Latest reported Large Test result (2026-11-07)
 
-**Best reported Large Test AUC: `0.7011`**, reported by the user from the
+**Best reported Large Test AUC: `0.7025`**, reported by the user from the
+competition platform on 2026-11-07 (Australia/Sydney). This is an absolute
+**`+0.0014`** over coefficient 0.5's `0.7011`, **`+0.0035`** over coefficient
+0.25's `0.6990`, and **`+0.0053`** over the previous BCE-student ensemble's
+`0.6972`. This score is user-reported; hidden test labels remain unavailable
+locally.
+
+The submission combines exactly **75% MPNet / 25% MiniLM**, with both students
+using **BCE + 0.75 * impression-normalized pairwise loss + teacher distillation**.
+Both completed **two fixed epochs on Train+Dev**, reusing their retained final
+four-epoch teachers and embeddings. Recency `alpha=0.02` is applied once per
+member before exact integer weighted-Borda fusion; MPNet rank breaks exact ties.
+The ensemble weights and final-fit epoch budget were unchanged from coefficient
+0.5, and no additional weight search was performed.
+
+- Runner: `scripts/run_pairwise_weight_075_final_fit.py`.
+- Workflow config: `configs/mind_large_two_model_final_fit_w075.yaml`.
+- Student configs: `configs/mind_large_submission_mpnet_p1_pairwise_w075.yaml`
+  and `configs/mind_large_submission_minilm_pairwise_w075.yaml`.
+- Submission ZIP: `runs/mind_large_ensemble_two_mixed_loss_w075_final_75_25_v1/submission/prediction.zip`.
+- Verified ZIP SHA256: `82fb56c6e5d181978935205725b4e18feede96a58a019e757547c6328d8c46dd`.
+- Metadata: `runs/mind_large_ensemble_two_mixed_loss_w075_final_75_25_v1/submission/submission_meta.json`.
+- Temporal comparison: `runs/mind_large_pairwise_w075_comparison_v1/ensemble_comparison.json`.
+- Test impressions: **2,370,727**. The ZIP and metadata hashes match the
+  completed fusion record; both saved student summaries confirm the two-epoch
+  fixed-fit schedule and coefficient 0.75.
+
+| Reused temporal split | Coefficient 0.5 ensemble AUC | Coefficient 0.75 ensemble AUC | Delta |
+| --- | ---: | ---: | ---: |
+| November 14 | 0.702605 | 0.703738 | +0.001133 |
+| November 15 | 0.690140 | 0.690959 | +0.000819 |
+
+Individual temporal AUC gained `+0.001002` for MPNet but lost `0.001513` for
+MiniLM; selected epochs remained 3 and 4. Ensemble MRR/nDCG declined on
+November 14 and improved on November 15. These dates remain reused development
+diagnostics; the separate platform score above establishes improvement for
+this submitted ensemble, without proving improvement in every metric or member.
+Preserve the 0.7011, 0.6990 and 0.6972 submissions and records. Slides are unchanged.
+
+## Previous champion: coefficient 0.5 (reported 2026-11-01)
+
+**Previous champion Large Test AUC: `0.7011`**, reported by the user from the
 competition platform on 2026-11-01 (Australia/Sydney). This is an absolute
 **`+0.0021`** over coefficient 0.25's `0.6990`, and **`+0.0039`** over the
 previous BCE-student ensemble's `0.6972`. This score is user-reported;
@@ -76,6 +117,36 @@ not been updated for this result.
 
 ## Configuration background
 
+The coefficient-1.0 and mixed 1.0/0.5 variants are closed and rejected.
+Their results and cleanup record are consolidated under
+[rejected pairwise-weight variants](#rejected-pairwise-weight-variants).
+
+The completed bounded comparison (agreed 2026-11-03) tests **coefficient 0.75 on
+both students** against the completed 0.5 comparators. Only the coefficient
+and isolated output names change; the eight-epoch temporal budget, full-candidate
+mean impression AUC checkpoint selection, distillation, recency and fixed 75/25
+ensemble weights remain unchanged. Use
+`scripts/run_pairwise_weight_075_comparison.py`; see
+[the coefficient-0.75 comparison](pairwise_weight_075_comparison.md).
+Verified on 2026-11-05: both students completed eight epochs, selecting epochs
+3 (MPNet) and 4 (MiniLM). MPNet individual AUC gained `+0.001002`; MiniLM lost
+`0.001513`. The fixed 75/25 ensemble gained `+0.001133` AUC on November 14
+(`0.703738` versus `0.702605`) and `+0.000819` on November 15 (`0.690959`
+versus `0.690140`). MRR/nDCG declined on November 14 and improved on November 15.
+Recorded checkpoints, stage hashes, fixed weights, counts and report deltas
+passed verification. This meets the agreed promotion criterion.
+The isolated [coefficient-0.75 final-fit workflow](pairwise_weight_075_final_fit.md)
+is implemented in `scripts/run_pairwise_weight_075_final_fit.py`, using
+`configs/mind_large_two_model_final_fit_w075.yaml`: both students reuse their
+retained final teachers and fit Train+Dev for two fixed epochs, with a new
+75/25 submission ZIP. Both final fits and submission generation completed;
+the user reported Large Test AUC **0.7025** on 2026-11-07, an absolute
+**+0.0014** over the preserved coefficient-0.5 champion. See the latest result
+above for the verified submission identity.
+This is the last planned coefficient-only comparison for now;
+the popularity-feature ablation is deferred. The Large Test champion remains
+the coefficient-0.75 ensemble at **0.7025**. Slides remain unchanged.
+
 The completed temporal experiment increased the pairwise coefficient
 from 0.25 to 0.5 on both MPNet and MiniLM, holding other training settings
 fixed and reusing the completed 0.25 fits as comparators. It evaluates the two
@@ -89,11 +160,90 @@ slices. The isolated final-fit candidate is implemented in
 `configs/mind_large_two_model_final_fit_w050.yaml`: both students use the
 retained final teachers and two fixed epochs, with a separate 75/25 ZIP.
 Maximum-data execution completed; the user reported Large Test AUC **0.7011**
-on 2026-11-01, establishing the new best reported result. Slides are unchanged.
+on 2026-11-01, establishing the best reported result at that stage. Slides are unchanged.
 
 `configs/mind_large_temporal_baseline.yaml` defines the temporal split and shared defaults inherited by the current MPNet temporal config. It is a configuration dependency, not a separate prerequisite run. Running it directly reproduces the random-negative baseline listed below.
 
 `mind_large_temporal_tune.yaml`, `mind_large_tune.yaml`, and the MiniLM submission configs remain available to reproduce other baselines; they are not commands in the current MPNet training path. Their protocols and results are recorded in this registry. The configs directly used by `scripts/run_mpnet_backbone.ps1` are listed in the [README training workflow](../README.md#34-phase-3-train-on-all-labeled-data-and-build-the-leaderboard-submission).
+
+## Rejected pairwise-weight variants
+
+**Closed; dedicated files removed on 2026-11-07 at the user's request.**
+These experiments tested BCE + lambda * impression-normalized pairwise loss +
+unchanged teacher distillation. Lambda 1.0 retained BCE; it was not pure
+pairwise supervision. The matched comparator used lambda 0.5 for both students.
+Architecture, teachers, embeddings, optimizer, seed, negative mining, grouped
+sampled-impression batches and full-candidate mean impression AUC checkpoint
+selection were fixed. Early stopping and calibration were disabled.
+
+Both coefficient-1.0 students completed all eight temporal epochs and were
+evaluated on the same **807,988 impressions / 31,485,663 candidates**:
+
+| Student | Coefficient 0.5 AUC | Coefficient 1.0 AUC | Delta | Selected epoch |
+| --- | ---: | ---: | ---: | ---: |
+| MPNet | 0.695934653 | 0.696621897 | +0.000687244 | 3 for both |
+| MiniLM | 0.679036448 | 0.679151188 | +0.000114740 | 4 for both |
+
+All seven other overall student ranking metrics (MRR, nDCG@5/10,
+Recall@5/10 and MAP@5/10) regressed for both students. Compared with 0.5,
+clicked-new-item AUC fell by 0.002568 for MPNet and 0.006179 for MiniLM;
+clicked-popularity-1--4 AUC fell by 0.008202 and 0.007694; latest-quarter AUC
+fell by 0.001491 and 0.000993 respectively. MPNet cold-user AUC improved
+0.004036, while MiniLM cold-user AUC declined 0.000228. These are descriptive
+single-seed results, not causal proof of a popularity-bias mechanism.
+
+The first ensemble used coefficient 1.0 on both students. The follow-up reused
+MPNet 1.0 with the retained MiniLM 0.5 checkpoint, without additional training.
+Both kept **75% MPNet / 25% MiniLM**, with no new weight search, recency alpha
+0.02 applied once before ranking, the same reference-scoring guard and exact
+integer weighted-Borda fusion, and MPNet rank breaking exact ties.
+
+| Ensemble loss coefficients (MPNet / MiniLM) | November 14 AUC | Delta vs 0.5/0.5 | November 15 AUC | Delta vs 0.5/0.5 |
+| --- | ---: | ---: | ---: | ---: |
+| 0.5 / 0.5 comparator | 0.702604875 | -- | 0.690139988 | -- |
+| 1.0 / 1.0, rejected | 0.704719190 | +0.002114315 | 0.689447560 | -0.000692428 |
+| 1.0 / 0.5, rejected | 0.704572561 | +0.001967686 | 0.689544740 | -0.000595248 |
+
+Both split stages completed (431,517 impressions on November 14; 376,471 on
+November 15). MRR and both nDCG metrics declined on both dates for both variants.
+November 15 deltas against the 0.5/0.5 comparator were:
+
+| Variant | MRR delta | nDCG@5 delta | nDCG@10 delta |
+| --- | ---: | ---: | ---: |
+| 1.0 / 1.0 | -0.001627561 | -0.002060504 | -0.001814484 |
+| 1.0 / 0.5 | -0.001145028 | -0.001492805 | -0.001239751 |
+
+**Decision:** neither variant met the agreed requirement to improve ensemble
+AUC on both dates. Neither received a maximum-data final fit or a Large Test
+submission; no hidden-test score is claimed. The mixed follow-up shows that
+changing only MPNet still produced the date-dependent reversal; it does not
+establish that MiniLM caused the original regression. Both dates were already
+reused during development, so these are validation diagnostics. Coefficient
+0.75 later passed the two-date check and reached the user-reported **0.7025**
+Large Test AUC; retain its workflow and the 0.5/0.25 comparators.
+
+Cleanup consolidated the two guides here and removed their dedicated files:
+
+- Configs: `configs/mind_large_temporal_mpnet_p1_pairwise_w100.yaml` and
+  `configs/mind_large_temporal_minilm_pairwise_w100.yaml`.
+- Runners: `scripts/run_pairwise_weight_100_comparison.py` and
+  `scripts/run_mixed_pairwise_ensemble.py`, plus their two dedicated test files
+  and cached bytecode.
+- Guides: `docs/pairwise_weight_100_comparison.md` and
+  `docs/mixed_pairwise_ensemble.md`.
+- Run directories: `runs/mind_large_temporal_mpnet_p1_pairwise_w100_v1/`,
+  `runs/mind_large_temporal_minilm_pairwise_w100_v1/`,
+  `runs/mind_large_pairwise_w100_comparison_v1/`, and
+  `runs/mind_large_ensemble_mpnet_w100_minilm_w050_v1/`.
+
+The two deleted ensemble reports had SHA256 values
+`40cb3411bfa09f47f12e71b361f8cc5a4502f59cbd809c185e75c2d3323f91e9`
+(1.0/1.0) and
+`4c973747efa09a382494e14b4256025b0e09d7969fcfb0058fecd1fdc558b75a`
+(1.0/0.5). These hashes identify the source reports used to consolidate the
+record above; the files themselves were removed. Retained workflows have no
+dependency on the removed files. The 0.7025 champion, all earlier successful
+submissions, shared training/fusion code and all slide-related files are preserved.
 
 ## Result Sets
 
@@ -110,7 +260,8 @@ on 2026-11-01, establishing the new best reported result. Slides are unchanged.
 | Original Large submission MPNet candidate attention + recency | Continue selected MPNet on Large Temporal Val, then fixed four-epoch teacher, fixed two-epoch candidate-attention ranker, and recency `alpha=0.02`. | Completed historical baseline, Large Test AUC `0.6948` | `configs/mind_large_submission_mpnet_candidate_attention_recency_alpha_002.yaml` | `data/processed/MINDlarge_submission` | `runs/mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1` | `runs/mind_large_submission_mpnet_candidate_attention_low_lr_2ep_recency_alpha_002_v1/submission/prediction.zip` |
 | Large MPNet + MiniLM rank ensemble | Select a weighted-Borda MPNet weight on Nov 14, freeze it, report on Nov 15, then fuse the two recency-adjusted hidden-test rank ZIPs. | Completed; user-reported Large Test AUC `0.6960` | `configs/mind_large_ensemble_mpnet_minilm.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_ensemble_mpnet_minilm_rank_v1` | `runs/mind_large_ensemble_mpnet_minilm_rank_v1/ensemble/search.json` |
 | Improved MPNet (lr=1e-5) + MiniLM rank ensemble | Retune the Borda weight using the promoted temporal MPNet from `31ab682`, then fuse its maximum-data ZIP with the same selected MiniLM. | Completed; previous champion Large Test AUC `0.6972`; selected 75/25 | `configs/mind_large_ensemble_mpnet_p1_minilm.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1` | `runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/ensemble/search.json` |
-| Two mixed-loss students, coefficient 0.5, frozen 75/25 (best reported) | Increase both pairwise coefficients from 0.25 to 0.5; retain 75/25 weights and two-epoch Train+Dev fits. | Completed; user-reported Large Test AUC `0.7011` on 2026-11-01 | `configs/mind_large_two_model_final_fit_w050.yaml` | `data/processed/MINDlarge_submission` | `runs/mind_large_ensemble_two_mixed_loss_w050_final_75_25_v1` | `runs/mind_large_ensemble_two_mixed_loss_w050_final_75_25_v1/submission/prediction.zip` |
+| Two mixed-loss students, coefficient 0.75, frozen 75/25 (best reported) | Increase both pairwise coefficients from 0.5 to 0.75; retain 75/25 weights and two-epoch Train+Dev fits. | Completed; user-reported Large Test AUC `0.7025` on 2026-11-07 | `configs/mind_large_two_model_final_fit_w075.yaml` | `data/processed/MINDlarge_submission` | `runs/mind_large_ensemble_two_mixed_loss_w075_final_75_25_v1` | `runs/mind_large_ensemble_two_mixed_loss_w075_final_75_25_v1/submission/prediction.zip` |
+| Two mixed-loss students, coefficient 0.5, frozen 75/25 (previous champion) | Increase both pairwise coefficients from 0.25 to 0.5; retain 75/25 weights and two-epoch Train+Dev fits. | Completed; user-reported Large Test AUC `0.7011` on 2026-11-01 | `configs/mind_large_two_model_final_fit_w050.yaml` | `data/processed/MINDlarge_submission` | `runs/mind_large_ensemble_two_mixed_loss_w050_final_75_25_v1` | `runs/mind_large_ensemble_two_mixed_loss_w050_final_75_25_v1/submission/prediction.zip` |
 | Two mixed-loss students, coefficient 0.25, frozen 75/25 (previous champion) | Matched temporal loss comparisons; select weight on Nov 14 and freeze before Nov 15; refit both students on Train+Dev for two epochs. | Completed; user-reported Large Test AUC `0.6990` on 2026-10-29 | `configs/mind_large_two_model_final_fit.yaml` | `data/processed/MINDlarge_submission` | `runs/mind_large_ensemble_two_mixed_loss_final_75_25_v1` | `runs/mind_large_ensemble_two_mixed_loss_final_75_25_v1/submission/prediction.zip` |
 | Rejected Large temporal MPNet student width 96 | Reuse the selected MPNet encoder and 384-dimensional teacher; change only the learned student width from 56 to 96. | Completed/rejected on 2026-08-31; Phase 3 not run | Removed after rejection | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_mpnet_candidate_attention_student_width_96_v1` | `runs/mind_large_temporal_mpnet_candidate_attention_student_width_96_v1/eval/ranker_eval_val.json` |
 | Rejected large temporal candidate-attention item-only distillation v1 | Reuse candidate-attention v1 and change representation distillation from the full user/item target to `item_sem -> teacher_item`, including zero-history rows; teacher-logit distillation and all configured weights remain fixed. | Current repo; completed/rejected | `configs/mind_large_temporal_candidate_attention_item_only_distill.yaml` | `data/processed/MINDlarge_temporal_tune` | `runs/mind_large_temporal_text_adapt_candidate_attention_item_only_distill_v1` | `runs/mind_large_temporal_text_adapt_candidate_attention_item_only_distill_v1/eval/ranker_eval_val.json` |
@@ -501,7 +652,8 @@ The hard-negative v3 run applied 1 teacher-hard plus 3 random negatives to all c
 | MPNet + selected candidate-attention MiniLM weighted-Borda ensemble | 75% MPNet ranks + 25% MiniLM ranks; MPNet breaks exact fusion ties | Same two maximum-data members above | 4 | 2 | Included in both members | 0.6960 | 2,370,727 | `runs/mind_large_ensemble_mpnet_minilm_rank_v1/submission/prediction.zip` |
 | Improved MPNet single model (`31ab682`) | MPNet text-encoder lr=1e-5, selected update 9,000, then 2,000 continuation updates | `MINDlarge_train + MINDlarge_dev` | 4 | 2 | 0.02 | 0.6960 | 2,370,727 | `runs/mind_large_submission_mpnet_p1_output/submission/prediction.zip` |
 | Improved MPNet + selected candidate-attention MiniLM weighted-Borda ensemble (previous champion) | 75% improved MPNet (`31ab682`) ranks + 25% MiniLM ranks; MPNet breaks exact fusion ties | Same improved MPNet and selected MiniLM maximum-data members | 4 | 2 | Included in both members (`0.02`) | **0.6972** | 2,370,727 | `runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/submission/prediction.zip` |
-| **Mixed-loss MPNet + MiniLM, coefficient 0.5 (best reported)** | 75% MPNet / 25% MiniLM; BCE + 0.5 * pairwise + distillation per student | `MINDlarge_train + MINDlarge_dev` | 4 (reused per member) | 2 per member | 0.02 per member | **0.7011** | 2,370,727 | `runs/mind_large_ensemble_two_mixed_loss_w050_final_75_25_v1/submission/prediction.zip` |
+| **Mixed-loss MPNet + MiniLM, coefficient 0.75 (best reported)** | 75% MPNet / 25% MiniLM; BCE + 0.75 * pairwise + distillation per student | `MINDlarge_train + MINDlarge_dev` | 4 (reused per member) | 2 per member | 0.02 per member | **0.7025** | 2,370,727 | `runs/mind_large_ensemble_two_mixed_loss_w075_final_75_25_v1/submission/prediction.zip` |
+| Mixed-loss MPNet + MiniLM, coefficient 0.5 (previous champion) | 75% MPNet / 25% MiniLM; BCE + 0.5 * pairwise + distillation per student | `MINDlarge_train + MINDlarge_dev` | 4 (reused per member) | 2 per member | 0.02 per member | **0.7011** | 2,370,727 | `runs/mind_large_ensemble_two_mixed_loss_w050_final_75_25_v1/submission/prediction.zip` |
 | Mixed-loss MPNet + MiniLM, coefficient 0.25 (previous champion) | 75% MPNet / 25% MiniLM; both students use BCE + 0.25 * pairwise + distillation | `MINDlarge_train + MINDlarge_dev` | 4 (reused per member) | 2 per member | 0.02 per member | **0.6990** | 2,370,727 | `runs/mind_large_ensemble_two_mixed_loss_final_75_25_v1/submission/prediction.zip` |
 | Rejected attentive multi-view v1 | Separate title/abstract encoding with a jointly trained attentive gate | `MINDlarge_train + MINDlarge_dev` | 1 | 3 | 0.02 | 0.6746 | 2,370,727 | `runs/mind_large_submission_text_adapt_multiview_low_lr_3ep_recency_alpha_002_v1/submission/prediction.zip` |
 | Rejected replay 85/10/5 | Phase 1 update 6,000 + 2,000 replay-mixture updates | `MINDlarge_train + MINDlarge_dev` | 4 | 1 | 0.02 | 0.6800 | 2,370,727 | `runs/mind_large_submission_text_adapt_replay_85_10_5_recency_alpha_002_v1/submission/prediction.zip` |
@@ -512,7 +664,7 @@ The hard-negative v3 run applied 1 teacher-hard plus 3 random negatives to all c
 
 The adapted-text submission first improved Large Test AUC from `0.6724` to `0.6848` (`+0.0124`). Candidate-aware pooling then improved matched temporal validation AUC from `0.664328` to `0.671593`. Its original one-epoch maximum-data schedule remained at `0.6848`, while transferring the selected `lr=1e-4`, `weight_decay=3e-5` schedule for two maximum-data epochs reached **`0.6869`**. Original MPNet then raised Large Test AUC to **`0.6948`**. That historical model gained `+0.0079` over selected candidate-attention MiniLM, `+0.0100` over text-adapt v1, and `+0.0224` over the frozen-MiniLM baseline.
 
-The current best single model is the `lr=1e-5` MPNet from `31ab682`, at `0.6960`; the original MPNet+MiniLM ensemble independently achieved `0.6960`. The previous improved-MPNet+MiniLM ensemble reached **`0.6972`**, gaining `+0.0012` over both of those results. The coefficient-0.25 mixed-loss ensemble reached **`0.6990`** (+0.0018). Increasing both coefficients to 0.5 then reached the current best **`0.7011`**, a further **`+0.0021`** gain.
+The current best single model is the `lr=1e-5` MPNet from `31ab682`, at `0.6960`; the original MPNet+MiniLM ensemble independently achieved `0.6960`. The previous improved-MPNet+MiniLM ensemble reached **`0.6972`**, gaining `+0.0012` over both of those results. The coefficient-0.25 mixed-loss ensemble reached **`0.6990`** (+0.0018). Increasing both coefficients to 0.5 reached **`0.7011`** (+0.0021); coefficient 0.75 then reached the current best **`0.7025`**, a further **`+0.0014`** gain.
 
 The original rank-only ensemble selected 75% MPNet and 25% MiniLM on the Nov 14 `rerank_tune` view. Mean impression AUC increased from MPNet's `0.693301` to `0.694412` (`+0.001111`). With that weight frozen, Nov 15 AUC increased from `0.683811` to `0.684632` (`+0.000820`). Nov 15 MRR and nDCG were essentially flat but slightly lower, so this is specifically an AUC-targeted leaderboard candidate. The two hidden rank archives agree on the top candidate for only `49.30%` of impressions, providing useful model diversity. The output ZIP and hashes are recorded under `runs/mind_large_ensemble_mpnet_minilm_rank_v1`; its user-reported hidden Large Test AUC is `0.6960`.
 
@@ -555,7 +707,7 @@ Large Test scores were returned by the competition platform; hidden test labels 
 - Use `configs/mind_large_temporal_baseline.yaml` to reproduce the random-negative baseline and `configs/mind_large_temporal_tune.yaml` to reproduce hard-negative v4.
 - Use `configs/mind_large_submission.yaml` only after choosing fixed settings; it trains on `MINDlarge_train + MINDlarge_dev` and writes hidden-test submission ranks.
 - Use `configs/mind_large_submission_mpnet_candidate_attention.yaml` and its recency companion to reproduce the original `0.6948` MPNet. The MiniLM candidate-attention configs reproduce the previous `0.6869` fallback.
-- Use `configs/mind_large_two_model_final_fit_w050.yaml` for the best reported `0.7011` two-student ensemble. Keep `configs/mind_large_two_model_final_fit.yaml` and its `0.6990` submission as the previous champion. Preserve its frozen 75/25 selection and submission identity, and retain `configs/mind_large_ensemble_mpnet_p1_minilm.yaml` and its `0.6972` submission as an older reference.
+- Use `scripts/run_pairwise_weight_075_final_fit.py` with `configs/mind_large_two_model_final_fit_w075.yaml` for the best reported `0.7025` two-student ensemble. Keep `configs/mind_large_two_model_final_fit_w050.yaml` and its `0.7011` submission as the previous champion, plus `configs/mind_large_two_model_final_fit.yaml` and its `0.6990` submission as an older champion. Preserve the frozen 75/25 selection and submission identities, and retain `configs/mind_large_ensemble_mpnet_p1_minilm.yaml` and its `0.6972` submission as an older reference.
 
 ## Known Metadata Note
 

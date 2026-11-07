@@ -1,0 +1,2566 @@
+{
+  "weights": [
+    0.75,
+    0.25
+  ],
+  "context": {
+    "experiment": {
+      "baseline_context": {
+        "config": {
+          "run_name": "mind_large_ensemble_two_mixed_loss_v1",
+          "data": {
+            "processed_root": "data/processed",
+            "dataset_name": "MINDlarge_temporal_tune"
+          },
+          "posthoc_recency": {
+            "enabled": true,
+            "age_dataset_name": "MINDlarge_submission",
+            "alpha": 0.02,
+            "max_age_hours": 720.0
+          },
+          "two_model_ensemble": {
+            "baseline_config": "configs/mind_large_ensemble_mpnet_p1_minilm.yaml",
+            "tune_date": "2019-11-14",
+            "report_date": "2019-11-15"
+          },
+          "ensemble": {
+            "members": [
+              {
+                "name": "mpnet_bce_pairwise_w025",
+                "config": "configs/mind_large_temporal_mpnet_p1_dual_pairwise.yaml"
+              },
+              {
+                "name": "minilm_bce_pairwise_w025",
+                "config": "configs/mind_large_temporal_minilm_dual_pairwise.yaml"
+              }
+            ],
+            "primary_weight_grid": [
+              0.0,
+              0.05,
+              0.1,
+              0.15,
+              0.2,
+              0.25,
+              0.3,
+              0.35,
+              0.4,
+              0.45,
+              0.5,
+              0.55,
+              0.6,
+              0.65,
+              0.7,
+              0.75,
+              0.8,
+              0.85,
+              0.9,
+              0.95,
+              1.0
+            ],
+            "tune_split": "rerank_tune",
+            "report_split": "rerank_test",
+            "device": "cuda",
+            "batch_size": 2048,
+            "candidate_buffer_size": 65536,
+            "item_encoding_batch_size": 8192,
+            "exact_rank_guard_threshold": 1e-05,
+            "reference_batch_size": 2048
+          }
+        },
+        "baseline_selection": {
+          "path": "runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/ensemble/search.json",
+          "sha256": "bbedb4d63e402dc6c33183f00297d3774b528dffab7101113904cc8306670939"
+        },
+        "members": [
+          {
+            "name": "mpnet_bce_pairwise_w050",
+            "config": {
+              "run_name": "mind_large_temporal_mpnet_p1_pairwise_w050_v1",
+              "data": {
+                "raw_root": "data/raw",
+                "dataset_name": "MINDlarge_temporal_tune",
+                "mode": "temporal_tune",
+                "train_dir": "MINDlarge_train",
+                "dev_dir": "MINDlarge_dev",
+                "processed_root": "data/processed",
+                "max_history": 50,
+                "min_user_hist_for_warm": 5,
+                "min_item_train_clicks_for_warm": 10,
+                "ranker_negatives_per_positive": 4,
+                "materialize_train_pairs": true,
+                "temporal_validation": {
+                  "validation_start": "2019-11-14 00:00:00",
+                  "rerank_reporting_start": "2019-11-15 00:00:00",
+                  "rerank_tuning_split_name": "rerank_tune",
+                  "rerank_reporting_split_name": "rerank_test"
+                },
+                "sub_sample": {
+                  "enabled": false,
+                  "train_impressions": 200000,
+                  "dev_impressions": 50000,
+                  "seed": 13
+                }
+              },
+              "knowledge_graph": {
+                "enabled": true,
+                "entity_embedding_path": null,
+                "relation_embedding_path": null,
+                "triples_path": "data/processed/MINDlarge/kg_triples.tsv",
+                "max_entities_per_news": 12,
+                "max_neighbors_per_entity": 20,
+                "add_reverse_edges": true,
+                "entity_weight": 1.0,
+                "neighbor_weight": 0.1,
+                "relation_weight": 0.1,
+                "text_feature_weight": 1.0,
+                "kg_feature_weight": 0.25,
+                "normalize_item_base": true,
+                "normalize": true
+              },
+              "teacher": {
+                "model_name": "sentence-transformers/all-mpnet-base-v2",
+                "text": {
+                  "include_category_prefix": false
+                },
+                "batch_size": 128,
+                "user_attn_heads": 4,
+                "user_attn_dim": 384,
+                "lr": 0.0002,
+                "epochs": 8,
+                "early_stopping": {
+                  "enabled": true,
+                  "patience": 2,
+                  "monitor": "retrieval_recall@k",
+                  "min_delta": 0.0001
+                },
+                "temperature": 0.05,
+                "negatives_per_positive": 8,
+                "device": "cuda",
+                "text_adaptation": {
+                  "enabled": true,
+                  "batch_size": 16,
+                  "gradient_accumulation_steps": 4,
+                  "encode_batch_size": 64,
+                  "lr": 1e-05,
+                  "weight_decay": 0.01,
+                  "temperature": 0.05,
+                  "max_history": 10,
+                  "negatives_per_positive": 4,
+                  "hard_pool_size": 20,
+                  "hard_fraction": 0.25,
+                  "teacher_consistent_hard_only": true,
+                  "max_score_above_positive": 0.0,
+                  "hard_for_cold_users_only": true,
+                  "max_optimizer_updates": 12000,
+                  "early_stopping": {
+                    "enabled": true,
+                    "validation_interval_updates": 500,
+                    "patience": 6,
+                    "min_delta": 0.0001
+                  },
+                  "device": "cuda",
+                  "local_files_only": false,
+                  "gradient_checkpointing": true,
+                  "mixed_precision": "fp16",
+                  "encoder_forward_batch_size": 8
+                },
+                "encode_batch_size": 64
+              },
+              "retrieval": {
+                "index_type": "flat_ip",
+                "base_index_type": "flat_ip",
+                "hybrid_base_weight": 0.075,
+                "hybrid_oversample": 26,
+                "sweep": {
+                  "hybrid_base_weights": [
+                    0.05,
+                    0.0625,
+                    0.075
+                  ],
+                  "hybrid_oversamples": [
+                    18,
+                    22,
+                    26
+                  ]
+                },
+                "ivf_nlist": 2048,
+                "topk": 200
+              },
+              "ranker": {
+                "batch_size": 1024,
+                "lr": 0.0001,
+                "weight_decay": 3e-05,
+                "epochs": 8,
+                "early_stopping": {
+                  "enabled": false,
+                  "patience": 2,
+                  "min_delta": 1e-05
+                },
+                "device": "cuda",
+                "hard_negative_sampling": {
+                  "enabled": true,
+                  "pool_size": 20,
+                  "hard_fraction": 0.25,
+                  "score_batch_size": 512,
+                  "teacher_consistent_hard_only": true,
+                  "max_score_above_positive": 0.0,
+                  "hard_for_cold_users_only": true,
+                  "hard_negative_distill_weight": 0.0
+                },
+                "dlrm": {
+                  "emb_dim": 56,
+                  "id_emb_dim": 8,
+                  "news_id_warm_scale": 1.0,
+                  "news_id_cold_scale": 0.0,
+                  "semantic_ff_mult": 3,
+                  "semantic_dropout": 0.2,
+                  "bottom_mlp": [
+                    64,
+                    56
+                  ],
+                  "top_mlp": [
+                    128,
+                    64,
+                    1
+                  ],
+                  "dropout": 0.15,
+                  "history_pooling": "candidate_attention",
+                  "candidate_attention_heads": 4,
+                  "candidate_attention_dropout": 0.0
+                },
+                "distill": {
+                  "representation_target": "full",
+                  "temperature": 2.0,
+                  "lambda_logit": 0.7,
+                  "lambda_repr": 0.05,
+                  "cold_weight": 2.0,
+                  "warm_weight": 0.5
+                },
+                "calibration": {
+                  "enabled": false,
+                  "lr": 0.05,
+                  "max_iter": 100
+                },
+                "grouped_batches": true,
+                "pairwise_weight": 0.5,
+                "checkpoint_selection": {
+                  "metric": "mean_impression_auc",
+                  "score_batch_size": 2048,
+                  "item_encoding_batch_size": 8192,
+                  "impression_batch_size": 128,
+                  "track_both": true,
+                  "preserve_training_rng": true
+                }
+              },
+              "rerank": {
+                "output_subdir": "rerank",
+                "k_out": 10,
+                "pool_size": 50,
+                "eval_split": "rerank_test",
+                "selection": {
+                  "require_frozen_for_eval": true,
+                  "require_distinct_splits": true,
+                  "require_provenance_for_eval": true,
+                  "source_split": "rerank_tune",
+                  "reporting_split": "rerank_test",
+                  "search_artifact": "runs/mind_large_temporal_mpnet_candidate_attention_v1/rerank/rerank_search.json",
+                  "decision_note": "docs/reranking.md",
+                  "frozen": true,
+                  "reporting_note": "November 15 was reused while refining the requirements; these are follow-up results, not an independent test."
+                },
+                "position_bias": "log",
+                "coverage_weight": 0.035,
+                "relevance_normalization": "minmax",
+                "scoring": {
+                  "batch_size": 2048,
+                  "item_encoding_batch_size": 8192,
+                  "impression_batch_size": 128
+                },
+                "coverage": {
+                  "max_new_entities_per_item": 3,
+                  "category_bonus": 1.0,
+                  "entity_bonus": 0.3
+                },
+                "fairness": {
+                  "enabled": true,
+                  "category_target": "catalog",
+                  "penalty_weight": 0.0
+                },
+                "search": {
+                  "split": "rerank_tune",
+                  "seed": 13,
+                  "sample_size": 5000,
+                  "shortlist_size": 15,
+                  "relative_guardrails": {
+                    "max_ndcg_drop_ratio": 0.02,
+                    "min_new_item_exposure_gain": 0.0,
+                    "min_category_coverage_gain": 0.25,
+                    "min_fairness_kl_pool_improvement": 0.03
+                  },
+                  "coverage_weights": [
+                    0.025,
+                    0.03,
+                    0.035,
+                    0.04,
+                    0.05
+                  ],
+                  "fairness_penalties": [
+                    0.0,
+                    0.025,
+                    0.05
+                  ]
+                }
+              },
+              "eval": {
+                "report_splits": [
+                  "val"
+                ],
+                "ks": [
+                  5,
+                  10
+                ],
+                "time_periods": 4,
+                "batch_size": 2048,
+                "item_encoding_batch_size": 8192
+              },
+              "artifacts": {
+                "text_encoder_run_name": "mind_large_temporal_mpnet_p1_sweep_ta_lr_1em05_t_5em02_u12000_v500",
+                "teacher_run_name": "mind_large_temporal_mpnet_p1_promoted"
+              }
+            }
+          },
+          {
+            "name": "minilm_bce_pairwise_w050",
+            "config": {
+              "run_name": "mind_large_temporal_minilm_pairwise_w050_v1",
+              "data": {
+                "raw_root": "data/raw",
+                "dataset_name": "MINDlarge_temporal_tune",
+                "mode": "temporal_tune",
+                "train_dir": "MINDlarge_train",
+                "dev_dir": "MINDlarge_dev",
+                "processed_root": "data/processed",
+                "max_history": 50,
+                "min_user_hist_for_warm": 5,
+                "min_item_train_clicks_for_warm": 10,
+                "ranker_negatives_per_positive": 4,
+                "materialize_train_pairs": true,
+                "temporal_validation": {
+                  "validation_start": "2019-11-14 00:00:00",
+                  "rerank_reporting_start": "2019-11-15 00:00:00",
+                  "rerank_tuning_split_name": "rerank_tune",
+                  "rerank_reporting_split_name": "rerank_test"
+                },
+                "sub_sample": {
+                  "enabled": false,
+                  "train_impressions": 200000,
+                  "dev_impressions": 50000,
+                  "seed": 13
+                }
+              },
+              "knowledge_graph": {
+                "enabled": true,
+                "entity_embedding_path": null,
+                "relation_embedding_path": null,
+                "triples_path": "data/processed/MINDlarge/kg_triples.tsv",
+                "max_entities_per_news": 12,
+                "max_neighbors_per_entity": 20,
+                "add_reverse_edges": true,
+                "entity_weight": 1.0,
+                "neighbor_weight": 0.1,
+                "relation_weight": 0.1,
+                "text_feature_weight": 1.0,
+                "kg_feature_weight": 0.25,
+                "normalize_item_base": true,
+                "normalize": true
+              },
+              "teacher": {
+                "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+                "text": {
+                  "include_category_prefix": false
+                },
+                "batch_size": 128,
+                "user_attn_heads": 4,
+                "user_attn_dim": 384,
+                "lr": 0.0002,
+                "epochs": 8,
+                "early_stopping": {
+                  "enabled": true,
+                  "patience": 2,
+                  "monitor": "retrieval_recall@k",
+                  "min_delta": 0.0001
+                },
+                "temperature": 0.05,
+                "negatives_per_positive": 8,
+                "device": "cuda",
+                "text_adaptation": {
+                  "enabled": true,
+                  "batch_size": 16,
+                  "gradient_accumulation_steps": 4,
+                  "encode_batch_size": 256,
+                  "lr": 2e-05,
+                  "weight_decay": 0.01,
+                  "temperature": 0.05,
+                  "max_history": 10,
+                  "negatives_per_positive": 4,
+                  "hard_pool_size": 20,
+                  "hard_fraction": 0.25,
+                  "teacher_consistent_hard_only": true,
+                  "max_score_above_positive": 0.0,
+                  "hard_for_cold_users_only": true,
+                  "max_optimizer_updates": 10000,
+                  "early_stopping": {
+                    "enabled": true,
+                    "validation_interval_updates": 1000,
+                    "patience": 3,
+                    "min_delta": 0.0001
+                  },
+                  "device": "cuda"
+                }
+              },
+              "retrieval": {
+                "index_type": "flat_ip",
+                "base_index_type": "flat_ip",
+                "hybrid_base_weight": 0.075,
+                "hybrid_oversample": 26,
+                "sweep": {
+                  "hybrid_base_weights": [
+                    0.05,
+                    0.0625,
+                    0.075
+                  ],
+                  "hybrid_oversamples": [
+                    18,
+                    22,
+                    26
+                  ]
+                },
+                "ivf_nlist": 2048,
+                "topk": 200
+              },
+              "ranker": {
+                "batch_size": 1024,
+                "lr": 0.0001,
+                "weight_decay": 3e-05,
+                "epochs": 8,
+                "early_stopping": {
+                  "enabled": false,
+                  "patience": 2,
+                  "min_delta": 1e-05
+                },
+                "device": "cuda",
+                "hard_negative_sampling": {
+                  "enabled": true,
+                  "pool_size": 20,
+                  "hard_fraction": 0.25,
+                  "score_batch_size": 512,
+                  "teacher_consistent_hard_only": true,
+                  "max_score_above_positive": 0.0,
+                  "hard_for_cold_users_only": true,
+                  "hard_negative_distill_weight": 0.0
+                },
+                "dlrm": {
+                  "emb_dim": 56,
+                  "id_emb_dim": 8,
+                  "news_id_warm_scale": 1.0,
+                  "news_id_cold_scale": 0.0,
+                  "semantic_ff_mult": 3,
+                  "semantic_dropout": 0.2,
+                  "bottom_mlp": [
+                    64,
+                    56
+                  ],
+                  "top_mlp": [
+                    128,
+                    64,
+                    1
+                  ],
+                  "dropout": 0.15,
+                  "history_pooling": "candidate_attention",
+                  "candidate_attention_heads": 4,
+                  "candidate_attention_dropout": 0.0
+                },
+                "distill": {
+                  "representation_target": "full",
+                  "temperature": 2.0,
+                  "lambda_logit": 0.7,
+                  "lambda_repr": 0.05,
+                  "cold_weight": 2.0,
+                  "warm_weight": 0.5
+                },
+                "calibration": {
+                  "enabled": false,
+                  "lr": 0.05,
+                  "max_iter": 100
+                },
+                "grouped_batches": true,
+                "pairwise_weight": 0.5,
+                "checkpoint_selection": {
+                  "metric": "mean_impression_auc",
+                  "score_batch_size": 2048,
+                  "item_encoding_batch_size": 8192,
+                  "impression_batch_size": 128,
+                  "track_both": true,
+                  "preserve_training_rng": true
+                }
+              },
+              "rerank": {
+                "output_subdir": "rerank",
+                "k_out": 10,
+                "pool_size": 50,
+                "eval_split": "rerank_test",
+                "selection": {
+                  "require_frozen_for_eval": true,
+                  "require_distinct_splits": true,
+                  "require_provenance_for_eval": true,
+                  "source_split": "rerank_tune",
+                  "reporting_split": "rerank_test",
+                  "search_artifact": null,
+                  "decision_note": null,
+                  "frozen": false
+                },
+                "position_bias": "log",
+                "coverage_weight": 0.075,
+                "relevance_normalization": "minmax",
+                "scoring": {
+                  "batch_size": 2048,
+                  "item_encoding_batch_size": 8192,
+                  "impression_batch_size": 128
+                },
+                "coverage": {
+                  "max_new_entities_per_item": 3,
+                  "category_bonus": 1.0,
+                  "entity_bonus": 0.3
+                },
+                "fairness": {
+                  "enabled": true,
+                  "category_target": "catalog",
+                  "penalty_weight": 0.25
+                },
+                "search": {
+                  "split": "rerank_tune",
+                  "seed": 13,
+                  "sample_size": 5000,
+                  "shortlist_size": 20,
+                  "relative_guardrails": {
+                    "max_ndcg_drop_ratio": 0.02,
+                    "min_new_item_exposure_gain": 0.0,
+                    "min_category_coverage_gain": 0.25,
+                    "min_fairness_kl_pool_improvement": 0.03
+                  }
+                }
+              },
+              "eval": {
+                "report_splits": [
+                  "val"
+                ],
+                "ks": [
+                  5,
+                  10
+                ],
+                "time_periods": 4,
+                "batch_size": 2048,
+                "item_encoding_batch_size": 8192
+              },
+              "artifacts": {
+                "teacher_run_name": "mind_large_temporal_text_adapt_v1"
+              }
+            }
+          }
+        ],
+        "data_artifacts": {
+          "id_maps.json": {
+            "path": "data/processed/MINDlarge_temporal_tune/id_maps.json",
+            "sha256": "11761ea46c02eed056cdef522d3c5f3cc33fcb7b519c90a32dd6d118ed2c5913"
+          },
+          "news.parquet": {
+            "path": "data/processed/MINDlarge_temporal_tune/news.parquet",
+            "sha256": "f178b71e60e089bde60b42de98d5eccd7ba0e26d4360de031274ef6c48f764cb"
+          },
+          "rerank_tune_impressions.parquet": {
+            "path": "data/processed/MINDlarge_temporal_tune/rerank_tune_impressions.parquet",
+            "sha256": "daf29b3ed0cce5d882754e8f0e6f11e6a64fd96b2ce811de916c3dd6985e8b24"
+          },
+          "rerank_test_impressions.parquet": {
+            "path": "data/processed/MINDlarge_temporal_tune/rerank_test_impressions.parquet",
+            "sha256": "9f7e7ce81c713288d4a6a05a157ae2797fb05f4e673ec601385bca7a74acfbf1"
+          },
+          "age_index": {
+            "path": "data/processed/MINDlarge_submission/item_age_index.npz",
+            "sha256": "7003dec351536a22cd96d57e3357ff7bdb02b1a264d2934d58c9ac50e62672e0"
+          },
+          "age_id_maps": {
+            "path": "data/processed/MINDlarge_submission/id_maps.json",
+            "sha256": "025089465a0d693d4a62afe6bbbc31f3059526035024148d62ba88b6037fc0a8"
+          }
+        },
+        "scoring": {
+          "batch_size": 2048,
+          "candidate_buffer_size": 65536,
+          "item_encoding_batch_size": 8192,
+          "exact_rank_guard_threshold": 1e-05,
+          "reference_batch_size": 2048
+        },
+        "recency": {
+          "enabled": true,
+          "alpha": 0.02,
+          "age_dataset_name": "MINDlarge_submission",
+          "max_age_hours": 720.0
+        },
+        "weights": [
+          0.0,
+          0.05,
+          0.1,
+          0.15,
+          0.2,
+          0.25,
+          0.3,
+          0.35,
+          0.4,
+          0.45,
+          0.5,
+          0.55,
+          0.6,
+          0.65,
+          0.7,
+          0.75,
+          0.8,
+          0.85,
+          0.9,
+          0.95,
+          1.0
+        ],
+        "implementation": {
+          "pipeline/two_model_ensemble.py": "a498b13b71444a60711ec860514ea668c4353c202a20b453eeb431d49a7e6678",
+          "pipeline/ensemble.py": "382d2c7f21a0dbe5dd3cff0bc207d5387814220cce74a6cc5ed977df499d9983",
+          "pipeline/submission.py": "cfdf44a6ff6b83fbdc77ac029f83fd4a00a6da54b2d758dd5aa777bad19df826",
+          "pipeline/evaluate.py": "ce0f74daa21989e47ef6528289f2e0f79712e4448a7860f69291390edd0189ee",
+          "pipeline/ranker_scoring.py": "ed9da9febc77581ce9d8ece3cdfb748a60e75b26d2193521e1b7922c06cd5297",
+          "models/dlrm.py": "2f6a9b68d34555d9b58dbb6d7d5274f57ef608bae9b5ab14abbbafa90cb4cdb2",
+          "data/recency_tiebreaker.py": "331cd936b15661df8299e7b6d0e60e6393e086be76cdf252dbce167bdabdba9d",
+          "data/item_age.py": "73fd68233cc9d602af39e126985e3fe77f8611084b571154575bf81ecadf56ee",
+          "pipeline/pairwise_ensemble.py": "3dcecfc5905a6a9109e3f2c8a585ad8879c1482101239e19c0d2c3121d292de2",
+          "utils.py": "8c06195150bbce3d0da7bd1b8e395291b99fd53813acddbc7f51baa29300ecf9",
+          "config.py": "321d322bedc5bb75270656dc0efe587cc6e613b372c86f9a8f5cf7352012cf95"
+        },
+        "fusion": "integer_two_member_borda",
+        "rank_tiebreaker": "primary_rank",
+        "selection_tiebreakers": [
+          "ndcg@10",
+          "larger_primary_weight"
+        ]
+      },
+      "baseline_report": {
+        "weights": [
+          0.75,
+          0.25
+        ],
+        "context": {
+          "experiment": {
+            "baseline_context": {
+              "config": {
+                "run_name": "mind_large_ensemble_two_mixed_loss_v1",
+                "data": {
+                  "processed_root": "data/processed",
+                  "dataset_name": "MINDlarge_temporal_tune"
+                },
+                "posthoc_recency": {
+                  "enabled": true,
+                  "age_dataset_name": "MINDlarge_submission",
+                  "alpha": 0.02,
+                  "max_age_hours": 720.0
+                },
+                "two_model_ensemble": {
+                  "baseline_config": "configs/mind_large_ensemble_mpnet_p1_minilm.yaml",
+                  "tune_date": "2019-11-14",
+                  "report_date": "2019-11-15"
+                },
+                "ensemble": {
+                  "members": [
+                    {
+                      "name": "mpnet_bce_pairwise_w025",
+                      "config": "configs/mind_large_temporal_mpnet_p1_dual_pairwise.yaml"
+                    },
+                    {
+                      "name": "minilm_bce_pairwise_w025",
+                      "config": "configs/mind_large_temporal_minilm_dual_pairwise.yaml"
+                    }
+                  ],
+                  "primary_weight_grid": [
+                    0.0,
+                    0.05,
+                    0.1,
+                    0.15,
+                    0.2,
+                    0.25,
+                    0.3,
+                    0.35,
+                    0.4,
+                    0.45,
+                    0.5,
+                    0.55,
+                    0.6,
+                    0.65,
+                    0.7,
+                    0.75,
+                    0.8,
+                    0.85,
+                    0.9,
+                    0.95,
+                    1.0
+                  ],
+                  "tune_split": "rerank_tune",
+                  "report_split": "rerank_test",
+                  "device": "cuda",
+                  "batch_size": 2048,
+                  "candidate_buffer_size": 65536,
+                  "item_encoding_batch_size": 8192,
+                  "exact_rank_guard_threshold": 1e-05,
+                  "reference_batch_size": 2048
+                }
+              },
+              "baseline_selection": {
+                "path": "runs/mind_large_ensemble_mpnet_p1_minilm_rank_v1/ensemble/search.json",
+                "sha256": "bbedb4d63e402dc6c33183f00297d3774b528dffab7101113904cc8306670939"
+              },
+              "members": [
+                {
+                  "name": "mpnet_bce_pairwise_w025",
+                  "config": {
+                    "run_name": "mind_large_temporal_mpnet_p1_dual_bce_pairwise_w025_v1",
+                    "data": {
+                      "raw_root": "data/raw",
+                      "dataset_name": "MINDlarge_temporal_tune",
+                      "mode": "temporal_tune",
+                      "train_dir": "MINDlarge_train",
+                      "dev_dir": "MINDlarge_dev",
+                      "processed_root": "data/processed",
+                      "max_history": 50,
+                      "min_user_hist_for_warm": 5,
+                      "min_item_train_clicks_for_warm": 10,
+                      "ranker_negatives_per_positive": 4,
+                      "materialize_train_pairs": true,
+                      "temporal_validation": {
+                        "validation_start": "2019-11-14 00:00:00",
+                        "rerank_reporting_start": "2019-11-15 00:00:00",
+                        "rerank_tuning_split_name": "rerank_tune",
+                        "rerank_reporting_split_name": "rerank_test"
+                      },
+                      "sub_sample": {
+                        "enabled": false,
+                        "train_impressions": 200000,
+                        "dev_impressions": 50000,
+                        "seed": 13
+                      }
+                    },
+                    "knowledge_graph": {
+                      "enabled": true,
+                      "entity_embedding_path": null,
+                      "relation_embedding_path": null,
+                      "triples_path": "data/processed/MINDlarge/kg_triples.tsv",
+                      "max_entities_per_news": 12,
+                      "max_neighbors_per_entity": 20,
+                      "add_reverse_edges": true,
+                      "entity_weight": 1.0,
+                      "neighbor_weight": 0.1,
+                      "relation_weight": 0.1,
+                      "text_feature_weight": 1.0,
+                      "kg_feature_weight": 0.25,
+                      "normalize_item_base": true,
+                      "normalize": true
+                    },
+                    "teacher": {
+                      "model_name": "sentence-transformers/all-mpnet-base-v2",
+                      "text": {
+                        "include_category_prefix": false
+                      },
+                      "batch_size": 128,
+                      "user_attn_heads": 4,
+                      "user_attn_dim": 384,
+                      "lr": 0.0002,
+                      "epochs": 8,
+                      "early_stopping": {
+                        "enabled": true,
+                        "patience": 2,
+                        "monitor": "retrieval_recall@k",
+                        "min_delta": 0.0001
+                      },
+                      "temperature": 0.05,
+                      "negatives_per_positive": 8,
+                      "device": "cuda",
+                      "text_adaptation": {
+                        "enabled": true,
+                        "batch_size": 16,
+                        "gradient_accumulation_steps": 4,
+                        "encode_batch_size": 64,
+                        "lr": 1e-05,
+                        "weight_decay": 0.01,
+                        "temperature": 0.05,
+                        "max_history": 10,
+                        "negatives_per_positive": 4,
+                        "hard_pool_size": 20,
+                        "hard_fraction": 0.25,
+                        "teacher_consistent_hard_only": true,
+                        "max_score_above_positive": 0.0,
+                        "hard_for_cold_users_only": true,
+                        "max_optimizer_updates": 12000,
+                        "early_stopping": {
+                          "enabled": true,
+                          "validation_interval_updates": 500,
+                          "patience": 6,
+                          "min_delta": 0.0001
+                        },
+                        "device": "cuda",
+                        "local_files_only": false,
+                        "gradient_checkpointing": true,
+                        "mixed_precision": "fp16",
+                        "encoder_forward_batch_size": 8
+                      },
+                      "encode_batch_size": 64
+                    },
+                    "retrieval": {
+                      "index_type": "flat_ip",
+                      "base_index_type": "flat_ip",
+                      "hybrid_base_weight": 0.075,
+                      "hybrid_oversample": 26,
+                      "sweep": {
+                        "hybrid_base_weights": [
+                          0.05,
+                          0.0625,
+                          0.075
+                        ],
+                        "hybrid_oversamples": [
+                          18,
+                          22,
+                          26
+                        ]
+                      },
+                      "ivf_nlist": 2048,
+                      "topk": 200
+                    },
+                    "ranker": {
+                      "batch_size": 1024,
+                      "lr": 0.0001,
+                      "weight_decay": 3e-05,
+                      "epochs": 8,
+                      "early_stopping": {
+                        "enabled": false,
+                        "patience": 2,
+                        "min_delta": 1e-05
+                      },
+                      "device": "cuda",
+                      "hard_negative_sampling": {
+                        "enabled": true,
+                        "pool_size": 20,
+                        "hard_fraction": 0.25,
+                        "score_batch_size": 512,
+                        "teacher_consistent_hard_only": true,
+                        "max_score_above_positive": 0.0,
+                        "hard_for_cold_users_only": true,
+                        "hard_negative_distill_weight": 0.0
+                      },
+                      "dlrm": {
+                        "emb_dim": 56,
+                        "id_emb_dim": 8,
+                        "news_id_warm_scale": 1.0,
+                        "news_id_cold_scale": 0.0,
+                        "semantic_ff_mult": 3,
+                        "semantic_dropout": 0.2,
+                        "bottom_mlp": [
+                          64,
+                          56
+                        ],
+                        "top_mlp": [
+                          128,
+                          64,
+                          1
+                        ],
+                        "dropout": 0.15,
+                        "history_pooling": "candidate_attention",
+                        "candidate_attention_heads": 4,
+                        "candidate_attention_dropout": 0.0
+                      },
+                      "distill": {
+                        "representation_target": "full",
+                        "temperature": 2.0,
+                        "lambda_logit": 0.7,
+                        "lambda_repr": 0.05,
+                        "cold_weight": 2.0,
+                        "warm_weight": 0.5
+                      },
+                      "calibration": {
+                        "enabled": false,
+                        "lr": 0.05,
+                        "max_iter": 100
+                      },
+                      "grouped_batches": true,
+                      "pairwise_weight": 0.25,
+                      "checkpoint_selection": {
+                        "metric": "mean_impression_auc",
+                        "score_batch_size": 2048,
+                        "item_encoding_batch_size": 8192,
+                        "impression_batch_size": 128,
+                        "track_both": true,
+                        "preserve_training_rng": true
+                      }
+                    },
+                    "rerank": {
+                      "output_subdir": "rerank",
+                      "k_out": 10,
+                      "pool_size": 50,
+                      "eval_split": "rerank_test",
+                      "selection": {
+                        "require_frozen_for_eval": true,
+                        "require_distinct_splits": true,
+                        "require_provenance_for_eval": true,
+                        "source_split": "rerank_tune",
+                        "reporting_split": "rerank_test",
+                        "search_artifact": "runs/mind_large_temporal_mpnet_candidate_attention_v1/rerank/rerank_search.json",
+                        "decision_note": "docs/reranking.md",
+                        "frozen": true,
+                        "reporting_note": "November 15 was reused while refining the requirements; these are follow-up results, not an independent test."
+                      },
+                      "position_bias": "log",
+                      "coverage_weight": 0.035,
+                      "relevance_normalization": "minmax",
+                      "scoring": {
+                        "batch_size": 2048,
+                        "item_encoding_batch_size": 8192,
+                        "impression_batch_size": 128
+                      },
+                      "coverage": {
+                        "max_new_entities_per_item": 3,
+                        "category_bonus": 1.0,
+                        "entity_bonus": 0.3
+                      },
+                      "fairness": {
+                        "enabled": true,
+                        "category_target": "catalog",
+                        "penalty_weight": 0.0
+                      },
+                      "search": {
+                        "split": "rerank_tune",
+                        "seed": 13,
+                        "sample_size": 5000,
+                        "shortlist_size": 15,
+                        "relative_guardrails": {
+                          "max_ndcg_drop_ratio": 0.02,
+                          "min_new_item_exposure_gain": 0.0,
+                          "min_category_coverage_gain": 0.25,
+                          "min_fairness_kl_pool_improvement": 0.03
+                        },
+                        "coverage_weights": [
+                          0.025,
+                          0.03,
+                          0.035,
+                          0.04,
+                          0.05
+                        ],
+                        "fairness_penalties": [
+                          0.0,
+                          0.025,
+                          0.05
+                        ]
+                      }
+                    },
+                    "eval": {
+                      "report_splits": [
+                        "val"
+                      ],
+                      "ks": [
+                        5,
+                        10
+                      ],
+                      "time_periods": 4,
+                      "batch_size": 2048,
+                      "item_encoding_batch_size": 8192
+                    },
+                    "artifacts": {
+                      "text_encoder_run_name": "mind_large_temporal_mpnet_p1_sweep_ta_lr_1em05_t_5em02_u12000_v500",
+                      "teacher_run_name": "mind_large_temporal_mpnet_p1_promoted"
+                    }
+                  },
+                  "checkpoint": {
+                    "path": "runs/mind_large_temporal_mpnet_p1_dual_bce_pairwise_w025_v1/ranker/best.pt",
+                    "sha256": "b39da18684a481ea780327baae239cc451b6c0ce1b4202c06a400ad0459caa5c"
+                  },
+                  "training_summary": {
+                    "path": "runs/mind_large_temporal_mpnet_p1_dual_bce_pairwise_w025_v1/ranker/train_summary.json",
+                    "sha256": "9eb9037a49c04aa5a677f0310a64f47ddbb23a9c4e96f30ee388f35d2a302a49"
+                  },
+                  "item_embeddings": {
+                    "path": "runs/mind_large_temporal_mpnet_p1_promoted/teacher/item_ranker_base_emb.npy",
+                    "sha256": "e75848d62afc0d1d48b0443d9482ff4e477d2d493940cb040506dcb548c566b6"
+                  }
+                },
+                {
+                  "name": "minilm_bce_pairwise_w025",
+                  "config": {
+                    "run_name": "mind_large_temporal_minilm_dual_bce_pairwise_w025_v1",
+                    "data": {
+                      "raw_root": "data/raw",
+                      "dataset_name": "MINDlarge_temporal_tune",
+                      "mode": "temporal_tune",
+                      "train_dir": "MINDlarge_train",
+                      "dev_dir": "MINDlarge_dev",
+                      "processed_root": "data/processed",
+                      "max_history": 50,
+                      "min_user_hist_for_warm": 5,
+                      "min_item_train_clicks_for_warm": 10,
+                      "ranker_negatives_per_positive": 4,
+                      "materialize_train_pairs": true,
+                      "temporal_validation": {
+                        "validation_start": "2019-11-14 00:00:00",
+                        "rerank_reporting_start": "2019-11-15 00:00:00",
+                        "rerank_tuning_split_name": "rerank_tune",
+                        "rerank_reporting_split_name": "rerank_test"
+                      },
+                      "sub_sample": {
+                        "enabled": false,
+                        "train_impressions": 200000,
+                        "dev_impressions": 50000,
+                        "seed": 13
+                      }
+                    },
+                    "knowledge_graph": {
+                      "enabled": true,
+                      "entity_embedding_path": null,
+                      "relation_embedding_path": null,
+                      "triples_path": "data/processed/MINDlarge/kg_triples.tsv",
+                      "max_entities_per_news": 12,
+                      "max_neighbors_per_entity": 20,
+                      "add_reverse_edges": true,
+                      "entity_weight": 1.0,
+                      "neighbor_weight": 0.1,
+                      "relation_weight": 0.1,
+                      "text_feature_weight": 1.0,
+                      "kg_feature_weight": 0.25,
+                      "normalize_item_base": true,
+                      "normalize": true
+                    },
+                    "teacher": {
+                      "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+                      "text": {
+                        "include_category_prefix": false
+                      },
+                      "batch_size": 128,
+                      "user_attn_heads": 4,
+                      "user_attn_dim": 384,
+                      "lr": 0.0002,
+                      "epochs": 8,
+                      "early_stopping": {
+                        "enabled": true,
+                        "patience": 2,
+                        "monitor": "retrieval_recall@k",
+                        "min_delta": 0.0001
+                      },
+                      "temperature": 0.05,
+                      "negatives_per_positive": 8,
+                      "device": "cuda",
+                      "text_adaptation": {
+                        "enabled": true,
+                        "batch_size": 16,
+                        "gradient_accumulation_steps": 4,
+                        "encode_batch_size": 256,
+                        "lr": 2e-05,
+                        "weight_decay": 0.01,
+                        "temperature": 0.05,
+                        "max_history": 10,
+                        "negatives_per_positive": 4,
+                        "hard_pool_size": 20,
+                        "hard_fraction": 0.25,
+                        "teacher_consistent_hard_only": true,
+                        "max_score_above_positive": 0.0,
+                        "hard_for_cold_users_only": true,
+                        "max_optimizer_updates": 10000,
+                        "early_stopping": {
+                          "enabled": true,
+                          "validation_interval_updates": 1000,
+                          "patience": 3,
+                          "min_delta": 0.0001
+                        },
+                        "device": "cuda"
+                      }
+                    },
+                    "retrieval": {
+                      "index_type": "flat_ip",
+                      "base_index_type": "flat_ip",
+                      "hybrid_base_weight": 0.075,
+                      "hybrid_oversample": 26,
+                      "sweep": {
+                        "hybrid_base_weights": [
+                          0.05,
+                          0.0625,
+                          0.075
+                        ],
+                        "hybrid_oversamples": [
+                          18,
+                          22,
+                          26
+                        ]
+                      },
+                      "ivf_nlist": 2048,
+                      "topk": 200
+                    },
+                    "ranker": {
+                      "batch_size": 1024,
+                      "lr": 0.0001,
+                      "weight_decay": 3e-05,
+                      "epochs": 8,
+                      "early_stopping": {
+                        "enabled": false,
+                        "patience": 2,
+                        "min_delta": 1e-05
+                      },
+                      "device": "cuda",
+                      "hard_negative_sampling": {
+                        "enabled": true,
+                        "pool_size": 20,
+                        "hard_fraction": 0.25,
+                        "score_batch_size": 512,
+                        "teacher_consistent_hard_only": true,
+                        "max_score_above_positive": 0.0,
+                        "hard_for_cold_users_only": true,
+                        "hard_negative_distill_weight": 0.0
+                      },
+                      "dlrm": {
+                        "emb_dim": 56,
+                        "id_emb_dim": 8,
+                        "news_id_warm_scale": 1.0,
+                        "news_id_cold_scale": 0.0,
+                        "semantic_ff_mult": 3,
+                        "semantic_dropout": 0.2,
+                        "bottom_mlp": [
+                          64,
+                          56
+                        ],
+                        "top_mlp": [
+                          128,
+                          64,
+                          1
+                        ],
+                        "dropout": 0.15,
+                        "history_pooling": "candidate_attention",
+                        "candidate_attention_heads": 4,
+                        "candidate_attention_dropout": 0.0
+                      },
+                      "distill": {
+                        "representation_target": "full",
+                        "temperature": 2.0,
+                        "lambda_logit": 0.7,
+                        "lambda_repr": 0.05,
+                        "cold_weight": 2.0,
+                        "warm_weight": 0.5
+                      },
+                      "calibration": {
+                        "enabled": false,
+                        "lr": 0.05,
+                        "max_iter": 100
+                      },
+                      "grouped_batches": true,
+                      "pairwise_weight": 0.25,
+                      "checkpoint_selection": {
+                        "metric": "mean_impression_auc",
+                        "score_batch_size": 2048,
+                        "item_encoding_batch_size": 8192,
+                        "impression_batch_size": 128,
+                        "track_both": true,
+                        "preserve_training_rng": true
+                      }
+                    },
+                    "rerank": {
+                      "output_subdir": "rerank",
+                      "k_out": 10,
+                      "pool_size": 50,
+                      "eval_split": "rerank_test",
+                      "selection": {
+                        "require_frozen_for_eval": true,
+                        "require_distinct_splits": true,
+                        "require_provenance_for_eval": true,
+                        "source_split": "rerank_tune",
+                        "reporting_split": "rerank_test",
+                        "search_artifact": null,
+                        "decision_note": null,
+                        "frozen": false
+                      },
+                      "position_bias": "log",
+                      "coverage_weight": 0.075,
+                      "relevance_normalization": "minmax",
+                      "scoring": {
+                        "batch_size": 2048,
+                        "item_encoding_batch_size": 8192,
+                        "impression_batch_size": 128
+                      },
+                      "coverage": {
+                        "max_new_entities_per_item": 3,
+                        "category_bonus": 1.0,
+                        "entity_bonus": 0.3
+                      },
+                      "fairness": {
+                        "enabled": true,
+                        "category_target": "catalog",
+                        "penalty_weight": 0.25
+                      },
+                      "search": {
+                        "split": "rerank_tune",
+                        "seed": 13,
+                        "sample_size": 5000,
+                        "shortlist_size": 20,
+                        "relative_guardrails": {
+                          "max_ndcg_drop_ratio": 0.02,
+                          "min_new_item_exposure_gain": 0.0,
+                          "min_category_coverage_gain": 0.25,
+                          "min_fairness_kl_pool_improvement": 0.03
+                        }
+                      }
+                    },
+                    "eval": {
+                      "report_splits": [
+                        "val"
+                      ],
+                      "ks": [
+                        5,
+                        10
+                      ],
+                      "time_periods": 4,
+                      "batch_size": 2048,
+                      "item_encoding_batch_size": 8192
+                    },
+                    "artifacts": {
+                      "teacher_run_name": "mind_large_temporal_text_adapt_v1"
+                    }
+                  },
+                  "checkpoint": {
+                    "path": "runs/mind_large_temporal_minilm_dual_bce_pairwise_w025_v1/ranker/best.pt",
+                    "sha256": "42ee020c5f5d074256d18cfbe65382953b6a0270000524bf48ceed667889b3d1"
+                  },
+                  "training_summary": {
+                    "path": "runs/mind_large_temporal_minilm_dual_bce_pairwise_w025_v1/ranker/train_summary.json",
+                    "sha256": "caf095a7327c18c57306bc0b79a25eeb99b056aec316c403a2b085d518e7b9d8"
+                  },
+                  "item_embeddings": {
+                    "path": "runs/mind_large_temporal_text_adapt_v1/teacher/item_ranker_base_emb.npy",
+                    "sha256": "6935c3350066810fd746c169bb607016bdd5561a05173f077904f5209a3e8cb3"
+                  }
+                }
+              ],
+              "data_artifacts": {
+                "id_maps.json": {
+                  "path": "data/processed/MINDlarge_temporal_tune/id_maps.json",
+                  "sha256": "11761ea46c02eed056cdef522d3c5f3cc33fcb7b519c90a32dd6d118ed2c5913"
+                },
+                "news.parquet": {
+                  "path": "data/processed/MINDlarge_temporal_tune/news.parquet",
+                  "sha256": "f178b71e60e089bde60b42de98d5eccd7ba0e26d4360de031274ef6c48f764cb"
+                },
+                "rerank_tune_impressions.parquet": {
+                  "path": "data/processed/MINDlarge_temporal_tune/rerank_tune_impressions.parquet",
+                  "sha256": "daf29b3ed0cce5d882754e8f0e6f11e6a64fd96b2ce811de916c3dd6985e8b24"
+                },
+                "rerank_test_impressions.parquet": {
+                  "path": "data/processed/MINDlarge_temporal_tune/rerank_test_impressions.parquet",
+                  "sha256": "9f7e7ce81c713288d4a6a05a157ae2797fb05f4e673ec601385bca7a74acfbf1"
+                },
+                "age_index": {
+                  "path": "data/processed/MINDlarge_submission/item_age_index.npz",
+                  "sha256": "7003dec351536a22cd96d57e3357ff7bdb02b1a264d2934d58c9ac50e62672e0"
+                },
+                "age_id_maps": {
+                  "path": "data/processed/MINDlarge_submission/id_maps.json",
+                  "sha256": "025089465a0d693d4a62afe6bbbc31f3059526035024148d62ba88b6037fc0a8"
+                }
+              },
+              "scoring": {
+                "batch_size": 2048,
+                "candidate_buffer_size": 65536,
+                "item_encoding_batch_size": 8192,
+                "exact_rank_guard_threshold": 1e-05,
+                "reference_batch_size": 2048
+              },
+              "recency": {
+                "enabled": true,
+                "alpha": 0.02,
+                "age_dataset_name": "MINDlarge_submission",
+                "max_age_hours": 720.0
+              },
+              "weights": [
+                0.0,
+                0.05,
+                0.1,
+                0.15,
+                0.2,
+                0.25,
+                0.3,
+                0.35,
+                0.4,
+                0.45,
+                0.5,
+                0.55,
+                0.6,
+                0.65,
+                0.7,
+                0.75,
+                0.8,
+                0.85,
+                0.9,
+                0.95,
+                1.0
+              ],
+              "implementation": {
+                "pipeline/two_model_ensemble.py": "a498b13b71444a60711ec860514ea668c4353c202a20b453eeb431d49a7e6678",
+                "pipeline/ensemble.py": "382d2c7f21a0dbe5dd3cff0bc207d5387814220cce74a6cc5ed977df499d9983",
+                "pipeline/submission.py": "cfdf44a6ff6b83fbdc77ac029f83fd4a00a6da54b2d758dd5aa777bad19df826",
+                "pipeline/evaluate.py": "ce0f74daa21989e47ef6528289f2e0f79712e4448a7860f69291390edd0189ee",
+                "pipeline/ranker_scoring.py": "ed9da9febc77581ce9d8ece3cdfb748a60e75b26d2193521e1b7922c06cd5297",
+                "models/dlrm.py": "2f6a9b68d34555d9b58dbb6d7d5274f57ef608bae9b5ab14abbbafa90cb4cdb2",
+                "data/recency_tiebreaker.py": "331cd936b15661df8299e7b6d0e60e6393e086be76cdf252dbce167bdabdba9d",
+                "data/item_age.py": "73fd68233cc9d602af39e126985e3fe77f8611084b571154575bf81ecadf56ee",
+                "pipeline/pairwise_ensemble.py": "3dcecfc5905a6a9109e3f2c8a585ad8879c1482101239e19c0d2c3121d292de2",
+                "utils.py": "8c06195150bbce3d0da7bd1b8e395291b99fd53813acddbc7f51baa29300ecf9",
+                "config.py": "321d322bedc5bb75270656dc0efe587cc6e613b372c86f9a8f5cf7352012cf95"
+              },
+              "fusion": "integer_two_member_borda",
+              "rank_tiebreaker": "primary_rank",
+              "selection_tiebreakers": [
+                "ndcg@10",
+                "larger_primary_weight"
+              ]
+            },
+            "configs": {
+              "mpnet": {
+                "run_name": "mind_large_temporal_mpnet_p1_pairwise_w050_v1",
+                "data": {
+                  "raw_root": "data/raw",
+                  "dataset_name": "MINDlarge_temporal_tune",
+                  "mode": "temporal_tune",
+                  "train_dir": "MINDlarge_train",
+                  "dev_dir": "MINDlarge_dev",
+                  "processed_root": "data/processed",
+                  "max_history": 50,
+                  "min_user_hist_for_warm": 5,
+                  "min_item_train_clicks_for_warm": 10,
+                  "ranker_negatives_per_positive": 4,
+                  "materialize_train_pairs": true,
+                  "temporal_validation": {
+                    "validation_start": "2019-11-14 00:00:00",
+                    "rerank_reporting_start": "2019-11-15 00:00:00",
+                    "rerank_tuning_split_name": "rerank_tune",
+                    "rerank_reporting_split_name": "rerank_test"
+                  },
+                  "sub_sample": {
+                    "enabled": false,
+                    "train_impressions": 200000,
+                    "dev_impressions": 50000,
+                    "seed": 13
+                  }
+                },
+                "knowledge_graph": {
+                  "enabled": true,
+                  "entity_embedding_path": null,
+                  "relation_embedding_path": null,
+                  "triples_path": "data/processed/MINDlarge/kg_triples.tsv",
+                  "max_entities_per_news": 12,
+                  "max_neighbors_per_entity": 20,
+                  "add_reverse_edges": true,
+                  "entity_weight": 1.0,
+                  "neighbor_weight": 0.1,
+                  "relation_weight": 0.1,
+                  "text_feature_weight": 1.0,
+                  "kg_feature_weight": 0.25,
+                  "normalize_item_base": true,
+                  "normalize": true
+                },
+                "teacher": {
+                  "model_name": "sentence-transformers/all-mpnet-base-v2",
+                  "text": {
+                    "include_category_prefix": false
+                  },
+                  "batch_size": 128,
+                  "user_attn_heads": 4,
+                  "user_attn_dim": 384,
+                  "lr": 0.0002,
+                  "epochs": 8,
+                  "early_stopping": {
+                    "enabled": true,
+                    "patience": 2,
+                    "monitor": "retrieval_recall@k",
+                    "min_delta": 0.0001
+                  },
+                  "temperature": 0.05,
+                  "negatives_per_positive": 8,
+                  "device": "cuda",
+                  "text_adaptation": {
+                    "enabled": true,
+                    "batch_size": 16,
+                    "gradient_accumulation_steps": 4,
+                    "encode_batch_size": 64,
+                    "lr": 1e-05,
+                    "weight_decay": 0.01,
+                    "temperature": 0.05,
+                    "max_history": 10,
+                    "negatives_per_positive": 4,
+                    "hard_pool_size": 20,
+                    "hard_fraction": 0.25,
+                    "teacher_consistent_hard_only": true,
+                    "max_score_above_positive": 0.0,
+                    "hard_for_cold_users_only": true,
+                    "max_optimizer_updates": 12000,
+                    "early_stopping": {
+                      "enabled": true,
+                      "validation_interval_updates": 500,
+                      "patience": 6,
+                      "min_delta": 0.0001
+                    },
+                    "device": "cuda",
+                    "local_files_only": false,
+                    "gradient_checkpointing": true,
+                    "mixed_precision": "fp16",
+                    "encoder_forward_batch_size": 8
+                  },
+                  "encode_batch_size": 64
+                },
+                "retrieval": {
+                  "index_type": "flat_ip",
+                  "base_index_type": "flat_ip",
+                  "hybrid_base_weight": 0.075,
+                  "hybrid_oversample": 26,
+                  "sweep": {
+                    "hybrid_base_weights": [
+                      0.05,
+                      0.0625,
+                      0.075
+                    ],
+                    "hybrid_oversamples": [
+                      18,
+                      22,
+                      26
+                    ]
+                  },
+                  "ivf_nlist": 2048,
+                  "topk": 200
+                },
+                "ranker": {
+                  "batch_size": 1024,
+                  "lr": 0.0001,
+                  "weight_decay": 3e-05,
+                  "epochs": 8,
+                  "early_stopping": {
+                    "enabled": false,
+                    "patience": 2,
+                    "min_delta": 1e-05
+                  },
+                  "device": "cuda",
+                  "hard_negative_sampling": {
+                    "enabled": true,
+                    "pool_size": 20,
+                    "hard_fraction": 0.25,
+                    "score_batch_size": 512,
+                    "teacher_consistent_hard_only": true,
+                    "max_score_above_positive": 0.0,
+                    "hard_for_cold_users_only": true,
+                    "hard_negative_distill_weight": 0.0
+                  },
+                  "dlrm": {
+                    "emb_dim": 56,
+                    "id_emb_dim": 8,
+                    "news_id_warm_scale": 1.0,
+                    "news_id_cold_scale": 0.0,
+                    "semantic_ff_mult": 3,
+                    "semantic_dropout": 0.2,
+                    "bottom_mlp": [
+                      64,
+                      56
+                    ],
+                    "top_mlp": [
+                      128,
+                      64,
+                      1
+                    ],
+                    "dropout": 0.15,
+                    "history_pooling": "candidate_attention",
+                    "candidate_attention_heads": 4,
+                    "candidate_attention_dropout": 0.0
+                  },
+                  "distill": {
+                    "representation_target": "full",
+                    "temperature": 2.0,
+                    "lambda_logit": 0.7,
+                    "lambda_repr": 0.05,
+                    "cold_weight": 2.0,
+                    "warm_weight": 0.5
+                  },
+                  "calibration": {
+                    "enabled": false,
+                    "lr": 0.05,
+                    "max_iter": 100
+                  },
+                  "grouped_batches": true,
+                  "pairwise_weight": 0.5,
+                  "checkpoint_selection": {
+                    "metric": "mean_impression_auc",
+                    "score_batch_size": 2048,
+                    "item_encoding_batch_size": 8192,
+                    "impression_batch_size": 128,
+                    "track_both": true,
+                    "preserve_training_rng": true
+                  }
+                },
+                "rerank": {
+                  "output_subdir": "rerank",
+                  "k_out": 10,
+                  "pool_size": 50,
+                  "eval_split": "rerank_test",
+                  "selection": {
+                    "require_frozen_for_eval": true,
+                    "require_distinct_splits": true,
+                    "require_provenance_for_eval": true,
+                    "source_split": "rerank_tune",
+                    "reporting_split": "rerank_test",
+                    "search_artifact": "runs/mind_large_temporal_mpnet_candidate_attention_v1/rerank/rerank_search.json",
+                    "decision_note": "docs/reranking.md",
+                    "frozen": true,
+                    "reporting_note": "November 15 was reused while refining the requirements; these are follow-up results, not an independent test."
+                  },
+                  "position_bias": "log",
+                  "coverage_weight": 0.035,
+                  "relevance_normalization": "minmax",
+                  "scoring": {
+                    "batch_size": 2048,
+                    "item_encoding_batch_size": 8192,
+                    "impression_batch_size": 128
+                  },
+                  "coverage": {
+                    "max_new_entities_per_item": 3,
+                    "category_bonus": 1.0,
+                    "entity_bonus": 0.3
+                  },
+                  "fairness": {
+                    "enabled": true,
+                    "category_target": "catalog",
+                    "penalty_weight": 0.0
+                  },
+                  "search": {
+                    "split": "rerank_tune",
+                    "seed": 13,
+                    "sample_size": 5000,
+                    "shortlist_size": 15,
+                    "relative_guardrails": {
+                      "max_ndcg_drop_ratio": 0.02,
+                      "min_new_item_exposure_gain": 0.0,
+                      "min_category_coverage_gain": 0.25,
+                      "min_fairness_kl_pool_improvement": 0.03
+                    },
+                    "coverage_weights": [
+                      0.025,
+                      0.03,
+                      0.035,
+                      0.04,
+                      0.05
+                    ],
+                    "fairness_penalties": [
+                      0.0,
+                      0.025,
+                      0.05
+                    ]
+                  }
+                },
+                "eval": {
+                  "report_splits": [
+                    "val"
+                  ],
+                  "ks": [
+                    5,
+                    10
+                  ],
+                  "time_periods": 4,
+                  "batch_size": 2048,
+                  "item_encoding_batch_size": 8192
+                },
+                "artifacts": {
+                  "text_encoder_run_name": "mind_large_temporal_mpnet_p1_sweep_ta_lr_1em05_t_5em02_u12000_v500",
+                  "teacher_run_name": "mind_large_temporal_mpnet_p1_promoted"
+                }
+              },
+              "minilm": {
+                "run_name": "mind_large_temporal_minilm_pairwise_w050_v1",
+                "data": {
+                  "raw_root": "data/raw",
+                  "dataset_name": "MINDlarge_temporal_tune",
+                  "mode": "temporal_tune",
+                  "train_dir": "MINDlarge_train",
+                  "dev_dir": "MINDlarge_dev",
+                  "processed_root": "data/processed",
+                  "max_history": 50,
+                  "min_user_hist_for_warm": 5,
+                  "min_item_train_clicks_for_warm": 10,
+                  "ranker_negatives_per_positive": 4,
+                  "materialize_train_pairs": true,
+                  "temporal_validation": {
+                    "validation_start": "2019-11-14 00:00:00",
+                    "rerank_reporting_start": "2019-11-15 00:00:00",
+                    "rerank_tuning_split_name": "rerank_tune",
+                    "rerank_reporting_split_name": "rerank_test"
+                  },
+                  "sub_sample": {
+                    "enabled": false,
+                    "train_impressions": 200000,
+                    "dev_impressions": 50000,
+                    "seed": 13
+                  }
+                },
+                "knowledge_graph": {
+                  "enabled": true,
+                  "entity_embedding_path": null,
+                  "relation_embedding_path": null,
+                  "triples_path": "data/processed/MINDlarge/kg_triples.tsv",
+                  "max_entities_per_news": 12,
+                  "max_neighbors_per_entity": 20,
+                  "add_reverse_edges": true,
+                  "entity_weight": 1.0,
+                  "neighbor_weight": 0.1,
+                  "relation_weight": 0.1,
+                  "text_feature_weight": 1.0,
+                  "kg_feature_weight": 0.25,
+                  "normalize_item_base": true,
+                  "normalize": true
+                },
+                "teacher": {
+                  "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+                  "text": {
+                    "include_category_prefix": false
+                  },
+                  "batch_size": 128,
+                  "user_attn_heads": 4,
+                  "user_attn_dim": 384,
+                  "lr": 0.0002,
+                  "epochs": 8,
+                  "early_stopping": {
+                    "enabled": true,
+                    "patience": 2,
+                    "monitor": "retrieval_recall@k",
+                    "min_delta": 0.0001
+                  },
+                  "temperature": 0.05,
+                  "negatives_per_positive": 8,
+                  "device": "cuda",
+                  "text_adaptation": {
+                    "enabled": true,
+                    "batch_size": 16,
+                    "gradient_accumulation_steps": 4,
+                    "encode_batch_size": 256,
+                    "lr": 2e-05,
+                    "weight_decay": 0.01,
+                    "temperature": 0.05,
+                    "max_history": 10,
+                    "negatives_per_positive": 4,
+                    "hard_pool_size": 20,
+                    "hard_fraction": 0.25,
+                    "teacher_consistent_hard_only": true,
+                    "max_score_above_positive": 0.0,
+                    "hard_for_cold_users_only": true,
+                    "max_optimizer_updates": 10000,
+                    "early_stopping": {
+                      "enabled": true,
+                      "validation_interval_updates": 1000,
+                      "patience": 3,
+                      "min_delta": 0.0001
+                    },
+                    "device": "cuda"
+                  }
+                },
+                "retrieval": {
+                  "index_type": "flat_ip",
+                  "base_index_type": "flat_ip",
+                  "hybrid_base_weight": 0.075,
+                  "hybrid_oversample": 26,
+                  "sweep": {
+                    "hybrid_base_weights": [
+                      0.05,
+                      0.0625,
+                      0.075
+                    ],
+                    "hybrid_oversamples": [
+                      18,
+                      22,
+                      26
+                    ]
+                  },
+                  "ivf_nlist": 2048,
+                  "topk": 200
+                },
+                "ranker": {
+                  "batch_size": 1024,
+                  "lr": 0.0001,
+                  "weight_decay": 3e-05,
+                  "epochs": 8,
+                  "early_stopping": {
+                    "enabled": false,
+                    "patience": 2,
+                    "min_delta": 1e-05
+                  },
+                  "device": "cuda",
+                  "hard_negative_sampling": {
+                    "enabled": true,
+                    "pool_size": 20,
+                    "hard_fraction": 0.25,
+                    "score_batch_size": 512,
+                    "teacher_consistent_hard_only": true,
+                    "max_score_above_positive": 0.0,
+                    "hard_for_cold_users_only": true,
+                    "hard_negative_distill_weight": 0.0
+                  },
+                  "dlrm": {
+                    "emb_dim": 56,
+                    "id_emb_dim": 8,
+                    "news_id_warm_scale": 1.0,
+                    "news_id_cold_scale": 0.0,
+                    "semantic_ff_mult": 3,
+                    "semantic_dropout": 0.2,
+                    "bottom_mlp": [
+                      64,
+                      56
+                    ],
+                    "top_mlp": [
+                      128,
+                      64,
+                      1
+                    ],
+                    "dropout": 0.15,
+                    "history_pooling": "candidate_attention",
+                    "candidate_attention_heads": 4,
+                    "candidate_attention_dropout": 0.0
+                  },
+                  "distill": {
+                    "representation_target": "full",
+                    "temperature": 2.0,
+                    "lambda_logit": 0.7,
+                    "lambda_repr": 0.05,
+                    "cold_weight": 2.0,
+                    "warm_weight": 0.5
+                  },
+                  "calibration": {
+                    "enabled": false,
+                    "lr": 0.05,
+                    "max_iter": 100
+                  },
+                  "grouped_batches": true,
+                  "pairwise_weight": 0.5,
+                  "checkpoint_selection": {
+                    "metric": "mean_impression_auc",
+                    "score_batch_size": 2048,
+                    "item_encoding_batch_size": 8192,
+                    "impression_batch_size": 128,
+                    "track_both": true,
+                    "preserve_training_rng": true
+                  }
+                },
+                "rerank": {
+                  "output_subdir": "rerank",
+                  "k_out": 10,
+                  "pool_size": 50,
+                  "eval_split": "rerank_test",
+                  "selection": {
+                    "require_frozen_for_eval": true,
+                    "require_distinct_splits": true,
+                    "require_provenance_for_eval": true,
+                    "source_split": "rerank_tune",
+                    "reporting_split": "rerank_test",
+                    "search_artifact": null,
+                    "decision_note": null,
+                    "frozen": false
+                  },
+                  "position_bias": "log",
+                  "coverage_weight": 0.075,
+                  "relevance_normalization": "minmax",
+                  "scoring": {
+                    "batch_size": 2048,
+                    "item_encoding_batch_size": 8192,
+                    "impression_batch_size": 128
+                  },
+                  "coverage": {
+                    "max_new_entities_per_item": 3,
+                    "category_bonus": 1.0,
+                    "entity_bonus": 0.3
+                  },
+                  "fairness": {
+                    "enabled": true,
+                    "category_target": "catalog",
+                    "penalty_weight": 0.25
+                  },
+                  "search": {
+                    "split": "rerank_tune",
+                    "seed": 13,
+                    "sample_size": 5000,
+                    "shortlist_size": 20,
+                    "relative_guardrails": {
+                      "max_ndcg_drop_ratio": 0.02,
+                      "min_new_item_exposure_gain": 0.0,
+                      "min_category_coverage_gain": 0.25,
+                      "min_fairness_kl_pool_improvement": 0.03
+                    }
+                  }
+                },
+                "eval": {
+                  "report_splits": [
+                    "val"
+                  ],
+                  "ks": [
+                    5,
+                    10
+                  ],
+                  "time_periods": 4,
+                  "batch_size": 2048,
+                  "item_encoding_batch_size": 8192
+                },
+                "artifacts": {
+                  "teacher_run_name": "mind_large_temporal_text_adapt_v1"
+                }
+              }
+            },
+            "fixed_weights": [
+              0.75,
+              0.25
+            ],
+            "inputs": {
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/scripts/run_pairwise_weight_comparison.py": "370ace4c54f9ae235b7051e36fe95f2ae7a32730c86d3e4c60a5b8fbe371462c",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/scripts/run_ranker_loss_comparison.py": "80ae6da4ff396766deac0cf7f499e58cfddfbb0b0b73424670e17e68e50a3df7",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/__init__.py": "127a5f97f45a9e1402447fe8665792502c0c87f880e7737b1374e4a4796e17db",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/cli.py": "d325a722636b35c8069f650f8294ffd63299943b98047378ccaa39627ca0c6ff",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/config.py": "321d322bedc5bb75270656dc0efe587cc6e613b372c86f9a8f5cf7352012cf95",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/datasets.py": "0d17bac813c5e8c96cf887805b56ca40e62c6545549bdf6229188feec610f29b",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/featurize.py": "f9723f168f946c9833fca7b7a54f94a72d28ad612c82280c686ad95574a04ea8",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/impression_batches.py": "064cf70bf25d19759ca8f3d533089e5e63e425f3e16dae7cea7a52ee23f28237",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/item_age.py": "73fd68233cc9d602af39e126985e3fe77f8611084b571154575bf81ecadf56ee",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/kg.py": "f681b19c737ef1e677231d4cbea04e9ce799a44bd1c6bd6c5442b9d7206f714f",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/mind_io.py": "60070ce53662352974ceb729c078452fc4da30bed773d81718ecd0faee68ff03",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/recency_tiebreaker.py": "331cd936b15661df8299e7b6d0e60e6393e086be76cdf252dbce167bdabdba9d",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/metrics/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/metrics/benchmark.py": "57b7fe9e7ca5b8f4c9bc7a9f65fe758f63001ceb7239c5a69044421feca5bf07",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/metrics/calibration.py": "1a676bf7716ba402168c77162dade78dca7a8fe711988769ad1bad69cbe5715f",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/metrics/diversity.py": "d8a04d0c4c82ba3a42519ac56c2b321f0670abeca2302ede315baedbf82309cf",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/metrics/fairness.py": "5d27e74fa7ef22c38c487ec57188be79559124d4d03a49979591fc7c2cf3575c",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/metrics/ranking.py": "46c516f8812154cdd5f19a240d1ff1d60b87cbe11df90803d5fce57d08656f4c",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/models/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/models/calibration.py": "c03b10b2246555e3be502cf66c5dd653dd9424a114feb51f612eea228c2babe2",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/models/distill.py": "6d9e8925ed11b650456388c8a14c75d60ec7498edebf4784c5f9062e91aacbe8",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/models/dlrm.py": "2f6a9b68d34555d9b58dbb6d7d5274f57ef608bae9b5ab14abbbafa90cb4cdb2",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/models/ranking_loss.py": "6a73daedd921ce595585b4d10f5e6d01b73e64e1ca61920daca63328f3c1ad12",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/models/teacher.py": "d107e5f3005838a1f16f40d792a0e634eaf2b90366d1a10a675c85937ec21809",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/ensemble.py": "382d2c7f21a0dbe5dd3cff0bc207d5387814220cce74a6cc5ed977df499d9983",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/evaluate.py": "ce0f74daa21989e47ef6528289f2e0f79712e4448a7860f69291390edd0189ee",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/hard_negative_sampling.py": "b7bb50e855f3b7291bc141608722962a268035137d91c8c3dea83bef7d048819",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/pairwise_ensemble.py": "3dcecfc5905a6a9109e3f2c8a585ad8879c1482101239e19c0d2c3121d292de2",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/preprocess.py": "9e9673e3e5c594028c9552b0765e108dedec0034432d2b631204444fbc6b7c07",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/ranker_lr_sweep.py": "309115bc97a4858660b1698ba85d382e9962a214ca9db7a2eef26c5f8c9e9701",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/ranker_scoring.py": "ed9da9febc77581ce9d8ece3cdfb748a60e75b26d2193521e1b7922c06cd5297",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/ranker_train.py": "03fecbe53231b4bf2075d7b7f44c8f46ca4fa3e67ba3c3aedb0279695da5b413",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/ranker_validation.py": "3f690b9e32d0f59ad9fa02264c303bfb2724477517cbfc1b432813f82132b292",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/rerank_eval.py": "369d6ec7ec5b852cf11742bb7f3ba65633f51cdbe3ef69b43df5aaf2f75ede69",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/rerank_metrics.py": "38077c98df7feaa517c009bcc19d0dcc6fd7219ff820beefd656d0a94eb43fef",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/rerank_policy.py": "6730d7d8c719a52817c77fdaf5eff221ed8831d104c50d55be614fa68666ea53",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/rerank_scoring.py": "187790fa8a6e9b0ae5a50cc2eb08391d5e84bf8bad4108ab226b9734fa9f4444",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/rerank_search.py": "addec0b725526320941456a72a60098c8f2076bf6a10321ea1837456e27c14e2",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/retrieval.py": "7105ca935468b7d1d3d8bcfa05fa25669eac757091f59a8770dd4da9955ffec8",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/submission.py": "cfdf44a6ff6b83fbdc77ac029f83fd4a00a6da54b2d758dd5aa777bad19df826",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/teacher_train.py": "824f4af2802d30baebc5f8cd97149ce84e2953347b7b9c13408588da44472d7c",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/text_encoder_adapt.py": "f649f9dd148edb831ae157056d6e09fd3881f898afce6a88a62d459fb781576e",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/two_model_ensemble.py": "a498b13b71444a60711ec860514ea668c4353c202a20b453eeb431d49a7e6678",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/two_model_final_fit.py": "edf726c160cff8d98969fca471acc8209e4bfafc850cbcd957bc6a3ceb373937",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/rerank/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/rerank/greedy.py": "ad333f5875aae59afa0f627f09051e2749624c415b18fde70a27fe8e2838d1c7",
+              "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/utils.py": "8c06195150bbce3d0da7bd1b8e395291b99fd53813acddbc7f51baa29300ecf9",
+              "data/processed/MINDlarge_temporal_tune/item_click_counts.json": "6cb33613561ee632d8db887b3cf52b8a3aaa1a3cc00fb5cbab39e8e58baf5ce3",
+              "data/processed/MINDlarge_temporal_tune/train_behaviors.parquet": "7d7345450d189f15dd20e47b2652b08dd9156e3e28d172e6877c3a4406c5415c",
+              "data/processed/MINDlarge_temporal_tune/val_impressions.parquet": "d0edee4d0056f126f597ef8e7f0f322dea380d893107392a9d8fb0573b0e062f",
+              "data/processed/MINDlarge_temporal_tune/val_pairs.parquet": "c9bc8cb3e268d6437c6078e1b74014c5de869ce7e632903396890aea749e5ea2",
+              "runs/mind_large_ensemble_two_mixed_loss_v1/ensemble/search.json": "0543c57e8d054128a43babfdaa9bb5dd03d02cc8bfff3cb63068d3385d930f59",
+              "runs/mind_large_temporal_minilm_dual_bce_pairwise_w025_v1/eval/ranker_eval_val.json": "10c798fea8a15e20be47312a66196453e6994750a7316082e8009ee4a8e96b6b",
+              "runs/mind_large_temporal_mpnet_p1_dual_bce_pairwise_w025_v1/eval/ranker_eval_val.json": "0bb6e75ed8d271f8a5ec0d8111dbca32f079b876025228e975a6500dc427c58b",
+              "runs/mind_large_temporal_mpnet_p1_promoted/teacher/item_teacher_emb.npy": "977c624bd859e57f51cbb6d968679b125fc6cd82074e2f1fb704af08028fb29d",
+              "runs/mind_large_temporal_mpnet_p1_promoted/teacher/model.pt": "8867bf6e43985bde7a810fd8b941a18e42ae31e6bb43b42c628a248707113de5",
+              "runs/mind_large_temporal_text_adapt_v1/teacher/item_teacher_emb.npy": "1666b34ff9571881785ca8134575333a72806138dbad8de06ec612873e2251bb",
+              "runs/mind_large_temporal_text_adapt_v1/teacher/model.pt": "e112f33374f7f799a9b5c3260ea84e0f6f56d93473b9a6f55663cc0839939d96"
+            }
+          },
+          "checkpoints": {
+            "mpnet": "dbaa948667266bb1126bc381a5d9acd5ae910d9c2360bc5342fb7181e5f9413b",
+            "minilm": "46bc7cc841b48c31c27a2f5e2997081fa53e7d5759d2365a4158861b852b1672"
+          }
+        },
+        "tune": {
+          "candidate": {
+            "primary_weight": 0.75,
+            "secondary_weight": 0.25,
+            "auc": 0.7026048748609444,
+            "mrr": 0.333907283195703,
+            "ndcg@5": 0.36495327468283006,
+            "ndcg@10": 0.4248816169750774
+          },
+          "baseline": {
+            "primary_weight": 0.75,
+            "secondary_weight": 0.25,
+            "auc": 0.6993843286915767,
+            "mrr": 0.33390898914321004,
+            "ndcg@5": 0.3653162419893577,
+            "ndcg@10": 0.42515956303202634
+          },
+          "delta": {
+            "auc": 0.003220546169367622,
+            "mrr": -1.7059475070357877e-06,
+            "ndcg@5": -0.00036296730652762843,
+            "ndcg@10": -0.00027794605694891894
+          }
+        },
+        "report": {
+          "candidate": {
+            "primary_weight": 0.75,
+            "secondary_weight": 0.25,
+            "auc": 0.6901399875149911,
+            "mrr": 0.3396611355948477,
+            "ndcg@5": 0.37517334146578524,
+            "ndcg@10": 0.43723931380960773
+          },
+          "baseline": {
+            "primary_weight": 0.75,
+            "secondary_weight": 0.25,
+            "auc": 0.6871252215562752,
+            "mrr": 0.3415553314455518,
+            "ndcg@5": 0.37824932590912447,
+            "ndcg@10": 0.43958147978689227
+          },
+          "delta": {
+            "auc": 0.0030147659587158593,
+            "mrr": -0.0018941958507041057,
+            "ndcg@5": -0.0030759844433392303,
+            "ndcg@10": -0.0023421659772845382
+          }
+        },
+        "improved_auc_on_both_days": true,
+        "note": "Reused temporal validation. Baseline is the 0.25/0.25 pair associated with user-reported Large Test AUC 0.6990. No new Large Test score."
+      },
+      "configs": {
+        "mpnet": {
+          "run_name": "mind_large_temporal_mpnet_p1_pairwise_w075_v1",
+          "data": {
+            "raw_root": "data/raw",
+            "dataset_name": "MINDlarge_temporal_tune",
+            "mode": "temporal_tune",
+            "train_dir": "MINDlarge_train",
+            "dev_dir": "MINDlarge_dev",
+            "processed_root": "data/processed",
+            "max_history": 50,
+            "min_user_hist_for_warm": 5,
+            "min_item_train_clicks_for_warm": 10,
+            "ranker_negatives_per_positive": 4,
+            "materialize_train_pairs": true,
+            "temporal_validation": {
+              "validation_start": "2019-11-14 00:00:00",
+              "rerank_reporting_start": "2019-11-15 00:00:00",
+              "rerank_tuning_split_name": "rerank_tune",
+              "rerank_reporting_split_name": "rerank_test"
+            },
+            "sub_sample": {
+              "enabled": false,
+              "train_impressions": 200000,
+              "dev_impressions": 50000,
+              "seed": 13
+            }
+          },
+          "knowledge_graph": {
+            "enabled": true,
+            "entity_embedding_path": null,
+            "relation_embedding_path": null,
+            "triples_path": "data/processed/MINDlarge/kg_triples.tsv",
+            "max_entities_per_news": 12,
+            "max_neighbors_per_entity": 20,
+            "add_reverse_edges": true,
+            "entity_weight": 1.0,
+            "neighbor_weight": 0.1,
+            "relation_weight": 0.1,
+            "text_feature_weight": 1.0,
+            "kg_feature_weight": 0.25,
+            "normalize_item_base": true,
+            "normalize": true
+          },
+          "teacher": {
+            "model_name": "sentence-transformers/all-mpnet-base-v2",
+            "text": {
+              "include_category_prefix": false
+            },
+            "batch_size": 128,
+            "user_attn_heads": 4,
+            "user_attn_dim": 384,
+            "lr": 0.0002,
+            "epochs": 8,
+            "early_stopping": {
+              "enabled": true,
+              "patience": 2,
+              "monitor": "retrieval_recall@k",
+              "min_delta": 0.0001
+            },
+            "temperature": 0.05,
+            "negatives_per_positive": 8,
+            "device": "cuda",
+            "text_adaptation": {
+              "enabled": true,
+              "batch_size": 16,
+              "gradient_accumulation_steps": 4,
+              "encode_batch_size": 64,
+              "lr": 1e-05,
+              "weight_decay": 0.01,
+              "temperature": 0.05,
+              "max_history": 10,
+              "negatives_per_positive": 4,
+              "hard_pool_size": 20,
+              "hard_fraction": 0.25,
+              "teacher_consistent_hard_only": true,
+              "max_score_above_positive": 0.0,
+              "hard_for_cold_users_only": true,
+              "max_optimizer_updates": 12000,
+              "early_stopping": {
+                "enabled": true,
+                "validation_interval_updates": 500,
+                "patience": 6,
+                "min_delta": 0.0001
+              },
+              "device": "cuda",
+              "local_files_only": false,
+              "gradient_checkpointing": true,
+              "mixed_precision": "fp16",
+              "encoder_forward_batch_size": 8
+            },
+            "encode_batch_size": 64
+          },
+          "retrieval": {
+            "index_type": "flat_ip",
+            "base_index_type": "flat_ip",
+            "hybrid_base_weight": 0.075,
+            "hybrid_oversample": 26,
+            "sweep": {
+              "hybrid_base_weights": [
+                0.05,
+                0.0625,
+                0.075
+              ],
+              "hybrid_oversamples": [
+                18,
+                22,
+                26
+              ]
+            },
+            "ivf_nlist": 2048,
+            "topk": 200
+          },
+          "ranker": {
+            "batch_size": 1024,
+            "lr": 0.0001,
+            "weight_decay": 3e-05,
+            "epochs": 8,
+            "early_stopping": {
+              "enabled": false,
+              "patience": 2,
+              "min_delta": 1e-05
+            },
+            "device": "cuda",
+            "hard_negative_sampling": {
+              "enabled": true,
+              "pool_size": 20,
+              "hard_fraction": 0.25,
+              "score_batch_size": 512,
+              "teacher_consistent_hard_only": true,
+              "max_score_above_positive": 0.0,
+              "hard_for_cold_users_only": true,
+              "hard_negative_distill_weight": 0.0
+            },
+            "dlrm": {
+              "emb_dim": 56,
+              "id_emb_dim": 8,
+              "news_id_warm_scale": 1.0,
+              "news_id_cold_scale": 0.0,
+              "semantic_ff_mult": 3,
+              "semantic_dropout": 0.2,
+              "bottom_mlp": [
+                64,
+                56
+              ],
+              "top_mlp": [
+                128,
+                64,
+                1
+              ],
+              "dropout": 0.15,
+              "history_pooling": "candidate_attention",
+              "candidate_attention_heads": 4,
+              "candidate_attention_dropout": 0.0
+            },
+            "distill": {
+              "representation_target": "full",
+              "temperature": 2.0,
+              "lambda_logit": 0.7,
+              "lambda_repr": 0.05,
+              "cold_weight": 2.0,
+              "warm_weight": 0.5
+            },
+            "calibration": {
+              "enabled": false,
+              "lr": 0.05,
+              "max_iter": 100
+            },
+            "grouped_batches": true,
+            "pairwise_weight": 0.75,
+            "checkpoint_selection": {
+              "metric": "mean_impression_auc",
+              "score_batch_size": 2048,
+              "item_encoding_batch_size": 8192,
+              "impression_batch_size": 128,
+              "track_both": true,
+              "preserve_training_rng": true
+            }
+          },
+          "rerank": {
+            "output_subdir": "rerank",
+            "k_out": 10,
+            "pool_size": 50,
+            "eval_split": "rerank_test",
+            "selection": {
+              "require_frozen_for_eval": true,
+              "require_distinct_splits": true,
+              "require_provenance_for_eval": true,
+              "source_split": "rerank_tune",
+              "reporting_split": "rerank_test",
+              "search_artifact": "runs/mind_large_temporal_mpnet_candidate_attention_v1/rerank/rerank_search.json",
+              "decision_note": "docs/reranking.md",
+              "frozen": true,
+              "reporting_note": "November 15 was reused while refining the requirements; these are follow-up results, not an independent test."
+            },
+            "position_bias": "log",
+            "coverage_weight": 0.035,
+            "relevance_normalization": "minmax",
+            "scoring": {
+              "batch_size": 2048,
+              "item_encoding_batch_size": 8192,
+              "impression_batch_size": 128
+            },
+            "coverage": {
+              "max_new_entities_per_item": 3,
+              "category_bonus": 1.0,
+              "entity_bonus": 0.3
+            },
+            "fairness": {
+              "enabled": true,
+              "category_target": "catalog",
+              "penalty_weight": 0.0
+            },
+            "search": {
+              "split": "rerank_tune",
+              "seed": 13,
+              "sample_size": 5000,
+              "shortlist_size": 15,
+              "relative_guardrails": {
+                "max_ndcg_drop_ratio": 0.02,
+                "min_new_item_exposure_gain": 0.0,
+                "min_category_coverage_gain": 0.25,
+                "min_fairness_kl_pool_improvement": 0.03
+              },
+              "coverage_weights": [
+                0.025,
+                0.03,
+                0.035,
+                0.04,
+                0.05
+              ],
+              "fairness_penalties": [
+                0.0,
+                0.025,
+                0.05
+              ]
+            }
+          },
+          "eval": {
+            "report_splits": [
+              "val"
+            ],
+            "ks": [
+              5,
+              10
+            ],
+            "time_periods": 4,
+            "batch_size": 2048,
+            "item_encoding_batch_size": 8192
+          },
+          "artifacts": {
+            "text_encoder_run_name": "mind_large_temporal_mpnet_p1_sweep_ta_lr_1em05_t_5em02_u12000_v500",
+            "teacher_run_name": "mind_large_temporal_mpnet_p1_promoted"
+          }
+        },
+        "minilm": {
+          "run_name": "mind_large_temporal_minilm_pairwise_w075_v1",
+          "data": {
+            "raw_root": "data/raw",
+            "dataset_name": "MINDlarge_temporal_tune",
+            "mode": "temporal_tune",
+            "train_dir": "MINDlarge_train",
+            "dev_dir": "MINDlarge_dev",
+            "processed_root": "data/processed",
+            "max_history": 50,
+            "min_user_hist_for_warm": 5,
+            "min_item_train_clicks_for_warm": 10,
+            "ranker_negatives_per_positive": 4,
+            "materialize_train_pairs": true,
+            "temporal_validation": {
+              "validation_start": "2019-11-14 00:00:00",
+              "rerank_reporting_start": "2019-11-15 00:00:00",
+              "rerank_tuning_split_name": "rerank_tune",
+              "rerank_reporting_split_name": "rerank_test"
+            },
+            "sub_sample": {
+              "enabled": false,
+              "train_impressions": 200000,
+              "dev_impressions": 50000,
+              "seed": 13
+            }
+          },
+          "knowledge_graph": {
+            "enabled": true,
+            "entity_embedding_path": null,
+            "relation_embedding_path": null,
+            "triples_path": "data/processed/MINDlarge/kg_triples.tsv",
+            "max_entities_per_news": 12,
+            "max_neighbors_per_entity": 20,
+            "add_reverse_edges": true,
+            "entity_weight": 1.0,
+            "neighbor_weight": 0.1,
+            "relation_weight": 0.1,
+            "text_feature_weight": 1.0,
+            "kg_feature_weight": 0.25,
+            "normalize_item_base": true,
+            "normalize": true
+          },
+          "teacher": {
+            "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+            "text": {
+              "include_category_prefix": false
+            },
+            "batch_size": 128,
+            "user_attn_heads": 4,
+            "user_attn_dim": 384,
+            "lr": 0.0002,
+            "epochs": 8,
+            "early_stopping": {
+              "enabled": true,
+              "patience": 2,
+              "monitor": "retrieval_recall@k",
+              "min_delta": 0.0001
+            },
+            "temperature": 0.05,
+            "negatives_per_positive": 8,
+            "device": "cuda",
+            "text_adaptation": {
+              "enabled": true,
+              "batch_size": 16,
+              "gradient_accumulation_steps": 4,
+              "encode_batch_size": 256,
+              "lr": 2e-05,
+              "weight_decay": 0.01,
+              "temperature": 0.05,
+              "max_history": 10,
+              "negatives_per_positive": 4,
+              "hard_pool_size": 20,
+              "hard_fraction": 0.25,
+              "teacher_consistent_hard_only": true,
+              "max_score_above_positive": 0.0,
+              "hard_for_cold_users_only": true,
+              "max_optimizer_updates": 10000,
+              "early_stopping": {
+                "enabled": true,
+                "validation_interval_updates": 1000,
+                "patience": 3,
+                "min_delta": 0.0001
+              },
+              "device": "cuda"
+            }
+          },
+          "retrieval": {
+            "index_type": "flat_ip",
+            "base_index_type": "flat_ip",
+            "hybrid_base_weight": 0.075,
+            "hybrid_oversample": 26,
+            "sweep": {
+              "hybrid_base_weights": [
+                0.05,
+                0.0625,
+                0.075
+              ],
+              "hybrid_oversamples": [
+                18,
+                22,
+                26
+              ]
+            },
+            "ivf_nlist": 2048,
+            "topk": 200
+          },
+          "ranker": {
+            "batch_size": 1024,
+            "lr": 0.0001,
+            "weight_decay": 3e-05,
+            "epochs": 8,
+            "early_stopping": {
+              "enabled": false,
+              "patience": 2,
+              "min_delta": 1e-05
+            },
+            "device": "cuda",
+            "hard_negative_sampling": {
+              "enabled": true,
+              "pool_size": 20,
+              "hard_fraction": 0.25,
+              "score_batch_size": 512,
+              "teacher_consistent_hard_only": true,
+              "max_score_above_positive": 0.0,
+              "hard_for_cold_users_only": true,
+              "hard_negative_distill_weight": 0.0
+            },
+            "dlrm": {
+              "emb_dim": 56,
+              "id_emb_dim": 8,
+              "news_id_warm_scale": 1.0,
+              "news_id_cold_scale": 0.0,
+              "semantic_ff_mult": 3,
+              "semantic_dropout": 0.2,
+              "bottom_mlp": [
+                64,
+                56
+              ],
+              "top_mlp": [
+                128,
+                64,
+                1
+              ],
+              "dropout": 0.15,
+              "history_pooling": "candidate_attention",
+              "candidate_attention_heads": 4,
+              "candidate_attention_dropout": 0.0
+            },
+            "distill": {
+              "representation_target": "full",
+              "temperature": 2.0,
+              "lambda_logit": 0.7,
+              "lambda_repr": 0.05,
+              "cold_weight": 2.0,
+              "warm_weight": 0.5
+            },
+            "calibration": {
+              "enabled": false,
+              "lr": 0.05,
+              "max_iter": 100
+            },
+            "grouped_batches": true,
+            "pairwise_weight": 0.75,
+            "checkpoint_selection": {
+              "metric": "mean_impression_auc",
+              "score_batch_size": 2048,
+              "item_encoding_batch_size": 8192,
+              "impression_batch_size": 128,
+              "track_both": true,
+              "preserve_training_rng": true
+            }
+          },
+          "rerank": {
+            "output_subdir": "rerank",
+            "k_out": 10,
+            "pool_size": 50,
+            "eval_split": "rerank_test",
+            "selection": {
+              "require_frozen_for_eval": true,
+              "require_distinct_splits": true,
+              "require_provenance_for_eval": true,
+              "source_split": "rerank_tune",
+              "reporting_split": "rerank_test",
+              "search_artifact": null,
+              "decision_note": null,
+              "frozen": false
+            },
+            "position_bias": "log",
+            "coverage_weight": 0.075,
+            "relevance_normalization": "minmax",
+            "scoring": {
+              "batch_size": 2048,
+              "item_encoding_batch_size": 8192,
+              "impression_batch_size": 128
+            },
+            "coverage": {
+              "max_new_entities_per_item": 3,
+              "category_bonus": 1.0,
+              "entity_bonus": 0.3
+            },
+            "fairness": {
+              "enabled": true,
+              "category_target": "catalog",
+              "penalty_weight": 0.25
+            },
+            "search": {
+              "split": "rerank_tune",
+              "seed": 13,
+              "sample_size": 5000,
+              "shortlist_size": 20,
+              "relative_guardrails": {
+                "max_ndcg_drop_ratio": 0.02,
+                "min_new_item_exposure_gain": 0.0,
+                "min_category_coverage_gain": 0.25,
+                "min_fairness_kl_pool_improvement": 0.03
+              }
+            }
+          },
+          "eval": {
+            "report_splits": [
+              "val"
+            ],
+            "ks": [
+              5,
+              10
+            ],
+            "time_periods": 4,
+            "batch_size": 2048,
+            "item_encoding_batch_size": 8192
+          },
+          "artifacts": {
+            "teacher_run_name": "mind_large_temporal_text_adapt_v1"
+          }
+        }
+      },
+      "fixed_weights": [
+        0.75,
+        0.25
+      ],
+      "baseline_pairwise_weight": 0.5,
+      "candidate_pairwise_weight": 0.75,
+      "inputs": {
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/scripts/run_pairwise_weight_075_comparison.py": "75594310f484136c1fe67b31ce4a41d84fa81c9d4a259342b4be625915278a2c",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/scripts/run_pairwise_weight_comparison.py": "370ace4c54f9ae235b7051e36fe95f2ae7a32730c86d3e4c60a5b8fbe371462c",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/scripts/run_ranker_loss_comparison.py": "80ae6da4ff396766deac0cf7f499e58cfddfbb0b0b73424670e17e68e50a3df7",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/__init__.py": "127a5f97f45a9e1402447fe8665792502c0c87f880e7737b1374e4a4796e17db",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/cli.py": "d325a722636b35c8069f650f8294ffd63299943b98047378ccaa39627ca0c6ff",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/config.py": "321d322bedc5bb75270656dc0efe587cc6e613b372c86f9a8f5cf7352012cf95",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/datasets.py": "0d17bac813c5e8c96cf887805b56ca40e62c6545549bdf6229188feec610f29b",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/featurize.py": "f9723f168f946c9833fca7b7a54f94a72d28ad612c82280c686ad95574a04ea8",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/impression_batches.py": "064cf70bf25d19759ca8f3d533089e5e63e425f3e16dae7cea7a52ee23f28237",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/item_age.py": "73fd68233cc9d602af39e126985e3fe77f8611084b571154575bf81ecadf56ee",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/kg.py": "f681b19c737ef1e677231d4cbea04e9ce799a44bd1c6bd6c5442b9d7206f714f",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/mind_io.py": "60070ce53662352974ceb729c078452fc4da30bed773d81718ecd0faee68ff03",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/data/recency_tiebreaker.py": "331cd936b15661df8299e7b6d0e60e6393e086be76cdf252dbce167bdabdba9d",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/metrics/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/metrics/benchmark.py": "57b7fe9e7ca5b8f4c9bc7a9f65fe758f63001ceb7239c5a69044421feca5bf07",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/metrics/calibration.py": "1a676bf7716ba402168c77162dade78dca7a8fe711988769ad1bad69cbe5715f",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/metrics/diversity.py": "d8a04d0c4c82ba3a42519ac56c2b321f0670abeca2302ede315baedbf82309cf",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/metrics/fairness.py": "5d27e74fa7ef22c38c487ec57188be79559124d4d03a49979591fc7c2cf3575c",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/metrics/ranking.py": "46c516f8812154cdd5f19a240d1ff1d60b87cbe11df90803d5fce57d08656f4c",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/models/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/models/calibration.py": "c03b10b2246555e3be502cf66c5dd653dd9424a114feb51f612eea228c2babe2",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/models/distill.py": "6d9e8925ed11b650456388c8a14c75d60ec7498edebf4784c5f9062e91aacbe8",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/models/dlrm.py": "2f6a9b68d34555d9b58dbb6d7d5274f57ef608bae9b5ab14abbbafa90cb4cdb2",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/models/ranking_loss.py": "6a73daedd921ce595585b4d10f5e6d01b73e64e1ca61920daca63328f3c1ad12",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/models/teacher.py": "d107e5f3005838a1f16f40d792a0e634eaf2b90366d1a10a675c85937ec21809",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/ensemble.py": "382d2c7f21a0dbe5dd3cff0bc207d5387814220cce74a6cc5ed977df499d9983",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/evaluate.py": "ce0f74daa21989e47ef6528289f2e0f79712e4448a7860f69291390edd0189ee",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/hard_negative_sampling.py": "b7bb50e855f3b7291bc141608722962a268035137d91c8c3dea83bef7d048819",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/pairwise_ensemble.py": "3dcecfc5905a6a9109e3f2c8a585ad8879c1482101239e19c0d2c3121d292de2",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/preprocess.py": "9e9673e3e5c594028c9552b0765e108dedec0034432d2b631204444fbc6b7c07",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/ranker_lr_sweep.py": "309115bc97a4858660b1698ba85d382e9962a214ca9db7a2eef26c5f8c9e9701",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/ranker_scoring.py": "ed9da9febc77581ce9d8ece3cdfb748a60e75b26d2193521e1b7922c06cd5297",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/ranker_train.py": "03fecbe53231b4bf2075d7b7f44c8f46ca4fa3e67ba3c3aedb0279695da5b413",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/ranker_validation.py": "3f690b9e32d0f59ad9fa02264c303bfb2724477517cbfc1b432813f82132b292",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/rerank_eval.py": "369d6ec7ec5b852cf11742bb7f3ba65633f51cdbe3ef69b43df5aaf2f75ede69",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/rerank_metrics.py": "38077c98df7feaa517c009bcc19d0dcc6fd7219ff820beefd656d0a94eb43fef",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/rerank_policy.py": "6730d7d8c719a52817c77fdaf5eff221ed8831d104c50d55be614fa68666ea53",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/rerank_scoring.py": "187790fa8a6e9b0ae5a50cc2eb08391d5e84bf8bad4108ab226b9734fa9f4444",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/rerank_search.py": "addec0b725526320941456a72a60098c8f2076bf6a10321ea1837456e27c14e2",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/retrieval.py": "7105ca935468b7d1d3d8bcfa05fa25669eac757091f59a8770dd4da9955ffec8",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/submission.py": "cfdf44a6ff6b83fbdc77ac029f83fd4a00a6da54b2d758dd5aa777bad19df826",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/teacher_train.py": "824f4af2802d30baebc5f8cd97149ce84e2953347b7b9c13408588da44472d7c",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/text_encoder_adapt.py": "f649f9dd148edb831ae157056d6e09fd3881f898afce6a88a62d459fb781576e",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/two_model_ensemble.py": "a498b13b71444a60711ec860514ea668c4353c202a20b453eeb431d49a7e6678",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/pipeline/two_model_final_fit.py": "5c8624937f19a67c40fa7ae19553f82287628785c0351686810923bc4dcc78c7",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/rerank/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/rerank/greedy.py": "ad333f5875aae59afa0f627f09051e2749624c415b18fde70a27fe8e2838d1c7",
+        "C:/Users/abiga/OneDrive/Documents/MIND_Multistage_Recommender_with_Knowledge_Graph/src/mindrec/utils.py": "8c06195150bbce3d0da7bd1b8e395291b99fd53813acddbc7f51baa29300ecf9",
+        "data/processed/MINDlarge_temporal_tune/item_click_counts.json": "6cb33613561ee632d8db887b3cf52b8a3aaa1a3cc00fb5cbab39e8e58baf5ce3",
+        "data/processed/MINDlarge_temporal_tune/train_behaviors.parquet": "7d7345450d189f15dd20e47b2652b08dd9156e3e28d172e6877c3a4406c5415c",
+        "data/processed/MINDlarge_temporal_tune/val_impressions.parquet": "d0edee4d0056f126f597ef8e7f0f322dea380d893107392a9d8fb0573b0e062f",
+        "data/processed/MINDlarge_temporal_tune/val_pairs.parquet": "c9bc8cb3e268d6437c6078e1b74014c5de869ce7e632903396890aea749e5ea2",
+        "runs/mind_large_ensemble_two_mixed_loss_v1/ensemble/search.json": "0543c57e8d054128a43babfdaa9bb5dd03d02cc8bfff3cb63068d3385d930f59",
+        "runs/mind_large_pairwise_w050_comparison_v1/context.json": "995014880b9fe11e9176f8960b5c6233a18422b893825ff315e7860914eb5f1b",
+        "runs/mind_large_pairwise_w050_comparison_v1/ensemble_comparison.json": "fb91806a7c0e40fbde994db450064a6f3a7bc53a7f0182820206ea9b12f207c6",
+        "runs/mind_large_pairwise_w050_comparison_v1/fixed_weights.json": "d6bde8a27ac43b40d0677c24d7418206446179b08f776365be631640de145859",
+        "runs/mind_large_pairwise_w050_comparison_v1/report_metrics.json": "b71c1be4747317c780e29c0fdc0a81bfcf001a451cbacabd26bfdd953e38d922",
+        "runs/mind_large_pairwise_w050_comparison_v1/tune_metrics.json": "8f017eca30f6bd832c86fae50087b433e1d04b9ab38635e185d4c2fe0f83b959",
+        "runs/mind_large_temporal_minilm_dual_bce_pairwise_w025_v1/eval/ranker_eval_val.json": "10c798fea8a15e20be47312a66196453e6994750a7316082e8009ee4a8e96b6b",
+        "runs/mind_large_temporal_minilm_pairwise_w050_v1/eval/ranker_eval_val.json": "c02ffcf922f4ef3b2664e5bfb8151e9260075152c310f4b5c9e694fc243f9c3a",
+        "runs/mind_large_temporal_mpnet_p1_dual_bce_pairwise_w025_v1/eval/ranker_eval_val.json": "0bb6e75ed8d271f8a5ec0d8111dbca32f079b876025228e975a6500dc427c58b",
+        "runs/mind_large_temporal_mpnet_p1_pairwise_w050_v1/eval/ranker_eval_val.json": "765a4ab1325524b571096df2fede1c8fe4787a6c75e271408332e6f724bd8c64",
+        "runs/mind_large_temporal_mpnet_p1_promoted/teacher/item_teacher_emb.npy": "977c624bd859e57f51cbb6d968679b125fc6cd82074e2f1fb704af08028fb29d",
+        "runs/mind_large_temporal_mpnet_p1_promoted/teacher/model.pt": "8867bf6e43985bde7a810fd8b941a18e42ae31e6bb43b42c628a248707113de5",
+        "runs/mind_large_temporal_text_adapt_v1/teacher/item_teacher_emb.npy": "1666b34ff9571881785ca8134575333a72806138dbad8de06ec612873e2251bb",
+        "runs/mind_large_temporal_text_adapt_v1/teacher/model.pt": "e112f33374f7f799a9b5c3260ea84e0f6f56d93473b9a6f55663cc0839939d96"
+      }
+    },
+    "checkpoints": {
+      "mpnet": "6a993a9ece7f534cbff121639ba843299588d8c047780ee92e066b44c20a9c19",
+      "minilm": "1b0c88bdb6e7460c3b1a62797bfb5ed1a32620167256b6e458717aaac73f9fbf"
+    }
+  },
+  "tune": {
+    "candidate": {
+      "primary_weight": 0.75,
+      "secondary_weight": 0.25,
+      "auc": 0.7037378146468853,
+      "mrr": 0.3325982387537871,
+      "ndcg@5": 0.36383618113485555,
+      "ndcg@10": 0.42375276014984503
+    },
+    "baseline": {
+      "primary_weight": 0.75,
+      "secondary_weight": 0.25,
+      "auc": 0.7026048748609444,
+      "mrr": 0.333907283195703,
+      "ndcg@5": 0.36495327468283006,
+      "ndcg@10": 0.4248816169750774
+    },
+    "delta": {
+      "auc": 0.0011329397859409784,
+      "mrr": -0.0013090444419159297,
+      "ndcg@5": -0.0011170935479745125,
+      "ndcg@10": -0.0011288568252323938
+    }
+  },
+  "report": {
+    "candidate": {
+      "primary_weight": 0.75,
+      "secondary_weight": 0.25,
+      "auc": 0.6909594565029665,
+      "mrr": 0.34072698344878705,
+      "ndcg@5": 0.37599684603849715,
+      "ndcg@10": 0.43820484213258376
+    },
+    "baseline": {
+      "primary_weight": 0.75,
+      "secondary_weight": 0.25,
+      "auc": 0.6901399875149911,
+      "mrr": 0.3396611355948477,
+      "ndcg@5": 0.37517334146578524,
+      "ndcg@10": 0.43723931380960773
+    },
+    "delta": {
+      "auc": 0.0008194689879754691,
+      "mrr": 0.0010658478539393723,
+      "ndcg@5": 0.0008235045727119084,
+      "ndcg@10": 0.0009655283229760281
+    }
+  },
+  "improved_auc_on_both_days": true,
+  "note": "Coefficient 0.75 retains supervised BCE and distillation. Reused temporal validation against coefficient 0.5; the preserved Large Test champion is 0.7011. No new Large Test result."
+}

@@ -1,0 +1,6 @@
+extends: "mind_large_temporal_mpnet_p1_pairwise_w050.yaml"
+
+run_name: "mind_large_temporal_mpnet_p1_pairwise_w075_v1"
+
+ranker:
+  pairwise_weight: 0.75
